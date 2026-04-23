@@ -7,6 +7,21 @@ defmodule Swarm.Deploy do
   @tar_excludes [".git", ".serena", "result", "_build", "deps"]
   @machine_glob "machines/*.nix"
 
+  def defaults(source \\ @default_source) do
+    resolved_source = Path.expand(source)
+
+    %{
+      source: resolved_source,
+      host_source: @machine_glob,
+      hosts: default_hosts(resolved_source),
+      remote_path: @default_remote_path,
+      nixos_dir: @default_nixos_dir,
+      validate_before_apply: true,
+      preview_before_apply: true,
+      apply_on_success: true
+    }
+  end
+
   def run(opts) do
     plan = plan(opts) |> validate!()
 
@@ -28,7 +43,7 @@ defmodule Swarm.Deploy do
     source = Path.expand(Keyword.get(opts, :source, @default_source))
     remote_path = Keyword.get(opts, :remote_path, @default_remote_path)
     nixos_dir = Keyword.get(opts, :nixos_dir, @default_nixos_dir)
-    hosts = hosts(opts)
+    hosts = hosts(opts, source)
     dry_run = Keyword.get(opts, :dry_run, false)
 
     validate_inputs!(source, hosts)
@@ -59,12 +74,26 @@ defmodule Swarm.Deploy do
     }
   end
 
-  def hosts(opts) do
-    opts
-    |> Keyword.fetch!(:hosts)
-    |> String.split(",", trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
+  def hosts(opts), do: hosts(opts, Path.expand(Keyword.get(opts, :source, @default_source)))
+
+  def hosts(opts, source) do
+    case {Keyword.get(opts, :hosts), Keyword.get(opts, :host)} do
+      {nil, nil} ->
+        default_hosts(source)
+
+      {nil, host} ->
+        parse_hosts(host)
+
+      {hosts, _host} ->
+        parse_hosts(hosts)
+    end
+  end
+
+  def default_hosts(source \\ @default_source) do
+    source
+    |> Path.expand()
+    |> machine_files()
+    |> Enum.map(&machine_host/1)
   end
 
   def machine_files(source) do
@@ -105,13 +134,21 @@ defmodule Swarm.Deploy do
       rm -rf "$remote_path"
       mv "$staging" "$remote_path"
       if [ -e "$remote_path/secrets/swarm.cookie" ]; then
-        chmod 600 "$remote_path/secrets/swarm.cookie"
+        if [ "$(id -u)" = "0" ]; then
+          chown root:root "$remote_path/secrets/swarm.cookie"
+          chmod 600 "$remote_path/secrets/swarm.cookie"
+        elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+          sudo chown root:root "$remote_path/secrets/swarm.cookie"
+          sudo chmod 600 "$remote_path/secrets/swarm.cookie"
+        else
+          chmod 600 "$remote_path/secrets/swarm.cookie"
+        fi
       fi
       """
       |> String.trim()
 
     """
-    cd #{shell_escape(source)} && tar #{tar_args} -czf - . | ssh #{shell_escape(host)} #{shell_escape(remote_extract)}
+    cd #{shell_escape(source)} && tar #{tar_args} -czf - . | ssh -- #{shell_escape(host)} #{shell_escape(remote_extract)}
     """
     |> String.trim()
   end
@@ -125,7 +162,7 @@ defmodule Swarm.Deploy do
       """
       |> String.trim()
 
-    "ssh #{shell_escape(host)} #{shell_escape(remote_cmd)}"
+    "ssh -- #{shell_escape(host)} #{shell_escape(remote_cmd)}"
   end
 
   defp validate!(plan) do
@@ -133,12 +170,20 @@ defmodule Swarm.Deploy do
     plan
   end
 
+  defp parse_hosts(value) do
+    value
+    |> to_string()
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
   defp validation_command(machine_file) do
     expr =
       """
       let eval = import <nixpkgs/nixos/lib/eval-config.nix> {
         system = builtins.currentSystem;
-        modules = [ #{machine_file} ];
+        modules = [ (builtins.toPath #{nix_string_literal(machine_file)}) ];
         specialArgs = { inputs = {}; };
       }; in {
         node = eval.config.services.swarm.nodeName;
@@ -189,7 +234,23 @@ defmodule Swarm.Deploy do
     end
   end
 
+  defp machine_host(machine_file) do
+    machine_file
+    |> Path.basename()
+    |> Path.rootname()
+  end
+
   defp shell_escape(value) do
     "'" <> String.replace(to_string(value), "'", "'\"'\"'") <> "'"
+  end
+
+  defp nix_string_literal(value) do
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("${", "\\${")
+
+    "\"#{escaped}\""
   end
 end

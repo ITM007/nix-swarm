@@ -86,4 +86,56 @@ defmodule SwarmPlacementTest do
 
     assert hd(config.services).settings == %{domain: "gitea.home", http_port: 3000}
   end
+
+  test "service defaults derive the unit template from the replica count" do
+    single =
+      Swarm.Config.normalize(%{
+        services: [
+          %{name: "gitea"}
+        ]
+      })
+      |> Map.fetch!(:services)
+      |> hd()
+
+    multi =
+      Swarm.Config.normalize(%{
+        services: [
+          %{name: "gitea", replicas: 2}
+        ]
+      })
+      |> Map.fetch!(:services)
+      |> hd()
+
+    assert single.unit_template == "%{service}.service"
+    assert multi.unit_template == "%{service}@%{slot}.service"
+  end
+
+  test "placement prefers configured machines before reusing other eligible nodes" do
+    config =
+      Swarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1", :"node-c@127.0.0.1"],
+        nodes: %{
+          :"node-a@127.0.0.1" => %{labels: ["gitea"]},
+          :"node-b@127.0.0.1" => %{labels: ["gitea"]},
+          :"node-c@127.0.0.1" => %{labels: ["gitea"]}
+        },
+        services: [
+          %{
+            name: "gitea",
+            replicas: 2,
+            unit_template: "gitea.service",
+            constraints: ["gitea"],
+            preferred_nodes: [:"node-c@127.0.0.1", :"node-a@127.0.0.1"]
+          }
+        ]
+      })
+
+    owners =
+      config
+      |> Swarm.Placement.plan(config.peers)
+      |> Map.fetch!("gitea")
+      |> Enum.map(& &1.owner)
+
+    assert owners == [:"node-c@127.0.0.1", :"node-a@127.0.0.1"]
+  end
 end

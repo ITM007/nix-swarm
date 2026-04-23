@@ -2,7 +2,7 @@
 
 let
   cfg = config.services.swarm;
-  inherit (lib) concatMapStringsSep hasInfix last mapAttrsToList mkEnableOption mkIf mkOption splitString types;
+  inherit (lib) concatMapStringsSep genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
 
   toErlTerm =
     value:
@@ -32,15 +32,16 @@ let
   '';
 
   mkServiceEntry = name: serviceCfg: ''
-    [
-      {name, "${name}"},
-      {replicas, ${toString serviceCfg.replicas}},
-      {unit_template, "${serviceCfg.unitTemplate}"},
-      {constraints, ${mkStringList serviceCfg.constraints}},
-      {healthcheck, ${if serviceCfg.healthcheck == null then "undefined" else "\"${serviceCfg.healthcheck}\""}},
-      {settings, ${toErlTerm serviceCfg.settings}}
-    ]
-  '';
+      [
+        {name, "${name}"},
+        {replicas, ${toString serviceCfg.replicas}},
+        {unit_template, ${toErlTerm serviceCfg.unitTemplate}},
+        {constraints, ${mkStringList serviceCfg.constraints}},
+        {preferred_nodes, ${mkPeerAtoms serviceCfg.preferredNodes}},
+        {healthcheck, ${if serviceCfg.healthcheck == null then "undefined" else "\"${serviceCfg.healthcheck}\""}},
+        {settings, ${toErlTerm serviceCfg.settings}}
+      ]
+    '';
 
   renderedConfig = pkgs.writeText "swarm.config" ''
     {peers, ${mkPeerAtoms cfg.peers}}.
@@ -65,6 +66,11 @@ let
       "name"
     else
       "sname";
+
+  swarmdStart = pkgs.writeShellScript "swarmd-start" ''
+    export RELEASE_COOKIE="$(${pkgs.coreutils}/bin/tr -d '\n' < "$CREDENTIALS_DIRECTORY/swarm-cookie")"
+    exec ${cfg.package}/bin/swarmd start
+  '';
 in
 {
   imports = [ ./ingress.nix ];
@@ -74,7 +80,8 @@ in
 
     package = mkOption {
       type = types.package;
-      description = "Package containing the Swarm release with bin/swarm.";
+      default = import ./package.nix { inherit pkgs; };
+      description = "Package containing the Swarm CLI (`bin/swarm`) and node runtime (`bin/swarmd`).";
     };
 
     nodeName = mkOption {
@@ -83,8 +90,8 @@ in
     };
 
     cookieFile = mkOption {
-      type = types.path;
-      description = "Path to the Erlang cookie file used by all Swarm peers.";
+      type = types.str;
+      description = "Absolute path on the target machine to the Erlang cookie file used by all Swarm peers.";
     };
 
     epmdPort = mkOption {
@@ -101,8 +108,14 @@ in
 
     openFirewall = mkOption {
       type = types.bool;
-      default = true;
+      default = false;
       description = "Whether to open the epmd and distributed Erlang TCP ports in the NixOS firewall.";
+    };
+
+    firewallInterfaces = mkOption {
+      type = types.listOf types.str;
+      default = [];
+      description = "Optional interface names to scope the Swarm firewall ports to. Leave empty to open them on every interface when `openFirewall = true`.";
     };
 
     peers = mkOption {
@@ -131,13 +144,20 @@ in
           };
 
           unitTemplate = mkOption {
-            type = types.str;
-            description = "Systemd unit template rendered by Swarm, e.g. gitea@%{slot}.service.";
+            type = types.nullOr types.str;
+            default = null;
+            description = "Optional systemd unit template rendered by Swarm. Defaults to `%{service}.service` for one replica and `%{service}@%{slot}.service` for multiple replicas.";
           };
 
           constraints = mkOption {
             type = types.listOf types.str;
             default = [];
+          };
+
+          preferredNodes = mkOption {
+            type = types.listOf types.str;
+            default = [];
+            description = "Preferred nodes for this service, listed in highest-to-lowest preference order.";
           };
 
           healthcheck = mkOption {
@@ -175,8 +195,18 @@ in
   };
 
   config = mkIf cfg.enable {
-    networking.firewall.allowedTCPPorts =
-      mkIf cfg.openFirewall [ cfg.epmdPort cfg.distributionPort ];
+    networking.firewall = mkMerge [
+      (mkIf (cfg.openFirewall && cfg.firewallInterfaces == []) {
+        allowedTCPPorts = [ cfg.epmdPort cfg.distributionPort ];
+      })
+      (mkIf (cfg.openFirewall && cfg.firewallInterfaces != []) {
+        interfaces = genAttrs cfg.firewallInterfaces (_: {
+          allowedTCPPorts = [ cfg.epmdPort cfg.distributionPort ];
+        });
+      })
+    ];
+
+    environment.systemPackages = [ cfg.package ];
 
     systemd.services.swarmd = {
       description = "Swarm leaderless node runtime";
@@ -188,14 +218,24 @@ in
         Environment = [
           "SWARM_CONFIG_PATH=${renderedConfig}"
           "RELEASE_NODE=${cfg.nodeName}"
-          "RELEASE_COOKIE=${builtins.readFile cfg.cookieFile}"
           "RELEASE_DISTRIBUTION=${releaseDistribution}"
           "ERL_EPMD_PORT=${toString cfg.epmdPort}"
           ''"ERL_AFLAGS=-kernel inet_dist_listen_min ${toString cfg.distributionPort} inet_dist_listen_max ${toString cfg.distributionPort}"''
         ];
-        ExecStart = "${cfg.package}/bin/swarm start";
+        LoadCredential = [ "swarm-cookie:${cfg.cookieFile}" ];
+        ExecStart = swarmdStart;
         Restart = "always";
         RestartSec = 2;
+        UMask = "0077";
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        ProtectHome = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        LockPersonality = true;
+        RestrictNamespaces = true;
+        RestrictSUIDSGID = true;
       };
     };
   };

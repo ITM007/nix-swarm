@@ -9,9 +9,8 @@ defmodule SwarmBootstrapTest do
       Swarm.Bootstrap.run(
         output: output,
         node_name: "node-d@10.0.0.14",
-        cookie_file: "../secrets/swarm.cookie",
-        cluster_module: "../clusters/home-lab/cluster.nix",
-        package_ref: "inputs.swarm.packages.${pkgs.system}.default"
+        cookie_file: "/etc/nixos/nix-swarm/secrets/swarm.cookie",
+        cluster_module: "../clusters/home-lab/cluster.nix"
       )
 
     content = File.read!(output)
@@ -20,8 +19,22 @@ defmodule SwarmBootstrapTest do
     assert content =~ "services.swarm"
     assert content =~ "node-d@10.0.0.14"
     assert content =~ "../clusters/home-lab/cluster.nix"
-    assert content =~ "inputs.swarm.packages.${pkgs.system}.default"
+    refute content =~ "package ="
 
     File.rm_rf!(output)
+  end
+
+  test "bootstrap can still override the package reference" do
+    content =
+      Swarm.Bootstrap.machine_module(%{
+        node_name: "node-d@10.0.0.14",
+        cookie_file: "/etc/nixos/nix-swarm/secrets/swarm.cookie",
+        cluster_module: "../cluster/cluster.nix",
+        module_ref: "inputs.swarm.nixosModules.default",
+        package_ref: "inputs.swarm.packages.${pkgs.system}.default"
+      })
+
+    assert content =~ "package = inputs.swarm.packages.${pkgs.system}.default;"
+    assert content =~ "cookieFile = \"/etc/nixos/nix-swarm/secrets/swarm.cookie\";"
   end
 end

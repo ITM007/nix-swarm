@@ -48,8 +48,51 @@ defmodule Swarm.ThreeNodeClusterTest do
         ])
       end)
 
-    assert status_output =~ "gitea"
-    assert status_output =~ "proxy"
+    plain_status_output = strip_ansi(status_output)
+
+    assert plain_status_output =~ "gitea"
+    assert plain_status_output =~ "proxy"
+    assert plain_status_output =~ "placements"
+    assert plain_status_output =~ "units"
+
+    summary_output =
+      capture_io(fn ->
+        Swarm.CLI.main([
+          "--target",
+          Atom.to_string(node_b),
+          "--cookie",
+          Atom.to_string(Node.get_cookie()),
+          "status",
+          "--summary"
+        ])
+      end)
+
+    plain_summary_output = strip_ansi(summary_output)
+
+    assert plain_summary_output =~ "cluster summary"
+    assert plain_summary_output =~ "replicas"
+    assert plain_summary_output =~ "owned"
+    assert plain_summary_output =~ "running"
+    assert plain_summary_output =~ "gitea"
+    assert plain_summary_output =~ "2"
+    assert plain_summary_output =~ "2/3"
+
+    doctor_output =
+      capture_io(fn ->
+        Swarm.CLI.main([
+          "--target",
+          Atom.to_string(node_b),
+          "--cookie",
+          Atom.to_string(Node.get_cookie()),
+          "doctor"
+        ])
+      end)
+
+    plain_doctor_output = strip_ansi(doctor_output)
+
+    assert plain_doctor_output =~ "doctor for"
+    assert plain_doctor_output =~ "distributed Erlang connection"
+    assert plain_doctor_output =~ "This node is reachable for Swarm RPC."
 
     map_output =
       capture_io(fn ->
@@ -63,9 +106,11 @@ defmodule Swarm.ThreeNodeClusterTest do
         ])
       end)
 
-    assert map_output =~ "cluster map"
-    assert map_output =~ "gitea slot"
-    assert map_output =~ "proxy slot"
+    plain_map_output = strip_ansi(map_output)
+
+    assert plain_map_output =~ "cluster map"
+    assert plain_map_output =~ "gitea slot"
+    assert plain_map_output =~ "proxy slot"
 
     members_output =
       capture_io(fn ->
@@ -80,9 +125,11 @@ defmodule Swarm.ThreeNodeClusterTest do
                  ])
       end)
 
-    assert members_output =~ "cluster members"
-    assert members_output =~ "queried node:"
-    assert members_output =~ Atom.to_string(node_b)
+    plain_members_output = strip_ansi(members_output)
+
+    assert plain_members_output =~ "cluster members"
+    assert plain_members_output =~ "queried node"
+    assert plain_members_output =~ Atom.to_string(node_b)
 
     restart_result = :rpc.call(node_b, Swarm.API, :restart_service, ["gitea"])
     assert length(restart_result) == 2
@@ -121,5 +168,9 @@ defmodule Swarm.ThreeNodeClusterTest do
         end)
       end)
     end)
+  end
+
+  defp strip_ansi(output) do
+    Regex.replace(~r/\e\[[\d;]*m/, output, "")
   end
 end

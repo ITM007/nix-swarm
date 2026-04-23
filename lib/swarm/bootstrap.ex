@@ -2,8 +2,15 @@ defmodule Swarm.Bootstrap do
   @moduledoc false
 
   @default_module_ref "inputs.swarm.nixosModules.default"
-  @default_package_ref "inputs.swarm.packages.${pkgs.system}.default"
   @default_cluster_module "../cluster/cluster.nix"
+
+  def defaults do
+    %{
+      cluster_module: @default_cluster_module,
+      module_ref: @default_module_ref,
+      package_ref: "module default (import ../nix/swarm/package.nix { inherit pkgs; })"
+    }
+  end
 
   def run(opts) do
     output = Keyword.fetch!(opts, :output)
@@ -11,9 +18,14 @@ defmodule Swarm.Bootstrap do
     cookie_file = Keyword.fetch!(opts, :cookie_file)
     cluster_module = Keyword.get(opts, :cluster_module, @default_cluster_module)
     module_ref = Keyword.get(opts, :module_ref, @default_module_ref)
-    package_ref = Keyword.get(opts, :package_ref, @default_package_ref)
+    package_ref = Keyword.get(opts, :package_ref)
     deploy? = Keyword.get(opts, :deploy, false)
     deploy_opts = normalize_deploy_opts(opts)
+
+    unless String.starts_with?(cookie_file, "/") do
+      raise ArgumentError,
+            "--cookie-file must be an absolute path on the target machine (for example /etc/nixos/nix-swarm/secrets/swarm.cookie)"
+    end
 
     content =
       machine_module(%{
@@ -46,6 +58,16 @@ defmodule Swarm.Bootstrap do
         module_ref: module_ref,
         package_ref: package_ref
       }) do
+    service_lines =
+      [
+        "    enable = true;",
+        if(package_ref, do: "    package = #{package_ref};"),
+        "    nodeName = \"#{node_name}\";",
+        "    cookieFile = #{nix_string_literal(cookie_file)};"
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n")
+
     """
     { inputs, pkgs, ... }:
     {
@@ -57,13 +79,20 @@ defmodule Swarm.Bootstrap do
       # This host file bootstraps the runtime onto a new machine.
       # Keep the shared cluster and service definitions under cluster/.
       services.swarm = {
-        enable = true;
-        package = #{package_ref};
-        nodeName = "#{node_name}";
-        cookieFile = #{cookie_file};
+    #{service_lines}
       };
     }
     """
+  end
+
+  defp nix_string_literal(value) do
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("${", "\\${")
+
+    "\"#{escaped}\""
   end
 
   defp normalize_deploy_opts(opts) do

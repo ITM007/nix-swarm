@@ -71,22 +71,86 @@ Build the CLI:
 mix escript.build
 ```
 
+The CLI uses ANSI named colors, so the highlights follow your terminal theme, and structured output like status, members, defaults, and apply previews is rendered in ASCII tables.
+
+Install it on a local NixOS workstation from a checkout:
+
+```nix
+# ~/NixFiles/flake.nix
+inputs.swarm = {
+  url = "path:/home/itm/Code/swarm";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+# ~/NixFiles/home-manager/packages.nix
+home.packages = with pkgs; [
+  inputs.swarm.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
+Then rebuild your user environment:
+
+```bash
+cd ~/NixFiles
+home-manager switch --flake .#itm@amd
+```
+
+If that workstation is itself a managed Swarm node, the packaged `swarm` command automatically uses `/etc/nixos/nix-swarm/secrets/swarm.cookie` when it is readable. If it is only an operator workstation, point the CLI at your shared cluster cookie before running remote commands:
+
+```bash
+export SWARM_COOKIE_FILE=/path/to/swarm.cookie
+```
+
+To keep remote commands short without exposing the cookie in `ps`, export the cookie file once per shell:
+
+```bash
+export SWARM_COOKIE_FILE=./secrets/swarm.cookie
+```
+
+See the current defaults:
+
+```bash
+./swarm defaults
+```
+
 Talk to any reachable Swarm node:
 
 ```bash
-./swarm --target swarm@192.168.1.226 --cookie swarm status
-./swarm --target swarm@192.168.1.226 --cookie swarm cluster members
-./swarm --target swarm@192.168.1.226 --cookie swarm cluster map
-./swarm --target swarm@192.168.1.226 --cookie swarm restart gitea
-./swarm --target swarm@192.168.1.226 --cookie swarm logs gitea --lines 100
-./swarm --target swarm@192.168.1.226 --cookie swarm reconcile
+./swarm --target swarm@192.168.1.226 status
+./swarm --target swarm@192.168.1.226 status --summary
+./swarm --target swarm@192.168.1.226 cluster members
+./swarm --target swarm@192.168.1.226 cluster map
+./swarm --target swarm@192.168.1.226 doctor
+./swarm --target swarm@192.168.1.226 restart gitea
+./swarm --target swarm@192.168.1.226 logs gitea --lines 100
+./swarm --target swarm@192.168.1.226 reconcile
 ```
 
 If the CLI cannot auto-detect the right local IP/hostname for distributed Erlang, override it explicitly:
 
 ```bash
-./swarm --target swarm@192.168.1.226 --cookie swarm --name swarmctl@192.168.1.121 status
+./swarm --target swarm@192.168.1.226 --name swarmctl@192.168.1.121 status
 ```
+
+Remote commands no longer have a built-in cookie default. Use one of:
+
+- `--cookie-file /path/to/cookie`
+- `--cookie YOUR_COOKIE`
+- `SWARM_COOKIE_FILE=/path/to/cookie`
+- `SWARM_COOKIE=YOUR_COOKIE`
+
+If a connection fails, run the built-in doctor:
+
+```bash
+./swarm --target swarm@192.168.1.226 doctor
+```
+
+It checks:
+
+- target host resolution
+- TCP reachability to epmd (`4369`) and the default Swarm distribution port (`4370`)
+- the effective local CLI node name
+- whether the remote Swarm API actually answered
 
 ## How to change the cluster
 
@@ -100,11 +164,13 @@ This is the simple workflow:
 Use the CLI to roll out the change:
 
 ```bash
-./swarm apply --dry-run --hosts nixos-2,nixos-3
-./swarm apply --hosts nixos-2,nixos-3
+./swarm apply --dry-run
+./swarm apply
 ```
 
-`swarm apply` now validates the declarative config before it touches any host.
+By default, `swarm apply` now validates every machine file, prints the dry-run plan, and applies to every machine file under `machines/*.nix`.
+
+Override that behavior with flags like `--hosts`, `--source`, `--remote-path`, `--nixos-dir`, `--flake`, `--build-host`, or stop after the preview with `--dry-run`.
 
 `--dry-run`:
 
@@ -139,7 +205,7 @@ Generate a machine file:
 ./swarm add-machine \
   --output ./machines/node-d.nix \
   --node-name swarm@10.0.0.14 \
-  --cookie-file ../secrets/swarm.cookie
+  --cookie-file /etc/nixos/nix-swarm/secrets/swarm.cookie
 ```
 
 Generate it and deploy immediately:
@@ -148,7 +214,7 @@ Generate it and deploy immediately:
 ./swarm add-machine \
   --output ./machines/node-d.nix \
   --node-name swarm@10.0.0.14 \
-  --cookie-file ../secrets/swarm.cookie \
+  --cookie-file /etc/nixos/nix-swarm/secrets/swarm.cookie \
   --hosts root@10.0.0.14 \
   --deploy
 ```
@@ -161,6 +227,9 @@ Then add the new node to `cluster/cluster.nix` and run `swarm apply`.
 
 - peer membership
 - node labels
+- service placement
+- replica count
+- preferred machines
 - runtime intervals
 - which service files are imported
 
@@ -184,16 +253,36 @@ Current example:
       "swarm@192.168.1.121".labels = [ "gitea" "ingress" ];
     };
 
-    runtime = {
-      connectIntervalMs = 1000;
-      reconcileIntervalMs = 1000;
-      generation = "home-lab";
+    services.gitea = {
+      constraints = [ "gitea" ];
+      preferredNodes = [ "swarm@192.168.1.226" ];
+      settings.httpPort = 3003;
+    };
+
+    ingress.sites.gitea = {
+      domain = "gitea.home";
+      service = "gitea";
+      ports = [ 3003 ];
+      default = true;
     };
   };
 }
 ```
 
-To add or remove a service, add or remove its import in this file.
+That means yes: you can decide in `cluster.nix` how many copies of a service you want, which nodes are eligible through labels/constraints, and which specific machines should be preferred first with `preferredNodes`.
+
+Useful defaults that reduce boilerplate:
+
+- `services.swarm.services.<name>.replicas = 1`
+- `services.swarm.services.<name>.unitTemplate = "%{service}.service"` for one replica
+- `services.swarm.services.<name>.unitTemplate = "%{service}@%{slot}.service"` for multiple replicas
+- `services.swarm.services.<name>.constraints = []`
+- `services.swarm.services.<name>.preferredNodes = []`
+- `services.swarm.runtime.connectIntervalMs = 500`
+- `services.swarm.runtime.reconcileIntervalMs = 500`
+- `services.swarm.runtime.generation = "nixos"`
+- `services.swarm.openFirewall = false`
+- `services.swarm.firewallInterfaces = []`
 
 ## Defining one service per file
 
@@ -202,39 +291,38 @@ Put each service in its own file under `cluster/services/`.
 Example:
 
 ```nix
-{ lib, pkgs, ... }:
+{ lib, ... }:
 {
-  systemd.services."gitea@" = {
-    description = "Gitea slot %i";
-    wantedBy = lib.mkForce [];
-    serviceConfig = {
-      Type = "simple";
-      ExecStart = "${pkgs.gitea}/bin/gitea web --config /etc/swarm-gitea/%i/app.ini";
-      Restart = "always";
-    };
-  };
+  networking.firewall.allowedTCPPorts = [ 3003 ];
 
-  services.swarm.services.gitea = {
-    replicas = 2;
-    unitTemplate = "gitea@%{slot}.service";
-    constraints = [ "gitea" ];
-    settings = {
-      domain = "gitea.home";
-    };
-  };
+  services.gitea.enable = true;
+  services.gitea.stateDir = "/var/lib/gitea";
+  services.gitea.settings.server.HTTP_PORT = 3003;
 
-  services.swarm.ingress.sites.gitea = {
-    domain = "gitea.home";
-    service = "gitea";
-    basePort = 3000;
-    websocket = true;
-    clientMaxBodySize = "512m";
-    default = true;
-  };
+  systemd.services.gitea.wantedBy = lib.mkForce [];
 }
 ```
 
-That keeps service behavior local to one file. If you want to change Gitea, you edit `cluster/services/gitea.nix` and nothing else.
+## Security notes
+
+- `swarmd` now reads its cookie at runtime, not from the Nix store. Set `services.swarm.cookieFile` to an absolute path on the target machine, such as `/etc/nixos/nix-swarm/secrets/swarm.cookie`.
+- Swarm now installs both `swarm` and `swarmd` on enabled machines. `swarm` is the operator CLI; `swarmd` is the node runtime used by systemd. On a managed node, the installed `swarm` command automatically uses `/etc/nixos/nix-swarm/secrets/swarm.cookie` when it is readable.
+- Distributed Erlang traffic is still plain Erlang distribution, not TLS. Keep Swarm on a trusted LAN/VPN segment and restrict the firewall to the cluster interface when possible.
+- If you want Swarm to manage firewall rules for you, set `services.swarm.openFirewall = true;` and preferably scope it with `services.swarm.firewallInterfaces = [ "eth0" ];`.
+
+That keeps the machine-local service definition simple. Placement stays in `cluster.nix`, and the service file only describes how that service runs on each node.
+
+If you need multiple replicas of the same application on one machine with different units or ports, you can still use a templated unit such as `gitea@%{slot}.service`. The simple `gitea.service` pattern is for the common single-instance case.
+
+Machine files can stay short too. With the local module import, `services.swarm.package` now defaults to `import ./package.nix { inherit pkgs; }`, so a machine file only needs:
+
+```nix
+services.swarm = {
+  enable = true;
+  nodeName = "swarm@192.168.1.226";
+  cookieFile = ../secrets/swarm.cookie;
+};
+```
 
 ## Tiny ingress helper
 
@@ -246,8 +334,7 @@ Instead of hand-writing nginx upstream blocks, you can declare:
 services.swarm.ingress.sites.gitea = {
   domain = "gitea.home";
   service = "gitea";
-  basePort = 3000;
-  websocket = true;
+  ports = [ 3003 ];
   clientMaxBodySize = "512m";
   default = true;
 };
@@ -257,7 +344,7 @@ This helper:
 
 - enables nginx automatically
 - builds upstreams across all Swarm peers
-- derives one backend port per slot from `basePort`
+- supports either explicit backend ports or one derived port per slot from `basePort`
 - opens port `80/tcp`
 
 If your service ports are not a simple `basePort + slot` pattern, you can set explicit ports instead:
@@ -273,7 +360,7 @@ For anything more complex than that, you can still write nginx config manually.
 To get a high-level overview:
 
 ```bash
-./swarm --target swarm@192.168.1.226 --cookie swarm cluster map
+./swarm --target swarm@192.168.1.226 cluster map
 ```
 
 It shows:
@@ -323,8 +410,8 @@ The simplest path is:
 1. build or reference the Swarm package
 2. import the generated machine file from `machines/`
 3. make sure that machine file imports `cluster/cluster.nix`
-4. run `./swarm apply --dry-run --hosts ...`
-5. then run `./swarm apply --hosts ...`
+4. run `./swarm apply --dry-run`
+5. then run `./swarm apply`
 
 This is simple because SSH is already enough for a small fleet.
 
@@ -352,8 +439,8 @@ This repo includes a real two-node demo using:
 The live deployment that passed used:
 
 ```bash
-./swarm apply --dry-run --hosts nixos-2,nixos-3
-./swarm apply --hosts nixos-2,nixos-3
+./swarm apply --dry-run
+./swarm apply
 ```
 
 The checks that passed on the real machines were:

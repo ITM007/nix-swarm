@@ -42,6 +42,11 @@ defmodule Swarm.Placement do
     do: Enum.at(ranked_nodes, rem(slot, length(ranked_nodes)))
 
   defp ranked_eligible_nodes(service, live_nodes, node_info) do
+    preferred_indexes =
+      service.preferred_nodes
+      |> Enum.with_index()
+      |> Map.new()
+
     live_nodes
     |> Enum.filter(fn node ->
       service
@@ -49,7 +54,8 @@ defmodule Swarm.Placement do
     end)
     |> Enum.sort_by(fn node ->
       score = :erlang.phash2({service.name, node}, 1_073_741_824)
-      {-score, Atom.to_string(node)}
+      preferred_rank = Map.get(preferred_indexes, node, map_size(preferred_indexes))
+      {preferred_rank, -score, Atom.to_string(node)}
     end)
   end
 end
