@@ -2,6 +2,23 @@
 
 let
   version = "0.1.0";
+  mixFodDeps = pkgs.beamPackages.fetchMixDeps {
+    pname = "swarm-deps";
+    inherit version src;
+    hash = "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8=";
+  };
+  exRatatuiNifCache =
+    let
+      fileName = "libex_ratatui-v0.8.0-nif-2.17-x86_64-unknown-linux-gnu.so.tar.gz";
+      artifact = pkgs.fetchurl {
+        url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${fileName}";
+        hash = "sha256-XHHHvm7p3/A8gabr8RZh/QuYWM6pCKDg57BepCm0VGA=";
+      };
+    in
+    pkgs.runCommand "ex-ratatui-precompiled-nif-cache" {} ''
+      mkdir -p "$out"
+      ln -s ${artifact} "$out/${fileName}"
+    '';
   src = pkgs.lib.cleanSourceWith {
     src = ../..;
     filter = path: type:
@@ -11,11 +28,15 @@ let
       !(base == ".git" || base == "_build" || base == "deps" || base == ".serena");
   };
 
-  release = pkgs.beamPackages.mixRelease {
+  release = (pkgs.beamPackages.mixRelease {
     pname = "swarm";
     inherit version src;
     mixEnv = "prod";
-  };
+    inherit mixFodDeps;
+  }).overrideAttrs
+    (_old: {
+      RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH = exRatatuiNifCache;
+    });
 
   cliWrapper = pkgs.writeShellScript "swarm" ''
     default_cookie_file=/etc/nixos/nix-swarm/secrets/swarm.cookie

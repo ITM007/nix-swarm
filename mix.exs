@@ -8,20 +8,21 @@ defmodule Swarm.MixProject do
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      escript: [main_module: Swarm.CLI],
       deps: deps()
     ]
   end
 
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :os_mon],
       mod: {Swarm.Application, []}
     ]
   end
 
   defp deps do
-    []
+    [
+      {:ex_ratatui, "~> 0.8"}
+    ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

@@ -10,9 +10,9 @@ defmodule Swarm.TestCluster do
     config = %{
       peers: nodes,
       nodes: %{
-        :"node-a@127.0.0.1" => %{labels: ["ssd", "edge"]},
-        :"node-b@127.0.0.1" => %{labels: ["ssd"]},
-        :"node-c@127.0.0.1" => %{labels: ["ssd", "edge"]}
+        :"node-a@127.0.0.1" => %{labels: ["ssd", "edge"], deploy_host: "root@node-a"},
+        :"node-b@127.0.0.1" => %{labels: ["ssd"], deploy_host: "root@node-b"},
+        :"node-c@127.0.0.1" => %{labels: ["ssd", "edge"], deploy_host: "root@node-c"}
       },
       services: [
         %{

@@ -1,8 +1,6 @@
 defmodule Swarm.ThreeNodeClusterTest do
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureIO
-
   setup do
     root = Path.join(System.tmp_dir!(), "swarm-three-node-#{System.unique_integer([:positive])}")
     cluster = Swarm.TestCluster.start_three_node_cluster(root)
@@ -15,7 +13,9 @@ defmodule Swarm.ThreeNodeClusterTest do
     {:ok, cluster: cluster}
   end
 
-  test "three node cluster supports status, restart, logs, and failover", %{cluster: cluster} do
+  test "three node cluster supports status, diagnostics, restart, logs, and failover", %{
+    cluster: cluster
+  } do
     [node_a, node_b, node_c] = cluster.nodes
 
     status = :rpc.call(node_a, Swarm.API, :cluster_status, [])
@@ -37,99 +37,19 @@ defmodule Swarm.ThreeNodeClusterTest do
                converged?(cluster.root, cluster.nodes, status.placements)
              end)
 
-    status_output =
-      capture_io(fn ->
-        Swarm.CLI.main([
-          "--target",
-          Atom.to_string(node_b),
-          "--cookie",
-          Atom.to_string(Node.get_cookie()),
-          "status"
-        ])
-      end)
+    remote =
+      Swarm.Remote.options!(
+        target: Atom.to_string(node_b),
+        cookie: Atom.to_string(Node.get_cookie())
+      )
 
-    plain_status_output = strip_ansi(status_output)
+    diagnostic = Swarm.Remote.diagnose_connection(remote)
 
-    assert plain_status_output =~ "gitea"
-    assert plain_status_output =~ "proxy"
-    assert plain_status_output =~ "placements"
-    assert plain_status_output =~ "units"
+    assert diagnostic.connect_result in [true, :ignored]
+    assert diagnostic.remote_probe.cluster_members.status == :ok
 
-    summary_output =
-      capture_io(fn ->
-        Swarm.CLI.main([
-          "--target",
-          Atom.to_string(node_b),
-          "--cookie",
-          Atom.to_string(Node.get_cookie()),
-          "status",
-          "--summary"
-        ])
-      end)
-
-    plain_summary_output = strip_ansi(summary_output)
-
-    assert plain_summary_output =~ "cluster summary"
-    assert plain_summary_output =~ "replicas"
-    assert plain_summary_output =~ "owned"
-    assert plain_summary_output =~ "running"
-    assert plain_summary_output =~ "gitea"
-    assert plain_summary_output =~ "2"
-    assert plain_summary_output =~ "2/3"
-
-    doctor_output =
-      capture_io(fn ->
-        Swarm.CLI.main([
-          "--target",
-          Atom.to_string(node_b),
-          "--cookie",
-          Atom.to_string(Node.get_cookie()),
-          "doctor"
-        ])
-      end)
-
-    plain_doctor_output = strip_ansi(doctor_output)
-
-    assert plain_doctor_output =~ "doctor for"
-    assert plain_doctor_output =~ "distributed Erlang connection"
-    assert plain_doctor_output =~ "This node is reachable for Swarm RPC."
-
-    map_output =
-      capture_io(fn ->
-        Swarm.CLI.main([
-          "--target",
-          Atom.to_string(node_b),
-          "--cookie",
-          Atom.to_string(Node.get_cookie()),
-          "cluster",
-          "map"
-        ])
-      end)
-
-    plain_map_output = strip_ansi(map_output)
-
-    assert plain_map_output =~ "cluster map"
-    assert plain_map_output =~ "gitea slot"
-    assert plain_map_output =~ "proxy slot"
-
-    members_output =
-      capture_io(fn ->
-        assert :ok ==
-                 Swarm.CLI.run([
-                   "--target",
-                   Atom.to_string(node_b),
-                   "--cookie",
-                   Atom.to_string(Node.get_cookie()),
-                   "cluster",
-                   "members"
-                 ])
-      end)
-
-    plain_members_output = strip_ansi(members_output)
-
-    assert plain_members_output =~ "cluster members"
-    assert plain_members_output =~ "queried node"
-    assert plain_members_output =~ Atom.to_string(node_b)
+    overview = :rpc.call(node_b, Swarm.API, :cluster_overview, [])
+    assert length(overview.status.nodes) == 3
 
     restart_result = :rpc.call(node_b, Swarm.API, :restart_service, ["gitea"])
     assert length(restart_result) == 2
@@ -168,9 +88,5 @@ defmodule Swarm.ThreeNodeClusterTest do
         end)
       end)
     end)
-  end
-
-  defp strip_ansi(output) do
-    Regex.replace(~r/\e\[[\d;]*m/, output, "")
   end
 end

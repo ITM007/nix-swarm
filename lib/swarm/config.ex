@@ -84,7 +84,12 @@ defmodule Swarm.Config do
         |> Enum.map(&to_string/1)
         |> MapSet.new()
 
-      {normalize_node_name(node_name), %{labels: labels}}
+      deploy_host =
+        attrs
+        |> fetch(:deploy_host, fetch(attrs, :deployHost))
+        |> normalize_optional_string()
+
+      {normalize_node_name(node_name), %{labels: labels, deploy_host: deploy_host}}
     end)
   end
 
@@ -148,6 +153,10 @@ defmodule Swarm.Config do
 
   defp normalize_node_name(name) when is_atom(name), do: name
   defp normalize_node_name(name), do: String.to_atom(to_string(name))
+
+  defp normalize_optional_string(nil), do: nil
+  defp normalize_optional_string(""), do: nil
+  defp normalize_optional_string(value), do: to_string(value)
 
   defp fetch(data, key, default \\ nil)
 

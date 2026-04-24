@@ -101,14 +101,27 @@ wait_until.(wait_until, fn ->
   converged?.(nodes, status.placements)
 end, System.monotonic_time(:millisecond) + 5_000)
 
+format_summary = fn status ->
+  placements =
+    status.placements
+    |> Enum.map(fn {service, slots} ->
+      owners = slots |> Enum.map(&Atom.to_string(&1.owner)) |> Enum.join(", ")
+      "- #{service}: #{length(slots)} replica(s) on #{owners}"
+    end)
+    |> Enum.join("\n")
+
+  """
+  live nodes: #{Enum.map_join(status.live_nodes, ", ", &Atom.to_string/1)}
+  #{placements}
+  """
+  |> String.trim()
+end
+
 IO.puts("=== initial cluster status ===")
-Swarm.CLI.main([
-  "--target",
-  Atom.to_string(hd(nodes)),
-  "--cookie",
-  Atom.to_string(Node.get_cookie()),
-  "status"
-])
+hd(nodes)
+|> :rpc.call(Swarm.API, :cluster_status, [])
+|> format_summary.()
+|> IO.puts()
 
 restart_results = :rpc.call(Enum.at(nodes, 1), Swarm.API, :restart_service, ["gitea"])
 
@@ -141,13 +154,10 @@ end, System.monotonic_time(:millisecond) + 5_000)
 
 IO.puts("")
 IO.puts("=== status after node failure ===")
-Swarm.CLI.main([
-  "--target",
-  Atom.to_string(hd(survivors)),
-  "--cookie",
-  Atom.to_string(Node.get_cookie()),
-  "status"
-])
+hd(survivors)
+|> :rpc.call(Swarm.API, :cluster_status, [])
+|> format_summary.()
+|> IO.puts()
 
 IO.puts("")
 IO.puts("three-node verification passed")

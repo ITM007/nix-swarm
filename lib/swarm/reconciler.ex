@@ -34,11 +34,14 @@ defmodule Swarm.Reconciler do
               {:error, _} -> :unknown
             end
 
-          Map.put(slot, :status, status)
+          slot
+          |> Map.put(:status, status)
+          |> Map.put(:metrics, Executor.unit_metrics(slot.unit))
         end)
 
       %{
         name: service.name,
+        ports: service_ports(service),
         local_owned_slots:
           slots
           |> Enum.filter(&(&1.owner == Node.self()))
@@ -117,5 +120,31 @@ defmodule Swarm.Reconciler do
 
   defp schedule_reconcile do
     Process.send_after(self(), :reconcile, Swarm.Config.runtime().reconcile_interval_ms)
+  end
+
+  defp service_ports(service) do
+    service
+    |> Map.get(:settings, %{})
+    |> Enum.flat_map(fn {key, value} ->
+      if String.contains?(String.downcase(to_string(key)), "port") do
+        case value do
+          port when is_integer(port) and port > 0 ->
+            [port]
+
+          port when is_binary(port) ->
+            case Integer.parse(port) do
+              {parsed, ""} when parsed > 0 -> [parsed]
+              _ -> []
+            end
+
+          _ ->
+            []
+        end
+      else
+        []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 end

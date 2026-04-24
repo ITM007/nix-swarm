@@ -9,11 +9,15 @@ defmodule Swarm.Deploy do
 
   def defaults(source \\ @default_source) do
     resolved_source = Path.expand(source)
+    machines_dir = Path.join(resolved_source, "machines")
+    cluster_file = Path.join(resolved_source, "cluster/cluster.nix")
 
     %{
       source: resolved_source,
+      cluster_file: cluster_file,
+      machines_dir: machines_dir,
       host_source: @machine_glob,
-      hosts: default_hosts(resolved_source),
+      hosts: default_hosts(resolved_source, machines_dir),
       remote_path: @default_remote_path,
       nixos_dir: @default_nixos_dir,
       validate_before_apply: true,
@@ -23,6 +27,7 @@ defmodule Swarm.Deploy do
   end
 
   def run(opts) do
+    opts = normalize_opts(opts)
     plan = plan(opts) |> validate!()
 
     if plan.dry_run do
@@ -40,15 +45,21 @@ defmodule Swarm.Deploy do
   end
 
   def plan(opts) do
+    opts = normalize_opts(opts)
     source = Path.expand(Keyword.get(opts, :source, @default_source))
+
+    cluster_file =
+      Path.expand(Keyword.get(opts, :cluster_file, Path.join(source, "cluster/cluster.nix")))
+
+    machines_dir = Path.expand(Keyword.get(opts, :machines_dir, Path.join(source, "machines")))
     remote_path = Keyword.get(opts, :remote_path, @default_remote_path)
     nixos_dir = Keyword.get(opts, :nixos_dir, @default_nixos_dir)
-    hosts = hosts(opts, source)
+    hosts = hosts(opts, source, machines_dir)
     dry_run = Keyword.get(opts, :dry_run, false)
 
-    validate_inputs!(source, hosts)
+    validate_inputs!(source, hosts, cluster_file, machines_dir)
 
-    machine_files = machine_files(source)
+    machine_files = machine_files_from_dir(machines_dir)
     validation_commands = validation_commands(machine_files)
 
     results =
@@ -63,6 +74,8 @@ defmodule Swarm.Deploy do
     %{
       dry_run: dry_run,
       source: source,
+      cluster_file: cluster_file,
+      machines_dir: machines_dir,
       remote_path: remote_path,
       nixos_dir: nixos_dir,
       hosts: hosts,
@@ -74,12 +87,27 @@ defmodule Swarm.Deploy do
     }
   end
 
-  def hosts(opts), do: hosts(opts, Path.expand(Keyword.get(opts, :source, @default_source)))
+  def hosts(opts),
+    do:
+      hosts(
+        normalize_opts(opts),
+        Path.expand(Keyword.get(normalize_opts(opts), :source, @default_source)),
+        Path.expand(
+          Keyword.get(
+            normalize_opts(opts),
+            :machines_dir,
+            Path.join(Keyword.get(normalize_opts(opts), :source, @default_source), "machines")
+          )
+        )
+      )
 
-  def hosts(opts, source) do
+  def hosts(opts, source, machines_dir \\ nil) do
+    opts = normalize_opts(opts)
+    machines_dir = if is_nil(machines_dir), do: Path.join(source, "machines"), else: machines_dir
+
     case {Keyword.get(opts, :hosts), Keyword.get(opts, :host)} do
       {nil, nil} ->
-        default_hosts(source)
+        default_hosts(source, machines_dir)
 
       {nil, host} ->
         parse_hosts(host)
@@ -89,16 +117,29 @@ defmodule Swarm.Deploy do
     end
   end
 
-  def default_hosts(source \\ @default_source) do
-    source
-    |> Path.expand()
-    |> machine_files()
+  def default_hosts(source \\ @default_source, machines_dir \\ nil) do
+    source = Path.expand(source)
+
+    machines_dir =
+      if is_nil(machines_dir), do: Path.join(source, "machines"), else: Path.expand(machines_dir)
+
+    machines_dir
+    |> machine_files_from_dir()
     |> Enum.map(&machine_host/1)
   end
 
   def machine_files(source) do
     source
+    |> Path.expand()
     |> Path.join(@machine_glob)
+    |> Path.wildcard()
+    |> Enum.sort()
+  end
+
+  def machine_files_from_dir(machines_dir) do
+    machines_dir
+    |> Path.expand()
+    |> Path.join("*.nix")
     |> Path.wildcard()
     |> Enum.sort()
   end
@@ -172,10 +213,19 @@ defmodule Swarm.Deploy do
 
   defp parse_hosts(value) do
     value
-    |> to_string()
-    |> String.split(",", trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
+    |> List.wrap()
+    |> case do
+      [single] when is_binary(single) ->
+        single
+        |> String.split(",", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+
+      values ->
+        values
+        |> Enum.map(&(&1 |> to_string() |> String.trim()))
+        |> Enum.reject(&(&1 == ""))
+    end
   end
 
   defp validation_command(machine_file) do
@@ -215,7 +265,10 @@ defmodule Swarm.Deploy do
   defp maybe_append_option(args, _flag, nil), do: args
   defp maybe_append_option(args, flag, value), do: args ++ [flag, value]
 
-  defp validate_inputs!(source, hosts) do
+  defp normalize_opts(opts) when is_list(opts), do: opts
+  defp normalize_opts(opts) when is_map(opts), do: Enum.to_list(opts)
+
+  defp validate_inputs!(source, hosts, cluster_file, machines_dir) do
     if hosts == [] do
       raise ArgumentError, "at least one host is required"
     end
@@ -224,13 +277,12 @@ defmodule Swarm.Deploy do
       raise ArgumentError, "source directory does not exist: #{source}"
     end
 
-    if not File.exists?(Path.join(source, "cluster/cluster.nix")) do
-      raise ArgumentError,
-            "cluster file does not exist: #{Path.join(source, "cluster/cluster.nix")}"
+    if not File.exists?(cluster_file) do
+      raise ArgumentError, "cluster file does not exist: #{cluster_file}"
     end
 
-    if machine_files(source) == [] do
-      raise ArgumentError, "no machine files found under #{Path.join(source, "machines")}"
+    if machine_files_from_dir(machines_dir) == [] do
+      raise ArgumentError, "no machine files found under #{machines_dir}"
     end
   end
 

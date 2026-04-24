@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1054" height="852" viewBox="0 0 1054 852" role="img" aria-label="Swarm services screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+  </defs>
+  <rect width="1054" height="852" rx="18" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1052" height="850" rx="17" fill="none" stroke="#334155" stroke-width="2"/>
+  <text x="20" y="26" fill="#e5e7eb" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="14" xml:space="preserve">
+    <tspan x="20" y="26">╭ views ───────────────────────────────────────╮╭ target: node-b@127.0.0.1 | refreshed: 2026-04-24 17:13:18 | data: liv╮</tspan>
+    <tspan x="20" y="46">│ DASHBOARD  │  MAP  │  MACHINES  │  SERVICES  ││ idle                                                                 │</tspan>
+    <tspan x="20" y="66">╰──────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="86">╭ services ──────────────────────╮╭ service summary ───────────────────────────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="106">│&gt; gitea  replicas=2 owners=2    ││service: gitea                                                                      │</tspan>
+    <tspan x="20" y="126">│  proxy  replicas=1 owners=1    ││replicas: 2                                                                         │</tspan>
+    <tspan x="20" y="146">│                                ││owners: node-c@127.0.0.1, node-a@127.0.0.1                                          │</tspan>
+    <tspan x="20" y="166">│                                ││running units: 2/2                                                                  │</tspan>
+    <tspan x="20" y="186">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="206">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="226">│                                │╰────────────────────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="246">│                                │╭ cpu ────────────────────────────────────╮╭ memory ─────────────────────────────────╮</tspan>
+    <tspan x="20" y="266">│                                ││                  ● ● ●                  ││                  ○ ● ○                  │</tspan>
+    <tspan x="20" y="286">│                                ││                   ● ●                   ││                   ○ ○                   │</tspan>
+    <tspan x="20" y="306">│                                │╰─────────────────────────────────────────╯╰─────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="326">│                                │╭ disk ───────────────────────────────────╮╭ network ────────────────────────────────╮</tspan>
+    <tspan x="20" y="346">│                                ││                  ● ● ●                  ││                  ● ● ●                  │</tspan>
+    <tspan x="20" y="366">│                                ││                   ● ●                   ││                   ● ●                   │</tspan>
+    <tspan x="20" y="386">│                                │╰─────────────────────────────────────────╯╰─────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="406">│                                │╭ service detail gitea ──────────────────────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="426">│                                ││slot   owner                         unit                            status         │</tspan>
+    <tspan x="20" y="446">│                                ││0      node-c@127.0.0.1              gitea@0.service                 running        │</tspan>
+    <tspan x="20" y="466">│                                ││1      node-a@127.0.0.1              gitea@1.service                 running        │</tspan>
+    <tspan x="20" y="486">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="506">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="526">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="546">│                                │╰────────────────────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="566">│                                │╭ service logs ──────────────────────────────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="586">│                                ││== node-c@127.0.0.1 ==                                                              │</tspan>
+    <tspan x="20" y="606">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="626">│                                ││-- slot 0 gitea@0.service (running) --                                              │</tspan>
+    <tspan x="20" y="646">│                                ││2026-04-24T17:13:18.112368Z start                                                   │</tspan>
+    <tspan x="20" y="666">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="686">│                                ││== node-a@127.0.0.1 ==                                                              │</tspan>
+    <tspan x="20" y="706">│                                ││                                                                                    │</tspan>
+    <tspan x="20" y="726">│                                ││-- slot 1 gitea@1.service (running) --                                              │</tspan>
+    <tspan x="20" y="746">╰────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="766">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</tspan>
+    <tspan x="20" y="786">q/esc quit | tab view | j/k service | enter/r refresh | x restart | c reconcile | u update | shift+j/k scroll</tspan>
+    <tspan x="20" y="806">status: refresh complete: connected to node-b@127.0.0.1</tspan>
+  </text>
+</svg>

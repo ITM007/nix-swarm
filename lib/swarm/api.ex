@@ -5,13 +5,30 @@ defmodule Swarm.API do
   alias Swarm.Placement
   alias Swarm.Reconciler
 
+  @version_cache_key {__MODULE__, :version}
+
   def local_status do
     %{
       node: Node.self(),
       live_nodes: Swarm.Cluster.live_nodes(),
       generation: Swarm.Config.runtime().generation,
-      services: Reconciler.local_status()
+      version: version(),
+      services: Reconciler.local_status(),
+      metrics: node_metrics(),
+      network_info: network_info()
     }
+  end
+
+  def version do
+    case :persistent_term.get(@version_cache_key, nil) do
+      nil ->
+        version = build_version()
+        :persistent_term.put(@version_cache_key, version)
+        version
+
+      version ->
+        version
+    end
   end
 
   def cluster_status do
@@ -29,7 +46,8 @@ defmodule Swarm.API do
     %{
       queried_node: Node.self(),
       live_nodes: Swarm.Cluster.live_nodes(),
-      configured_nodes: Swarm.Config.peers()
+      configured_nodes: Swarm.Config.peers(),
+      deploy_hosts: deploy_hosts()
     }
   end
 
@@ -73,6 +91,61 @@ defmodule Swarm.API do
     end)
   end
 
+  def node_service_logs(node_name, lines \\ 50) do
+    node_name
+    |> normalize_target_node()
+    |> rpc(__MODULE__, :local_node_service_logs, [lines])
+  end
+
+  def local_node_service_logs(lines) do
+    config = Swarm.Config.current()
+    live_nodes = Swarm.Cluster.live_nodes()
+
+    Placement.local_units(Node.self(), config, live_nodes)
+    |> Enum.group_by(& &1.service)
+    |> Enum.sort_by(fn {service, _slots} -> service end)
+    |> Enum.map(fn {service, slots} ->
+      %{
+        service: service,
+        units:
+          slots
+          |> Enum.sort_by(& &1.slot)
+          |> Enum.map(fn slot ->
+            %{
+              slot: slot.slot,
+              unit: slot.unit,
+              status: local_unit_status(slot.unit),
+              logs: read_unit_logs(slot.unit, lines),
+              metrics: Executor.unit_metrics(slot.unit)
+            }
+          end)
+      }
+    end)
+  end
+
+  def cluster_logs(node_name, lines \\ 50) do
+    node_name
+    |> normalize_target_node()
+    |> rpc(__MODULE__, :local_cluster_logs, [lines])
+  end
+
+  def local_cluster_logs(lines) do
+    case Swarm.Config.runtime().executor.adapter do
+      :systemd ->
+        case System.cmd(
+               "journalctl",
+               ["-u", "swarmd", "-n", Integer.to_string(lines), "--no-pager"],
+               stderr_to_stdout: true
+             ) do
+          {output, 0} -> String.trim(output)
+          {output, _status} -> String.trim(output)
+        end
+
+      _ ->
+        fake_cluster_logs(lines)
+    end
+  end
+
   def local_logs(service_name, lines) do
     config = Swarm.Config.current()
     live_nodes = Swarm.Cluster.live_nodes()
@@ -88,6 +161,83 @@ defmodule Swarm.API do
 
       %{slot: slot.slot, unit: slot.unit, logs: logs}
     end)
+  end
+
+  def node_metrics do
+    try do
+      cpu_total = logical_processors_available()
+      cpu_pct = normalize_percent(:cpu_sup.util())
+      cpu_used = cpu_total * cpu_pct / 100.0
+
+      mem_data = :memsup.get_system_memory_data()
+      total_mem = memory_data_value(mem_data, :total_memory)
+      free_mem = memory_data_value(mem_data, :free_memory)
+      used_mem = max(total_mem - free_mem, 0)
+      mem_pct = ratio_percent(used_mem, total_mem)
+
+      {disk_used, disk_total} = disk_usage()
+      disk_pct = ratio_percent(disk_used, disk_total)
+
+      network = network_counters()
+
+      {uptime_ms, _} = :erlang.statistics(:wall_clock)
+      uptime_sec = div(uptime_ms, 1000)
+
+      %{
+        cpu: %{
+          used: cpu_used,
+          total: cpu_total,
+          pct: round(cpu_pct)
+        },
+        memory: %{
+          used: used_mem,
+          total: total_mem,
+          pct: mem_pct
+        },
+        disk: %{
+          used: disk_used,
+          total: disk_total,
+          pct: disk_pct
+        },
+        network: network,
+        uptime: uptime_sec
+      }
+    rescue
+      _ ->
+        %{
+          cpu: %{used: 0.0, total: 0, pct: 0},
+          memory: %{used: 0, total: 0, pct: 0},
+          disk: %{used: 0, total: 0, pct: 0},
+          network: %{received: 0, transmitted: 0, total: 0},
+          uptime: 0
+        }
+    end
+  end
+
+  def network_info do
+    ips =
+      case :inet.getifaddrs() do
+        {:ok, interfaces} ->
+          Enum.flat_map(interfaces, fn {_name, opts} ->
+            opts
+            |> Keyword.get_values(:addr)
+            |> Enum.map(fn
+              addr when tuple_size(addr) == 4 -> :inet.ntoa(addr) |> to_string()
+              _ -> nil
+            end)
+          end)
+          |> Enum.reject(&is_nil/1)
+          |> Enum.reject(&(&1 == "127.0.0.1"))
+          |> Enum.uniq()
+
+        _ ->
+          []
+      end
+
+    %{
+      ips: ips,
+      ports: [22, 80, 443, 4369, 4370]
+    }
   end
 
   defp owners_for(live_nodes, service_name) do
@@ -117,6 +267,222 @@ defmodule Swarm.API do
       apply(module, function, args)
     else
       :rpc.call(node, module, function, args, 5_000)
+    end
+  end
+
+  defp normalize_target_node(node) when is_atom(node), do: node
+  defp normalize_target_node(node) when is_binary(node), do: String.to_atom(node)
+
+  defp local_unit_status(unit) do
+    case Executor.unit_status(unit) do
+      {:ok, status} -> status
+      {:error, _reason} -> :unknown
+    end
+  end
+
+  defp read_unit_logs(unit, lines) do
+    case Executor.unit_logs(unit, lines) do
+      {:ok, output} -> output
+      {:error, reason} -> inspect(reason)
+    end
+  end
+
+  defp fake_cluster_logs(lines) do
+    services =
+      Reconciler.local_status()
+      |> Enum.flat_map(fn service ->
+        Enum.map(service.units, fn unit ->
+          "#{service.name} #{unit.unit} #{unit.status}"
+        end)
+      end)
+      |> Enum.take(lines)
+
+    [
+      "#{DateTime.utc_now() |> DateTime.to_iso8601()} fake cluster runtime",
+      "node=#{Node.self()} generation=#{Swarm.Config.runtime().generation}"
+      | services
+    ]
+    |> Enum.join("\n")
+    |> String.trim()
+  end
+
+  defp deploy_hosts do
+    Swarm.Config.current().nodes
+    |> Enum.reduce(%{}, fn {node, attrs}, acc ->
+      case Map.get(attrs, :deploy_host) do
+        nil -> acc
+        host -> Map.put(acc, node, host)
+      end
+    end)
+  end
+
+  defp build_version do
+    app_version =
+      case Application.spec(:swarm, :vsn) do
+        nil -> "0.1.0"
+        vsn when is_list(vsn) -> List.to_string(vsn)
+        vsn -> to_string(vsn)
+      end
+
+    digest =
+      :swarm
+      |> Application.spec(:modules)
+      |> List.wrap()
+      |> Enum.sort()
+      |> Enum.reduce(:crypto.hash_init(:sha256), fn module, acc ->
+        case read_module_beam(module) do
+          {:ok, beam} -> :crypto.hash_update(acc, beam)
+          :error -> acc
+        end
+      end)
+      |> :crypto.hash_final()
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 10)
+
+    "v#{app_version}-#{digest}"
+  end
+
+  defp read_module_beam(module) do
+    case :code.which(module) do
+      path when is_list(path) ->
+        case File.read(List.to_string(path)) do
+          {:ok, beam} -> {:ok, beam}
+          {:error, _reason} -> :error
+        end
+
+      path when is_binary(path) ->
+        case File.read(path) do
+          {:ok, beam} -> {:ok, beam}
+          {:error, _reason} -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp logical_processors_available do
+    case :erlang.system_info(:logical_processors_available) do
+      value when is_integer(value) and value > 0 ->
+        value
+
+      _ ->
+        case :erlang.system_info(:logical_processors) do
+          value when is_integer(value) and value > 0 -> value
+          _ -> 1
+        end
+    end
+  end
+
+  defp normalize_percent(value) when is_integer(value), do: value |> max(0) |> min(100)
+  defp normalize_percent(value) when is_float(value), do: value |> max(0.0) |> min(100.0)
+  defp normalize_percent(_value), do: 0
+
+  defp ratio_percent(_used, total) when total <= 0, do: 0
+
+  defp ratio_percent(used, total) do
+    round(used / total * 100)
+  end
+
+  defp memory_data_value(data, key) do
+    data
+    |> Keyword.get(key, 0)
+  end
+
+  defp disk_usage do
+    disk =
+      :disksup.get_disk_data()
+      |> Enum.filter(fn {_mount, total_kb, _pct} -> total_kb > 0 end)
+      |> preferred_disk()
+
+    case disk do
+      {_mount, total_kb, used_pct} ->
+        total = total_kb * 1024
+        used = round(total * normalize_percent(used_pct) / 100)
+        {used, total}
+
+      nil ->
+        {0, 0}
+    end
+  end
+
+  defp preferred_disk(disks) do
+    Enum.find(disks, fn {mount, _total_kb, _pct} -> to_string(mount) == "/" end) ||
+      Enum.max_by(disks, fn {_mount, total_kb, _pct} -> total_kb end, fn -> nil end)
+  end
+
+  defp network_counters do
+    stats =
+      candidate_network_interfaces()
+      |> Enum.map(&network_interface_stats/1)
+      |> Enum.reject(&is_nil/1)
+
+    Enum.reduce(stats, %{received: 0, transmitted: 0, total: 0}, fn stat, acc ->
+      %{
+        received: acc.received + stat.received,
+        transmitted: acc.transmitted + stat.transmitted,
+        total: acc.total + stat.total
+      }
+    end)
+  end
+
+  defp candidate_network_interfaces do
+    names =
+      case :inet.getifaddrs() do
+        {:ok, interfaces} ->
+          interfaces
+          |> Enum.flat_map(fn {name, opts} ->
+            flags = Keyword.get(opts, :flags, [])
+
+            if :loopback in flags do
+              []
+            else
+              [to_string(name)]
+            end
+          end)
+          |> Enum.uniq()
+
+        _ ->
+          []
+      end
+
+    physical =
+      Enum.filter(names, fn name ->
+        File.exists?("/sys/class/net/#{name}/device")
+      end)
+
+    if physical == [], do: names, else: physical
+  end
+
+  defp network_interface_stats(name) do
+    with {:ok, received} <- read_sysfs_integer("/sys/class/net/#{name}/statistics/rx_bytes"),
+         {:ok, transmitted} <- read_sysfs_integer("/sys/class/net/#{name}/statistics/tx_bytes") do
+      speed_mbps =
+        case read_sysfs_integer("/sys/class/net/#{name}/speed") do
+          {:ok, value} when value > 0 -> value
+          _ -> 0
+        end
+
+      %{
+        received: received,
+        transmitted: transmitted,
+        total: div(speed_mbps * 1_000_000, 8)
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  defp read_sysfs_integer(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        case Integer.parse(String.trim(contents)) do
+          {value, _rest} -> {:ok, value}
+          :error -> :error
+        end
+
+      {:error, _reason} ->
+        :error
     end
   end
 end

@@ -28,7 +28,9 @@ let
     "[${concatMapStringsSep ", " (peer: "'${peer}'") peers}]";
 
   mkNodeEntry = name: nodeCfg: ''
-    {'${name}', [{labels, ${mkStringList nodeCfg.labels}}]}
+    {'${name}', [
+      {labels, ${mkStringList nodeCfg.labels}}${if nodeCfg.deployHost == null then "" else ",\n      {deploy_host, ${toErlTerm nodeCfg.deployHost}}"}
+    ]}
   '';
 
   mkServiceEntry = name: serviceCfg: ''
@@ -81,7 +83,7 @@ in
     package = mkOption {
       type = types.package;
       default = import ./package.nix { inherit pkgs; };
-      description = "Package containing the Swarm CLI (`bin/swarm`) and node runtime (`bin/swarmd`).";
+      description = "Package containing the Swarm operator TUI (`bin/swarm`) and node runtime (`bin/swarmd`).";
     };
 
     nodeName = mkOption {
@@ -103,7 +105,7 @@ in
     distributionPort = mkOption {
       type = types.port;
       default = 4370;
-      description = "Fixed TCP port used by distributed Erlang for Swarm peer and CLI connections.";
+      description = "Fixed TCP port used by distributed Erlang for Swarm peer and operator connections.";
     };
 
     openFirewall = mkOption {
@@ -126,9 +128,17 @@ in
 
     nodes = mkOption {
       type = types.attrsOf (types.submodule ({ ... }: {
-        options.labels = mkOption {
-          type = types.listOf types.str;
-          default = [];
+        options = {
+          labels = mkOption {
+            type = types.listOf types.str;
+            default = [];
+          };
+
+          deployHost = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "SSH host used by `swarm update` when this node is live.";
+          };
         };
       }));
       default = {};

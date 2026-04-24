@@ -58,4 +58,12 @@ defmodule SwarmDeployTest do
 
     assert Enum.map(plan.results, & &1.host) == ["nixos-2", "nixos-3"]
   end
+
+  test "plan accepts defaults maps for update flows" do
+    source = Path.expand("..", __DIR__)
+    plan = Swarm.Deploy.plan(Swarm.Deploy.defaults(source))
+
+    assert plan.source == source
+    assert Enum.map(plan.results, & &1.host) == ["nixos-2", "nixos-3"]
+  end
 end

@@ -6,22 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Initial Swarm release for leaderless service orchestration across NixOS machines.
-- CLI commands for cluster status, membership, topology, restarts, logs, reconciliation, machine bootstrapping, and deploy/apply workflows.
+- A full-screen operator TUI for dashboard, map, machines, services, logs, dry-run/apply, and rolling updates.
 - Integration and unit coverage for placement, deploy planning, bootstrap generation, and multi-node cluster behavior.
+- Public release assets: MIT license, starter-config examples, and rendered TUI screenshots for the README.
 
 ### Changed
-- Documented the recommended CLI override for `--name` when distributed Erlang auto-detection needs an explicit local host or IP.
-- Added a `doctor` CLI command, compact `status --summary` output, and richer connection-failure diagnostics with concrete fixes.
-- Added a `defaults` CLI command and pushed more behavior into sensible defaults so common commands and Nix files stay shorter.
-- `swarm apply` now defaults to validating, previewing, and targeting every machine file under `machines/*.nix`, while still allowing explicit overrides.
+- Swarm is now TUI-first for the public alpha; the old one-shot CLI subcommands were removed from the public surface.
+- Launch-time options now focus on TUI startup, remote connection, and path overrides for local config editing/apply workflows.
+- `swarm` on NixOS is documented and packaged as the operator console, while `swarmd` remains the node runtime.
 - Simplified the sample Gitea service to use the stock NixOS `services.gitea` module for the common single-instance case, while moving placement decisions into `cluster/cluster.nix`.
 - Added `preferredNodes` placement support so cluster config can bias services toward specific machines.
 - Standardized repository metadata for first-time publication with a project changelog and stricter ignore rules for generated and local-only files.
 
 ### Fixed
-- The CLI now derives a local node name for longname targets instead of reusing the remote host, which prevents failed distributed Erlang connections from a different machine.
-- Remote connection and RPC failures now return clean `error:` output instead of raw runtime stack traces.
-- `cluster members` output now includes a clear heading and queried-node context.
-- The installed Nix package now exposes `swarm` as the operator CLI and `swarmd` as the node runtime, so SSH shells on cluster nodes can run Swarm commands directly.
-- Swarm cookies are no longer read into the Nix store or exposed through the `swarmd` systemd environment, and remote CLI commands no longer fall back to the insecure default cookie `swarm`.
-- `swarm apply` now terminates SSH option parsing explicitly and evaluates machine files through a quoted Nix path, closing command-injection edge cases.
+- Launch-time remote diagnostics now use TUI/operator wording instead of referring to removed CLI commands.
+- The installed Nix package exposes `swarm` as the operator TUI and `swarmd` as the node runtime.
+- Swarm cookies are no longer read into the Nix store or exposed through the `swarmd` systemd environment.
+- `shift+h/j/k/l` scrolling now works correctly instead of being intercepted by normal navigation handlers.

@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1054" height="852" viewBox="0 0 1054 852" role="img" aria-label="Swarm dashboard screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+  </defs>
+  <rect width="1054" height="852" rx="18" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1052" height="850" rx="17" fill="none" stroke="#334155" stroke-width="2"/>
+  <text x="20" y="26" fill="#e5e7eb" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="14" xml:space="preserve">
+    <tspan x="20" y="26">╭ views ───────────────────────────────────────╮╭ target: node-b@127.0.0.1 | refreshed: 2026-04-24 17:13:18 | data: liv╮</tspan>
+    <tspan x="20" y="46">│ DASHBOARD  │  MAP  │  MACHINES  │  SERVICES  ││ idle                                                                 │</tspan>
+    <tspan x="20" y="66">╰──────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="86">╭ cpu ──────────────────╮╭ memory ───────────────╮╭ nodes ─────────────────────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="106">│         ○ ● ○         ││         ○ ● ●         ││node             live     version      uptime     owned    running  │</tspan>
+    <tspan x="20" y="126">│          ○ ○          ││          ○ ●          ││node-a@127.0.0.1 up       v0.1.0-c806f 0s         1        1        │</tspan>
+    <tspan x="20" y="146">│        ○ 2% ○         ││       ○ 31.9% ●       ││node-b@127.0.0.1 up       v0.1.0-c806f 0s         0        0        │</tspan>
+    <tspan x="20" y="166">│          ○ ○          ││          ○ ○          ││node-c@127.0.0.1 up       v0.1.0-c806f 0s         2        2        │</tspan>
+    <tspan x="20" y="186">│         ○ ○ ○         ││         ○ ○ ○         ││                                                                    │</tspan>
+    <tspan x="20" y="206">│    1.5 / 72 cores     ││ 59.2 GiB / 185.7 GiB  ││                                                                    │</tspan>
+    <tspan x="20" y="226">│                       ││                       ││                                                                    │</tspan>
+    <tspan x="20" y="246">│                       ││                       │╰────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="266">│                       ││                       │╭ cluster health ────────────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="286">╰───────────────────────╯╰───────────────────────╯│█████████████████████████3/3 running (100%) ████████████████████████│</tspan>
+    <tspan x="20" y="306">╭ disk ─────────────────╮╭ network ──────────────╮╰────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="326">│         ○ ● ●         ││         ○ ○ ○         │╭ rollout summary ───────────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="346">│          ○ ●          ││          ○ ○          ││Last successful update: none yet                                    │</tspan>
+    <tspan x="20" y="366">│        ● 82% ●        ││        ○ 0% ○         │╰────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="386">│          ● ●          ││          ○ ○          │╭ rollout status ────────────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="406">│         ● ● ●         ││         ○ ○ ○         ││No rollout has run yet.                                             │</tspan>
+    <tspan x="20" y="426">│   4.2 TiB / 5.1 TiB   ││  0 B/s / 357.6 MiB/s  ││Press u to preview target hosts before applying the next update.    │</tspan>
+    <tspan x="20" y="446">│                       ││                       ││                                                                    │</tspan>
+    <tspan x="20" y="466">│                       ││                       ││                                                                    │</tspan>
+    <tspan x="20" y="486">│                       ││                       ││                                                                    │</tspan>
+    <tspan x="20" y="506">╰───────────────────────╯╰───────────────────────╯╰────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="526">╭ services ──────────────────────────────────────╮╭ service detail gitea ──────────────────────────────────────────────╮</tspan>
+    <tspan x="20" y="546">│&gt; gitea  replicas=2 owners=2                    ││slot   owner                   unit                       status    │</tspan>
+    <tspan x="20" y="566">│  proxy  replicas=1 owners=1                    ││0      node-c@127.0.0.1        gitea@0.service            running   │</tspan>
+    <tspan x="20" y="586">│                                                ││1      node-a@127.0.0.1        gitea@1.service            running   │</tspan>
+    <tspan x="20" y="606">│                                                ││                                                                    │</tspan>
+    <tspan x="20" y="626">│                                                ││                                                                    │</tspan>
+    <tspan x="20" y="646">│                                                ││                                                                    │</tspan>
+    <tspan x="20" y="666">│                                                ││                                                                    │</tspan>
+    <tspan x="20" y="686">│                                                ││                                                                    │</tspan>
+    <tspan x="20" y="706">│                                                ││                                                                    │</tspan>
+    <tspan x="20" y="726">│                                                ││                                                                    │</tspan>
+    <tspan x="20" y="746">╰────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────╯</tspan>
+    <tspan x="20" y="766">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</tspan>
+    <tspan x="20" y="786">q/esc quit | tab view | j/k service | enter/r refresh | x restart | c reconcile | u update | shift+j/k scroll</tspan>
+    <tspan x="20" y="806">status: refresh complete: connected to node-b@127.0.0.1</tspan>
+  </text>
+</svg>
