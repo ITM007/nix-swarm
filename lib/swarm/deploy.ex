@@ -148,9 +148,15 @@ defmodule Swarm.Deploy do
     Enum.map(machine_files, &validation_command/1)
   end
 
-  def rebuild_command(opts) do
+  def rebuild_command(opts, nixos_dir \\ @default_nixos_dir) do
+    nixos_config = Path.join(nixos_dir, "configuration.nix")
+
     ["nixos-rebuild", "switch"]
     |> maybe_append_option("--flake", Keyword.get(opts, :flake))
+    |> maybe_append_option(
+      "-I",
+      if(Keyword.has_key?(opts, :flake), do: nil, else: "nixos-config=#{nixos_config}")
+    )
     |> maybe_append_option("--build-host", Keyword.get(opts, :build_host))
     |> Enum.map_join(" ", &shell_escape/1)
   end
@@ -163,27 +169,29 @@ defmodule Swarm.Deploy do
     remote_extract =
       """
       set -euo pipefail
+      #{remote_root_prelude("remote deployment requires root or passwordless sudo to manage #{remote_path}")}
       remote_path=#{shell_escape(remote_path)}
       staging="${remote_path}.new"
       backup="${remote_path}.backup-$(date +%Y%m%d%H%M%S)"
-      rm -rf "$staging"
-      mkdir -p "$staging"
-      tar -xzf - -C "$staging"
-      if [ -e "$remote_path" ]; then
-        cp -a "$remote_path" "$backup"
+      as_root rm -rf "$staging"
+      as_root mkdir -p "$staging"
+      as_root tar -xzf - -C "$staging"
+      if as_root test -e "$remote_path"; then
+        as_root cp -a "$remote_path" "$backup"
       fi
-      rm -rf "$remote_path"
-      mv "$staging" "$remote_path"
-      if [ -e "$remote_path/secrets/swarm.cookie" ]; then
-        if [ "$(id -u)" = "0" ]; then
-          chown root:root "$remote_path/secrets/swarm.cookie"
-          chmod 600 "$remote_path/secrets/swarm.cookie"
-        elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-          sudo chown root:root "$remote_path/secrets/swarm.cookie"
-          sudo chmod 600 "$remote_path/secrets/swarm.cookie"
-        else
-          chmod 600 "$remote_path/secrets/swarm.cookie"
-        fi
+      as_root rm -rf "$remote_path"
+      as_root mv "$staging" "$remote_path"
+      if as_root test -d "$backup/secrets"; then
+        as_root mkdir -p "$remote_path/secrets"
+        as_root cp -an "$backup/secrets/." "$remote_path/secrets/" 2>/dev/null || as_root cp -a "$backup/secrets/." "$remote_path/secrets/"
+      fi
+      if as_root test -d "$remote_path/secrets"; then
+        as_root chown root:root "$remote_path/secrets"
+        as_root chmod 711 "$remote_path/secrets"
+      fi
+      if as_root test -e "$remote_path/secrets/swarm.cookie"; then
+        as_root chown root:root "$remote_path/secrets/swarm.cookie"
+        as_root chmod 600 "$remote_path/secrets/swarm.cookie"
       fi
       """
       |> String.trim()
@@ -198,12 +206,27 @@ defmodule Swarm.Deploy do
     remote_cmd =
       """
       set -euo pipefail
+      #{remote_root_prelude("remote rebuild requires root or passwordless sudo")}
       cd #{shell_escape(nixos_dir)}
-      #{rebuild_command(opts)}
+      as_root #{rebuild_command(opts, nixos_dir)}
       """
       |> String.trim()
 
     "ssh -- #{shell_escape(host)} #{shell_escape(remote_cmd)}"
+  end
+
+  defp remote_root_prelude(message) do
+    """
+    if [ "$(id -u)" = "0" ]; then
+      as_root() { "$@"; }
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      as_root() { sudo "$@"; }
+    else
+      echo #{shell_escape(message)} >&2
+      exit 1
+    fi
+    """
+    |> String.trim()
   end
 
   defp validate!(plan) do
@@ -256,7 +279,7 @@ defmodule Swarm.Deploy do
   end
 
   defp run_shell!(command) do
-    case System.cmd("sh", ["-lc", command], stderr_to_stdout: true) do
+    case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
       {output, 0} -> output
       {output, status} -> raise "command failed with status #{status}: #{output}"
     end

@@ -88,6 +88,19 @@ defmodule Swarm.TestCluster do
     end
   end
 
+  def machine_actions(root, node_name) do
+    path = Path.join([root, sanitize(node_name), "machine.log"])
+
+    case File.read(path) do
+      {:ok, content} ->
+        content
+        |> String.split("\n", trim: true)
+
+      {:error, :enoent} ->
+        []
+    end
+  end
+
   def wait_until(fun, timeout_ms \\ 5_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_until(fun, deadline)

@@ -1,6 +1,8 @@
 defmodule Swarm.Service do
   @moduledoc false
 
+  alias Swarm.NodeName
+
   def normalize(raw) do
     name = fetch(raw, :name) |> to_string()
     replicas = fetch(raw, :replicas, 1) |> normalize_integer(1)
@@ -80,7 +82,7 @@ defmodule Swarm.Service do
   defp normalize_optional(value), do: value
 
   defp normalize_node_name(name) when is_atom(name), do: name
-  defp normalize_node_name(name), do: String.to_atom(to_string(name))
+  defp normalize_node_name(name), do: NodeName.to_node!(name, label: "preferred node name")
 
   defp fetch(data, key, default \\ nil)
 

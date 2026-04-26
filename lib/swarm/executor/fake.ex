@@ -2,24 +2,18 @@ defmodule Swarm.Executor.Fake do
   @moduledoc false
 
   def start_unit(unit, config) do
-    File.mkdir_p!(node_root(config))
-    File.write!(state_file(unit, config), "running\n")
-    append_log(unit, "start")
-    :ok
+    transition_unit(unit, "start", "starting", "running", config)
   end
 
   def stop_unit(unit, config) do
     File.mkdir_p!(node_root(config))
     File.write!(state_file(unit, config), "stopped\n")
-    append_log(unit, "stop")
+    append_log(unit, "stop", config)
     :ok
   end
 
   def restart_unit(unit, config) do
-    File.mkdir_p!(node_root(config))
-    File.write!(state_file(unit, config), "running\n")
-    append_log(unit, "restart")
-    :ok
+    transition_unit(unit, "restart", "restarting", "running", config)
   end
 
   def unit_status(unit, config) do
@@ -27,7 +21,11 @@ defmodule Swarm.Executor.Fake do
       {:ok, content} ->
         case String.trim(content) do
           "running" -> {:ok, :running}
+          "starting" -> {:ok, :starting}
+          "restarting" -> {:ok, :restarting}
+          "stopping" -> {:ok, :stopping}
           "stopped" -> {:ok, :stopped}
+          "failed" -> {:ok, :failed}
           _ -> {:ok, :unknown}
         end
 
@@ -81,11 +79,44 @@ defmodule Swarm.Executor.Fake do
     end
   end
 
-  defp append_log(unit, action) do
-    File.mkdir_p!(node_root(Swarm.Config.runtime().executor))
+  def restart_host(config) do
+    append_machine_log("restart", config)
+    :ok
+  end
+
+  def shutdown_host(config) do
+    append_machine_log("shutdown", config)
+    :ok
+  end
+
+  defp transition_unit(unit, action, transient_state, final_state, config) do
+    File.mkdir_p!(node_root(config))
+    File.write!(state_file(unit, config), transient_state <> "\n")
+    append_log(unit, action, config)
+
+    Task.start(fn ->
+      Process.sleep(75)
+      File.write!(state_file(unit, config), final_state <> "\n")
+    end)
+
+    :ok
+  end
+
+  defp append_log(unit, action, config) do
+    File.mkdir_p!(node_root(config))
 
     File.write!(
-      log_file(unit, Swarm.Config.runtime().executor),
+      log_file(unit, config),
+      "#{DateTime.utc_now() |> DateTime.to_iso8601()} #{action}\n",
+      [:append]
+    )
+  end
+
+  defp append_machine_log(action, config) do
+    File.mkdir_p!(node_root(config))
+
+    File.write!(
+      machine_log_file(config),
       "#{DateTime.utc_now() |> DateTime.to_iso8601()} #{action}\n",
       [:append]
     )
@@ -93,6 +124,7 @@ defmodule Swarm.Executor.Fake do
 
   defp state_file(unit, config), do: Path.join(node_root(config), "#{unit}.state")
   defp log_file(unit, config), do: Path.join(node_root(config), "#{unit}.log")
+  defp machine_log_file(config), do: Path.join(node_root(config), "machine.log")
 
   defp default_metrics,
     do: %{

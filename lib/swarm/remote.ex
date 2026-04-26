@@ -1,6 +1,8 @@
 defmodule Swarm.Remote do
   @moduledoc false
 
+  alias Swarm.NodeName
+
   @epmd_port 4369
   @default_distribution_port 4370
   @tcp_connect_timeout_ms 1_000
@@ -46,18 +48,22 @@ defmodule Swarm.Remote do
 
   def connected?(%{connect_result: result}), do: result in [true, :ignored]
 
-  def diagnose_connection(%{target: target, cookie: cookie, cli_name: cli_name} = remote) do
-    target_node = String.to_atom(target)
+  def diagnose_connection(remote), do: diagnose_connection(remote, [])
+
+  def diagnose_connection(%{target: target, cookie: cookie, cli_name: cli_name} = remote, opts)
+      when is_list(opts) do
+    target_node = NodeName.to_node!(target, label: "target node")
     {node_mode, target_host} = target_mode_and_host(target)
     %{name: cli_node_name} = cli_node_identity(target, cli_name)
+    skip_port_checks? = Keyword.get(opts, :skip_port_checks, false)
 
     ensure_cli_node(cli_node_name, node_mode)
-    Node.set_cookie(String.to_atom(cookie))
+    Node.set_cookie(NodeName.cookie_atom!(cookie))
 
     target_resolution = resolve_host_details(target_host)
-    target_port_checks = target_port_checks(node_mode, target_resolution)
+    target_port_checks = target_port_checks(node_mode, target_resolution, skip_port_checks?)
     local_ip_candidates = local_ip_candidates()
-    connect_result = Node.connect(target_node)
+    connect_result = ensure_connected(target_node)
     remote_probe = probe_remote(target_node, connect_result)
 
     Map.merge(remote, %{
@@ -96,7 +102,7 @@ defmodule Swarm.Remote do
           provided_name
       end
 
-    %{name: String.to_atom(name), mode: node_mode}
+    %{name: NodeName.to_node!(name, label: "CLI node name"), mode: node_mode}
   end
 
   def rpc!(node, module, function, args) do
@@ -364,9 +370,18 @@ defmodule Swarm.Remote do
     end
   end
 
-  defp target_port_checks(:shortnames, _target_resolution), do: []
+  defp ensure_connected(target_node) do
+    cond do
+      target_node == Node.self() -> :ignored
+      target_node in Node.list() -> :ignored
+      true -> Node.connect(target_node)
+    end
+  end
 
-  defp target_port_checks(_node_mode, %{status: :ok, address: address}) do
+  defp target_port_checks(_node_mode, _target_resolution, true), do: []
+  defp target_port_checks(:shortnames, _target_resolution, false), do: []
+
+  defp target_port_checks(_node_mode, %{status: :ok, address: address}, false) do
     [
       tcp_port_check(address, @epmd_port, "target epmd TCP port #{@epmd_port}"),
       tcp_port_check(
@@ -377,7 +392,7 @@ defmodule Swarm.Remote do
     ]
   end
 
-  defp target_port_checks(_node_mode, _target_resolution) do
+  defp target_port_checks(_node_mode, _target_resolution, false) do
     [
       %{
         label: "target epmd TCP port #{@epmd_port}",
@@ -498,7 +513,7 @@ defmodule Swarm.Remote do
   end
 
   defp remote_self_check(target, %{status: :ok, value: value}) do
-    if value == String.to_atom(target) do
+    if value == NodeName.to_node!(target, label: "target node") do
       %{label: "remote node identity", status: :ok, detail: Atom.to_string(value)}
     else
       %{label: "remote node identity", status: :error, detail: Atom.to_string(value)}

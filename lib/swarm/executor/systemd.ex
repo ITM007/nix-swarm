@@ -14,10 +14,16 @@ defmodule Swarm.Executor.Systemd do
   end
 
   def unit_status(unit, _config) do
-    case System.cmd("systemctl", ["is-active", unit], stderr_to_stdout: true) do
-      {"active\n", 0} -> {:ok, :running}
-      {_, 0} -> {:ok, :running}
-      _ -> {:ok, :stopped}
+    properties = ["ActiveState", "SubState", "Result"]
+
+    case System.cmd("systemctl", ["show", unit] ++ Enum.map(properties, &"--property=#{&1}"),
+           stderr_to_stdout: true
+         ) do
+      {output, 0} ->
+        {:ok, output |> parse_properties() |> map_unit_status()}
+
+      {_output, _status} ->
+        {:ok, :unknown}
     end
   end
 
@@ -52,19 +58,24 @@ defmodule Swarm.Executor.Systemd do
         values = parse_properties(output)
 
         %{
-          cpu: %{usage_ns: Map.get(values, "CPUUsageNSec", 0)},
-          memory: %{used: Map.get(values, "MemoryCurrent", 0)},
+          cpu: %{usage_ns: numeric_property(values, "CPUUsageNSec")},
+          memory: %{used: numeric_property(values, "MemoryCurrent")},
           disk: %{used: disk_usage_bytes(values)},
           network: %{
-            counter: Map.get(values, "IPIngressBytes", 0) + Map.get(values, "IPEgressBytes", 0)
+            counter:
+              numeric_property(values, "IPIngressBytes") +
+                numeric_property(values, "IPEgressBytes")
           },
-          started_at_ns: Map.get(values, "ActiveEnterTimestampUSec", 0) * 1_000
+          started_at_ns: numeric_property(values, "ActiveEnterTimestampUSec") * 1_000
         }
 
       {_output, _status} ->
         default_metrics()
     end
   end
+
+  def restart_host(_config), do: systemctl(["reboot"])
+  def shutdown_host(_config), do: systemctl(["poweroff"])
 
   defp systemctl(args) do
     case System.cmd("systemctl", args, stderr_to_stdout: true) do
@@ -94,6 +105,60 @@ defmodule Swarm.Executor.Systemd do
       {parsed, _rest} -> parsed
       :error -> String.trim(value)
     end
+  end
+
+  defp numeric_property(values, key) do
+    values
+    |> Map.get(key, 0)
+    |> numeric_value()
+  end
+
+  defp numeric_value(value) when is_integer(value), do: value
+
+  defp numeric_value(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, _rest} -> parsed
+      :error -> 0
+    end
+  end
+
+  defp numeric_value(_value), do: 0
+
+  defp map_unit_status(values) do
+    active_state = Map.get(values, "ActiveState", "")
+    sub_state = Map.get(values, "SubState", "")
+    result = Map.get(values, "Result", "")
+
+    cond do
+      active_state == "active" ->
+        :running
+
+      active_state == "activating" and restarting_state?(sub_state, result) ->
+        :restarting
+
+      active_state == "activating" ->
+        :starting
+
+      active_state == "deactivating" and restarting_state?(sub_state, result) ->
+        :restarting
+
+      active_state == "deactivating" ->
+        :stopping
+
+      active_state == "failed" ->
+        :failed
+
+      active_state in ["inactive", "dead"] ->
+        :stopped
+
+      true ->
+        :unknown
+    end
+  end
+
+  defp restarting_state?(sub_state, result) do
+    String.contains?(to_string(sub_state), "auto-restart") or
+      String.contains?(to_string(result), "start-limit")
   end
 
   defp disk_usage_bytes(values) do

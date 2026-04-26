@@ -1,6 +1,7 @@
 defmodule Swarm.Config do
   @moduledoc false
 
+  alias Swarm.NodeName
   alias Swarm.Service
 
   @default_runtime %{
@@ -152,7 +153,7 @@ defmodule Swarm.Config do
   defp normalize_integer(_, default), do: default
 
   defp normalize_node_name(name) when is_atom(name), do: name
-  defp normalize_node_name(name), do: String.to_atom(to_string(name))
+  defp normalize_node_name(name), do: NodeName.to_node!(name, label: "configured node name")
 
   defp normalize_optional_string(nil), do: nil
   defp normalize_optional_string(""), do: nil

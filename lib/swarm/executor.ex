@@ -1,13 +1,17 @@
 defmodule Swarm.Executor do
   @moduledoc false
 
+  @type unit_state ::
+          :running | :starting | :restarting | :stopping | :stopped | :failed | :unknown
+
   @callback start_unit(String.t(), map()) :: :ok | {:error, term()}
   @callback stop_unit(String.t(), map()) :: :ok | {:error, term()}
   @callback restart_unit(String.t(), map()) :: :ok | {:error, term()}
-  @callback unit_status(String.t(), map()) ::
-              {:ok, :running | :stopped | :unknown} | {:error, term()}
+  @callback unit_status(String.t(), map()) :: {:ok, unit_state()} | {:error, term()}
   @callback unit_logs(String.t(), pos_integer(), map()) :: {:ok, String.t()} | {:error, term()}
   @callback unit_metrics(String.t(), map()) :: map()
+  @callback restart_host(map()) :: :ok | {:error, term()}
+  @callback shutdown_host(map()) :: :ok | {:error, term()}
 
   # systemd unit names: alphanumerics, dot, dash, underscore, @, colon (for templated units),
   # plus a required ".service" suffix in practice. We accept a permissive but strictly safe set
@@ -21,6 +25,8 @@ defmodule Swarm.Executor do
   def unit_status(unit), do: dispatch(:unit_status, unit, [unit])
   def unit_logs(unit, lines), do: dispatch(:unit_logs, unit, [unit, lines])
   def unit_metrics(unit), do: dispatch(:unit_metrics, unit, [unit])
+  def restart_host, do: dispatch_host_action(:restart_host)
+  def shutdown_host, do: dispatch_host_action(:shutdown_host)
 
   @doc """
   Returns `:ok` when `unit` is a safe systemd unit name and `{:error, :invalid_unit_name}`
@@ -51,6 +57,11 @@ defmodule Swarm.Executor do
           _ -> err
         end
     end
+  end
+
+  defp dispatch_host_action(function) do
+    {module, config} = adapter()
+    apply(module, function, [config])
   end
 
   defp default_metrics do

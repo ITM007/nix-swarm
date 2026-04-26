@@ -13,9 +13,10 @@ defmodule Swarm.ThreeNodeClusterTest do
     {:ok, cluster: cluster}
   end
 
-  test "three node cluster supports status, diagnostics, restart, logs, and failover", %{
-    cluster: cluster
-  } do
+  test "three node cluster supports status, diagnostics, service control, machine control, logs, and failover",
+       %{
+         cluster: cluster
+       } do
     [node_a, node_b, node_c] = cluster.nodes
 
     status = :rpc.call(node_a, Swarm.API, :cluster_status, [])
@@ -51,6 +52,23 @@ defmodule Swarm.ThreeNodeClusterTest do
     overview = :rpc.call(node_b, Swarm.API, :cluster_overview, [])
     assert length(overview.status.nodes) == 3
 
+    stop_result = :rpc.call(node_b, Swarm.API, :stop_service, ["gitea"])
+    assert length(stop_result) == 3
+
+    assert :ok ==
+             Swarm.TestCluster.wait_until(fn ->
+               service_stopped?(cluster, "gitea")
+             end)
+
+    start_result = :rpc.call(node_b, Swarm.API, :start_service, ["gitea"])
+    assert length(start_result) == 3
+
+    assert :ok ==
+             Swarm.TestCluster.wait_until(fn ->
+               status_after_start = :rpc.call(node_b, Swarm.API, :cluster_status, [])
+               converged?(cluster.root, cluster.nodes, status_after_start.placements)
+             end)
+
     restart_result = :rpc.call(node_b, Swarm.API, :restart_service, ["gitea"])
     assert length(restart_result) == 2
 
@@ -59,6 +77,24 @@ defmodule Swarm.ThreeNodeClusterTest do
     assert Enum.any?(logs, fn {_node, entries} ->
              Enum.any?(entries, &String.contains?(&1.logs, "restart"))
            end)
+
+    assert :ok = :rpc.call(node_b, Swarm.API, :restart_machine, [node_c])
+
+    assert :ok ==
+             Swarm.TestCluster.wait_until(fn ->
+               cluster.root
+               |> Swarm.TestCluster.machine_actions(node_c)
+               |> Enum.any?(&String.contains?(&1, "restart"))
+             end)
+
+    assert :ok = :rpc.call(node_b, Swarm.API, :shutdown_machine, [node_b])
+
+    assert :ok ==
+             Swarm.TestCluster.wait_until(fn ->
+               cluster.root
+               |> Swarm.TestCluster.machine_actions(node_b)
+               |> Enum.any?(&String.contains?(&1, "shutdown"))
+             end)
 
     peer_a = Swarm.TestCluster.peer_for(cluster, node_a)
     :ok = :peer.stop(peer_a)
@@ -76,6 +112,36 @@ defmodule Swarm.ThreeNodeClusterTest do
              Swarm.TestCluster.wait_until(fn ->
                converged?(cluster.root, [node_b, node_c], status_after.placements)
              end)
+  end
+
+  test "lightweight diagnostics skip noisy port probes during steady-state refreshes", %{
+    cluster: cluster
+  } do
+    [_, node_b, _] = cluster.nodes
+
+    remote =
+      Swarm.Remote.options!(
+        target: Atom.to_string(node_b),
+        cookie: Atom.to_string(Node.get_cookie())
+      )
+
+    diagnostic = Swarm.Remote.diagnose_connection(remote, skip_port_checks: true)
+
+    assert diagnostic.connect_result in [true, :ignored]
+    assert diagnostic.target_port_checks == []
+    assert diagnostic.remote_probe.cluster_members.status == :ok
+  end
+
+  defp service_stopped?(cluster, service_name) do
+    status = :rpc.call(hd(cluster.nodes), Swarm.API, :cluster_status, [])
+
+    status.placements
+    |> Map.get(service_name, [])
+    |> Enum.all?(fn slot ->
+      Enum.all?(cluster.nodes, fn node ->
+        Swarm.TestCluster.unit_state(cluster.root, node, slot.unit) == "stopped"
+      end)
+    end)
   end
 
   defp converged?(root, live_nodes, placements) do

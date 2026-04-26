@@ -1,7 +1,9 @@
 defmodule Swarm.API do
   @moduledoc false
 
+  alias Swarm.ClusterLogs
   alias Swarm.Executor
+  alias Swarm.NodeName
   alias Swarm.Placement
   alias Swarm.Reconciler
 
@@ -64,6 +66,24 @@ defmodule Swarm.API do
     end
   end
 
+  def start_service(service_name) do
+    service_name = to_string(service_name)
+
+    Swarm.Cluster.live_nodes()
+    |> Enum.map(fn node ->
+      {node, rpc(node, __MODULE__, :start_local_service, [service_name])}
+    end)
+  end
+
+  def stop_service(service_name) do
+    service_name = to_string(service_name)
+
+    Swarm.Cluster.live_nodes()
+    |> Enum.map(fn node ->
+      {node, rpc(node, __MODULE__, :stop_local_service, [service_name])}
+    end)
+  end
+
   def restart_service(service_name) do
     service_name = to_string(service_name)
 
@@ -74,8 +94,36 @@ defmodule Swarm.API do
     end)
   end
 
+  def start_local_service(service_name) do
+    Reconciler.start_local_service(service_name)
+  end
+
+  def stop_local_service(service_name) do
+    Reconciler.stop_local_service(service_name)
+  end
+
   def restart_local_service(service_name) do
     Reconciler.restart_local_service(service_name)
+  end
+
+  def restart_machine(node_name) do
+    node_name
+    |> normalize_target_node()
+    |> rpc(__MODULE__, :restart_local_machine, [])
+  end
+
+  def shutdown_machine(node_name) do
+    node_name
+    |> normalize_target_node()
+    |> rpc(__MODULE__, :shutdown_local_machine, [])
+  end
+
+  def restart_local_machine do
+    Executor.restart_host()
+  end
+
+  def shutdown_local_machine do
+    Executor.shutdown_host()
   end
 
   def logs(service_name, lines \\ 50) do
@@ -137,8 +185,8 @@ defmodule Swarm.API do
                ["-u", "swarmd", "-n", Integer.to_string(lines), "--no-pager"],
                stderr_to_stdout: true
              ) do
-          {output, 0} -> String.trim(output)
-          {output, _status} -> String.trim(output)
+          {output, 0} -> output |> sanitize_cluster_logs() |> String.trim()
+          {output, _status} -> output |> sanitize_cluster_logs() |> String.trim()
         end
 
       _ ->
@@ -271,7 +319,14 @@ defmodule Swarm.API do
   end
 
   defp normalize_target_node(node) when is_atom(node), do: node
-  defp normalize_target_node(node) when is_binary(node), do: String.to_atom(node)
+
+  defp normalize_target_node(node) when is_binary(node) do
+    NodeName.resolve_existing!(
+      node,
+      [Node.self() | Swarm.Cluster.live_nodes() ++ Swarm.Config.peers()],
+      "target node"
+    )
+  end
 
   defp local_unit_status(unit) do
     case Executor.unit_status(unit) do
@@ -304,6 +359,10 @@ defmodule Swarm.API do
     ]
     |> Enum.join("\n")
     |> String.trim()
+  end
+
+  defp sanitize_cluster_logs(output) do
+    ClusterLogs.sanitize(output)
   end
 
   defp deploy_hosts do

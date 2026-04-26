@@ -2,22 +2,33 @@
 
 let
   version = "0.1.0";
+  mixDepsHash = "sha256-vywmOaqNrGlWeE3itE85MDufVVhITz3xZmWo68rnmj4=";
   mixFodDeps = pkgs.beamPackages.fetchMixDeps {
     pname = "swarm-deps";
     inherit version src;
-    hash = "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8=";
+    hash = mixDepsHash;
   };
   exRatatuiNifCache =
     let
-      fileName = "libex_ratatui-v0.8.0-nif-2.17-x86_64-unknown-linux-gnu.so.tar.gz";
-      artifact = pkgs.fetchurl {
-        url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${fileName}";
-        hash = "sha256-XHHHvm7p3/A8gabr8RZh/QuYWM6pCKDg57BepCm0VGA=";
-      };
+      fileNames = [
+        "libex_ratatui-v0.8.0-nif-2.16-x86_64-unknown-linux-gnu.so.tar.gz"
+        "libex_ratatui-v0.8.0-nif-2.17-x86_64-unknown-linux-gnu.so.tar.gz"
+      ];
+      artifacts = [
+        (pkgs.fetchurl {
+          url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${builtins.elemAt fileNames 0}";
+          hash = "sha256-f41G2I1+iXlRz1fbNKxf6WFSynKlAq8zL1Qw5/dUVa4=";
+        })
+        (pkgs.fetchurl {
+          url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${builtins.elemAt fileNames 1}";
+          hash = "sha256-XHHHvm7p3/A8gabr8RZh/QuYWM6pCKDg57BepCm0VGA=";
+        })
+      ];
     in
     pkgs.runCommand "ex-ratatui-precompiled-nif-cache" {} ''
       mkdir -p "$out"
-      ln -s ${artifact} "$out/${fileName}"
+      ln -s ${builtins.elemAt artifacts 0} "$out/${builtins.elemAt fileNames 0}"
+      ln -s ${builtins.elemAt artifacts 1} "$out/${builtins.elemAt fileNames 1}"
     '';
   src = pkgs.lib.cleanSourceWith {
     src = ../..;

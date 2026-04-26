@@ -274,7 +274,9 @@ defmodule Swarm.Ascii do
     services_lines =
       services
       |> Enum.flat_map(fn s ->
-        Enum.map(s.units, fn u ->
+        s.units
+        |> Enum.filter(&(&1.status == :running))
+        |> Enum.map(fn u ->
           color = if u.status == :running, do: :green, else: :red
           status_char = if u.status == :running, do: "R", else: "S"
           service_ports = format_service_ports(Map.get(s, :ports, []))
@@ -288,6 +290,46 @@ defmodule Swarm.Ascii do
         end)
       end)
 
+    error_lines =
+      services
+      |> Enum.flat_map(fn service ->
+        desired_state = Map.get(service, :desired_state, :running)
+
+        service.units
+        |> Enum.filter(fn unit ->
+          desired_state != :stopped and
+            Map.get(unit, :owner) == node_name and
+            Map.get(unit, :status) != :running
+        end)
+        |> Enum.map(fn unit ->
+          [
+            Span.new("  ! #{service.name}@#{unit.slot} "),
+            Span.new(to_string(Map.get(unit, :status, :unknown)),
+              style: %Style{fg: :red, modifiers: [:bold]}
+            )
+          ]
+        end)
+      end)
+
+    service_section =
+      if services_lines == [] do
+        [[Span.new("  (no active services)", style: %Style{fg: :dark_gray})]]
+      else
+        services_lines
+      end
+
+    error_section =
+      case error_lines do
+        [] ->
+          []
+
+        _ ->
+          [
+            [],
+            [Span.new(" Errors:", style: %Style{fg: :red, modifiers: [:bold]})]
+          ] ++ error_lines
+      end
+
     [
       [Span.new(" hostname: "), Span.new(truncate(hostname, 17), style: %Style{fg: :dark_gray})],
       [Span.new(" node: "), Span.new(truncate(name_str, 21), style: %Style{fg: :cyan})],
@@ -297,7 +339,7 @@ defmodule Swarm.Ascii do
       [
         [],
         [Span.new(" Services:")]
-      ] ++ services_lines
+      ] ++ service_section ++ error_section
   end
 
   defp ports_lines([]), do: [[Span.new(" Ports: "), Span.new("-", style: %Style{fg: :yellow})]]
