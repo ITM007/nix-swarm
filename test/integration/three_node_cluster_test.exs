@@ -1,12 +1,14 @@
-defmodule Swarm.ThreeNodeClusterTest do
+defmodule NixSwarm.ThreeNodeClusterTest do
   use ExUnit.Case, async: false
 
   setup do
-    root = Path.join(System.tmp_dir!(), "swarm-three-node-#{System.unique_integer([:positive])}")
-    cluster = Swarm.TestCluster.start_three_node_cluster(root)
+    root =
+      Path.join(System.tmp_dir!(), "nix-swarm-three-node-#{System.unique_integer([:positive])}")
+
+    cluster = NixSwarm.TestCluster.start_three_node_cluster(root)
 
     on_exit(fn ->
-      Swarm.TestCluster.stop_cluster(cluster)
+      NixSwarm.TestCluster.stop_cluster(cluster)
       File.rm_rf!(root)
     end)
 
@@ -19,7 +21,7 @@ defmodule Swarm.ThreeNodeClusterTest do
        } do
     [node_a, node_b, node_c] = cluster.nodes
 
-    status = :rpc.call(node_a, Swarm.API, :cluster_status, [])
+    status = :rpc.call(node_a, NixSwarm.API, :cluster_status, [])
     assert Enum.sort(status.live_nodes) == cluster.nodes
     assert Map.has_key?(status.placements, "gitea")
     assert Map.has_key?(status.placements, "proxy")
@@ -34,82 +36,82 @@ defmodule Swarm.ThreeNodeClusterTest do
     assert proxy_slot.owner in [node_a, node_c]
 
     assert :ok ==
-             Swarm.TestCluster.wait_until(fn ->
+             NixSwarm.TestCluster.wait_until(fn ->
                converged?(cluster.root, cluster.nodes, status.placements)
              end)
 
     remote =
-      Swarm.Remote.options!(
+      NixSwarm.Remote.options!(
         target: Atom.to_string(node_b),
         cookie: Atom.to_string(Node.get_cookie())
       )
 
-    diagnostic = Swarm.Remote.diagnose_connection(remote)
+    diagnostic = NixSwarm.Remote.diagnose_connection(remote)
 
     assert diagnostic.connect_result in [true, :ignored]
     assert diagnostic.remote_probe.cluster_members.status == :ok
 
-    overview = :rpc.call(node_b, Swarm.API, :cluster_overview, [])
+    overview = :rpc.call(node_b, NixSwarm.API, :cluster_overview, [])
     assert length(overview.status.nodes) == 3
 
-    stop_result = :rpc.call(node_b, Swarm.API, :stop_service, ["gitea"])
+    stop_result = :rpc.call(node_b, NixSwarm.API, :stop_service, ["gitea"])
     assert length(stop_result) == 3
 
     assert :ok ==
-             Swarm.TestCluster.wait_until(fn ->
+             NixSwarm.TestCluster.wait_until(fn ->
                service_stopped?(cluster, "gitea")
              end)
 
-    start_result = :rpc.call(node_b, Swarm.API, :start_service, ["gitea"])
+    start_result = :rpc.call(node_b, NixSwarm.API, :start_service, ["gitea"])
     assert length(start_result) == 3
 
     assert :ok ==
-             Swarm.TestCluster.wait_until(fn ->
-               status_after_start = :rpc.call(node_b, Swarm.API, :cluster_status, [])
+             NixSwarm.TestCluster.wait_until(fn ->
+               status_after_start = :rpc.call(node_b, NixSwarm.API, :cluster_status, [])
                converged?(cluster.root, cluster.nodes, status_after_start.placements)
              end)
 
-    restart_result = :rpc.call(node_b, Swarm.API, :restart_service, ["gitea"])
+    restart_result = :rpc.call(node_b, NixSwarm.API, :restart_service, ["gitea"])
     assert length(restart_result) == 2
 
-    logs = :rpc.call(node_c, Swarm.API, :logs, ["gitea", 50])
+    logs = :rpc.call(node_c, NixSwarm.API, :logs, ["gitea", 50])
 
     assert Enum.any?(logs, fn {_node, entries} ->
              Enum.any?(entries, &String.contains?(&1.logs, "restart"))
            end)
 
-    assert :ok = :rpc.call(node_b, Swarm.API, :restart_machine, [node_c])
+    assert :ok = :rpc.call(node_b, NixSwarm.API, :restart_machine, [node_c])
 
     assert :ok ==
-             Swarm.TestCluster.wait_until(fn ->
+             NixSwarm.TestCluster.wait_until(fn ->
                cluster.root
-               |> Swarm.TestCluster.machine_actions(node_c)
+               |> NixSwarm.TestCluster.machine_actions(node_c)
                |> Enum.any?(&String.contains?(&1, "restart"))
              end)
 
-    assert :ok = :rpc.call(node_b, Swarm.API, :shutdown_machine, [node_b])
+    assert :ok = :rpc.call(node_b, NixSwarm.API, :shutdown_machine, [node_b])
 
     assert :ok ==
-             Swarm.TestCluster.wait_until(fn ->
+             NixSwarm.TestCluster.wait_until(fn ->
                cluster.root
-               |> Swarm.TestCluster.machine_actions(node_b)
+               |> NixSwarm.TestCluster.machine_actions(node_b)
                |> Enum.any?(&String.contains?(&1, "shutdown"))
              end)
 
-    peer_a = Swarm.TestCluster.peer_for(cluster, node_a)
+    peer_a = NixSwarm.TestCluster.peer_for(cluster, node_a)
     :ok = :peer.stop(peer_a)
 
     assert :ok ==
-             Swarm.TestCluster.wait_until(fn ->
-               status_after = :rpc.call(node_b, Swarm.API, :cluster_status, [])
+             NixSwarm.TestCluster.wait_until(fn ->
+               status_after = :rpc.call(node_b, NixSwarm.API, :cluster_status, [])
                Enum.sort(status_after.live_nodes) == Enum.sort([node_b, node_c])
              end)
 
-    status_after = :rpc.call(node_b, Swarm.API, :cluster_status, [])
+    status_after = :rpc.call(node_b, NixSwarm.API, :cluster_status, [])
     assert Enum.sort(status_after.live_nodes) == Enum.sort([node_b, node_c])
 
     assert :ok ==
-             Swarm.TestCluster.wait_until(fn ->
+             NixSwarm.TestCluster.wait_until(fn ->
                converged?(cluster.root, [node_b, node_c], status_after.placements)
              end)
   end
@@ -120,12 +122,12 @@ defmodule Swarm.ThreeNodeClusterTest do
     [_, node_b, _] = cluster.nodes
 
     remote =
-      Swarm.Remote.options!(
+      NixSwarm.Remote.options!(
         target: Atom.to_string(node_b),
         cookie: Atom.to_string(Node.get_cookie())
       )
 
-    diagnostic = Swarm.Remote.diagnose_connection(remote, skip_port_checks: true)
+    diagnostic = NixSwarm.Remote.diagnose_connection(remote, skip_port_checks: true)
 
     assert diagnostic.connect_result in [true, :ignored]
     assert diagnostic.target_port_checks == []
@@ -133,13 +135,13 @@ defmodule Swarm.ThreeNodeClusterTest do
   end
 
   defp service_stopped?(cluster, service_name) do
-    status = :rpc.call(hd(cluster.nodes), Swarm.API, :cluster_status, [])
+    status = :rpc.call(hd(cluster.nodes), NixSwarm.API, :cluster_status, [])
 
     status.placements
     |> Map.get(service_name, [])
     |> Enum.all?(fn slot ->
       Enum.all?(cluster.nodes, fn node ->
-        Swarm.TestCluster.unit_state(cluster.root, node, slot.unit) == "stopped"
+        NixSwarm.TestCluster.unit_state(cluster.root, node, slot.unit) == "stopped"
       end)
     end)
   end
@@ -148,7 +150,7 @@ defmodule Swarm.ThreeNodeClusterTest do
     Enum.all?(placements, fn {_service, slots} ->
       Enum.all?(slots, fn slot ->
         Enum.all?(live_nodes, fn node ->
-          actual = Swarm.TestCluster.unit_state(root, node, slot.unit)
+          actual = NixSwarm.TestCluster.unit_state(root, node, slot.unit)
           expected = if node == slot.owner, do: "running", else: "stopped"
           actual == expected
         end)

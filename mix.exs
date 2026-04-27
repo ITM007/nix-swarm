@@ -1,9 +1,9 @@
-defmodule Swarm.MixProject do
+defmodule NixSwarm.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :swarm,
+      app: :nix_swarm,
       version: "0.1.0",
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -15,7 +15,7 @@ defmodule Swarm.MixProject do
   def application do
     [
       extra_applications: [:logger, :os_mon],
-      mod: {Swarm.Application, []}
+      mod: {NixSwarm.Application, []}
     ]
   end
 

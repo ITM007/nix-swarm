@@ -1,12 +1,14 @@
-# Swarm
+# Nix-Swarm
 
-Swarm is a **TUI-first, leaderless NixOS orchestrator** for small clusters. Every node runs the same OTP runtime, computes the same placement from shared Nix config, and only starts or stops its own local systemd units.
+Nix-Swarm is a **TUI-first, leaderless NixOS orchestrator** for small clusters. Every node runs the same OTP runtime, computes the same placement from shared Nix config, and only starts or stops its own local systemd units.
 
-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container platform and **not** a storage orchestrator.
+Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container platform and **not** a storage orchestrator.
 
-![Swarm dashboard](docs/screenshots/dashboard.svg)
+> **v0.1.0 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
 
-![Swarm services view](docs/screenshots/services.svg)
+![Nix-Swarm dashboard](docs/screenshots/dashboard.svg)
+
+![Nix-Swarm services view](docs/screenshots/services.svg)
 
 ## Features
 
@@ -17,23 +19,40 @@ Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container p
 - **Cluster + per-machine/service metrics**
 - **Built-in config editing** from the TUI, with your system editor and return-to-TUI flow
 
+## Security model
+
+Nix-Swarm uses distributed Erlang for node-to-node RPC. Authentication is based on a shared Erlang cookie; traffic is not TLS-encrypted by Nix-Swarm itself.
+
+- Run Nix-Swarm only on trusted networks or through your own VPN/private overlay.
+- Restrict TCP `4369` (EPMD) and the Nix-Swarm distribution port (`4370` by default) with firewall rules.
+- Generate a strong cookie once, store it outside the Nix store, and distribute it securely to every managed node and operator workstation.
+- Keep cookie files readable only by the owning root/nix-swarm context:
+
+```bash
+install -m 600 -o root -g root /path/to/generated.cookie /etc/nixos/nix-swarm/secrets/nix-swarm.cookie
+```
+
+The packaged `nix-swarm` CLI will use `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` when it is readable. Otherwise set `NIX_SWARM_COOKIE_FILE` or `NIX_SWARM_COOKIE`; it fails rather than falling back to a public default cookie.
+
+On first launch, the packaged operator also seeds a full editable working tree under `~/.config/nix-swarm`. That tree includes public-safe `cluster/`, `machines/`, and `cluster/services/` examples you can customize without modifying the installed package.
+
 ## Add the release to a NixOS system
 
 ### Operator workstation
 
-Add Swarm as a flake input and install the packaged `swarm` binary:
+Add Nix-Swarm as a flake input and install the packaged `nix-swarm` binary:
 
 ```nix
 {
-  inputs.swarm.url = "github:ITM007/swarm/v0.1.0";
+  inputs.nix-swarm.url = "github:ITM007/nix-swarm/v0.1.0";
 
-  outputs = { self, nixpkgs, swarm, ... }: {
+  outputs = { self, nixpkgs, nix-swarm, ... }: {
     nixosConfigurations.operator = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
         ({ pkgs, ... }: {
           environment.systemPackages = [
-            swarm.packages.${pkgs.system}.default
+            nix-swarm.packages.${pkgs.system}.default
           ];
         })
       ];
@@ -42,30 +61,31 @@ Add Swarm as a flake input and install the packaged `swarm` binary:
 }
 ```
 
-If your workstation is not itself a managed Swarm node, export the shared cookie once before launching:
+If your workstation is not itself a managed Nix-Swarm node, export the shared cookie once before launching:
 
 ```bash
-export SWARM_COOKIE_FILE=/path/to/swarm.cookie
-swarm --target swarm@192.168.1.226
+chmod 600 /path/to/nix-swarm.cookie
+export NIX_SWARM_COOKIE_FILE=/path/to/nix-swarm.cookie
+nix-swarm --target nix-swarm@example-node-a.local
 ```
 
 ### Managed cluster node
 
-Import the module and point `services.swarm.package` at the release package:
+Import the module and point `services.nix-swarm.package` at the release package:
 
 ```nix
 { inputs, pkgs, ... }:
 {
   imports = [
-    inputs.swarm.nixosModules.default
+    inputs.nix-swarm.nixosModules.default
     ./cluster/cluster.nix
   ];
 
-  services.swarm = {
+  services.nix-swarm = {
     enable = true;
-    package = inputs.swarm.packages.${pkgs.system}.default;
-    nodeName = "swarm@192.168.1.226";
-    cookieFile = "/etc/nixos/nix-swarm/secrets/swarm.cookie";
+    package = inputs.nix-swarm.packages.${pkgs.system}.default;
+    nodeName = "nix-swarm@example-node-a.local";
+    cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
     openFirewall = true;
     firewallInterfaces = [ "eth0" ];
   };
@@ -75,19 +95,20 @@ Import the module and point `services.swarm.package` at the release package:
 ## Launch
 
 ```bash
-swarm --target swarm@192.168.1.226
+nix-swarm --target nix-swarm@example-node-a.local
 ```
 
 Useful launch options:
 
-- `--name control@192.168.1.10` if longname auto-detection picks the wrong local address
-- `--source /path/to/checkout` to make apply/update/edit actions use a specific checkout
+- `--name nix-swarmctl@operator-lan.example` if longname auto-detection picks the wrong local address
+- `--cookie-file /path/to/nix-swarm.cookie` to read the cookie from a specific file for one launch
+- `--source /path/to/source-root` to make apply/update/edit actions use a specific checkout or seeded config root
 - `--cluster-file`, `--machines-dir`, `--services-dir`, `--remote-path`, `--nixos-dir` for path overrides
 
 From a local checkout during development:
 
 ```bash
-mix run -e 'Swarm.CLI.main(System.argv())' -- --target swarm@192.168.1.226
+mix run -e 'NixSwarm.CLI.main(System.argv())' -- --target nix-swarm@example-node-a.local
 ```
 
 Core TUI actions:
@@ -96,37 +117,40 @@ Core TUI actions:
 - `j` / `k`: move selection
 - `shift+h/j/k/l`: scroll wide or long panes
 - `r`: refresh
-- `x`: restart selected service
+- `b` / `z` / `x`: start, stop, or restart the selected service
+- `R` / `Z`: confirm restart or shutdown for the selected machine
 - `c`: reconcile cluster
 - `y`: dry-run config rollout
 - `p`: apply config rollout
-- `u`: update running nodes
+- `u`: preview a code rollout for the current scope; on **Machines**, use `c` for the whole cluster or `m` for the selected machine before confirming
 - `a` / `e` / `d`: add, edit, or delete machine/service config files
 
 ## Starter configs
 
-### `machines/node-a.nix`
+The repository keeps tracked starter files under `examples/config/`. The packaged operator mirrors them into `~/.config/nix-swarm/` on first launch, where you edit the live copy.
+
+### `~/.config/nix-swarm/machines/example-node-a.nix`
 
 ```nix
 { inputs, pkgs, ... }:
 {
   imports = [
-    inputs.swarm.nixosModules.default
+    inputs.nix-swarm.nixosModules.default
     ../cluster/cluster.nix
   ];
 
-  services.swarm = {
+  services.nix-swarm = {
     enable = true;
-    package = inputs.swarm.packages.${pkgs.system}.default;
-    nodeName = "swarm@192.168.1.226";
-    cookieFile = "/etc/nixos/nix-swarm/secrets/swarm.cookie";
+    package = inputs.nix-swarm.packages.${pkgs.system}.default;
+    nodeName = "nix-swarm@example-node-a.local";
+    cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
     openFirewall = true;
     firewallInterfaces = [ "eth0" ];
   };
 }
 ```
 
-### `cluster/cluster.nix`
+### `~/.config/nix-swarm/cluster/cluster.nix`
 
 ```nix
 { ... }:
@@ -135,35 +159,35 @@ Core TUI actions:
     ./services/gitea.nix
   ];
 
-  services.swarm = {
+  services.nix-swarm = {
     peers = [
-      "swarm@192.168.1.226"
-      "swarm@192.168.1.121"
+      "nix-swarm@example-node-a.local"
+      "nix-swarm@example-node-b.local"
     ];
 
     nodes = {
-      "swarm@192.168.1.226" = {
+      "nix-swarm@example-node-a.local" = {
         labels = [ "gitea" "ingress" ];
-        deployHost = "root@192.168.1.226";
+        deployHost = "example-node-a.local";
       };
 
-      "swarm@192.168.1.121" = {
+      "nix-swarm@example-node-b.local" = {
         labels = [ "gitea" "ingress" ];
-        deployHost = "root@192.168.1.121";
+        deployHost = "example-node-b.local";
       };
     };
 
     services.gitea = {
       constraints = [ "gitea" ];
-      preferredNodes = [ "swarm@192.168.1.226" ];
+      preferredNodes = [ "nix-swarm@example-node-a.local" ];
       settings = {
-        domain = "gitea.home";
+        domain = "gitea.example.internal";
         httpPort = 3003;
       };
     };
 
     ingress.sites.gitea = {
-      domain = "gitea.home";
+      domain = "gitea.example.internal";
       service = "gitea";
       ports = [ 3003 ];
       default = true;
@@ -172,7 +196,7 @@ Core TUI actions:
 }
 ```
 
-### `cluster/services/gitea.nix`
+### `~/.config/nix-swarm/cluster/services/gitea.nix`
 
 ```nix
 { lib, ... }:
@@ -189,11 +213,19 @@ Core TUI actions:
 
 ## Day-to-day workflow
 
-1. Launch `swarm --target NODE`
+1. Launch `nix-swarm --target NODE`
 2. Inspect cluster health from **Dashboard**, **Map**, **Machines**, and **Services**
 3. Use `a`, `e`, and `d` to manage machine/service files
 4. Use `y` to preview and `p` to apply config changes
-5. Use `u` to roll updated code/config to running nodes
+5. Use `u` to roll updated code/config to running nodes; the rollout waits until the targeted nodes come back and report one version
+
+## Troubleshooting
+
+- **Cannot connect to the target:** confirm `nix-swarmd` is running, the cookie matches, and TCP `4369` plus `4370` are reachable from the operator machine.
+- **Longname target cannot reach the operator:** relaunch with `--name nix-swarmctl@LAN_IP` so the target can resolve and connect back to the control node.
+- **Apply/update hangs on SSH:** pre-populate `known_hosts`, ensure passwordless root or passwordless sudo works, and verify deploy hosts in `~/.config/nix-swarm/cluster/cluster.nix`.
+- **Mixed live versions after an update:** check the **Machines** or **Dashboard** views. Nix-Swarm marks version mismatches as an available update and keeps the rollout pending until the targeted nodes converge to one version.
+- **Cookie errors:** prefer `NIX_SWARM_COOKIE_FILE`; avoid `--cookie` because command-line arguments can be visible in process listings.
 
 ## Development
 
@@ -201,6 +233,8 @@ Core TUI actions:
 mix format
 mix test
 ```
+
+The v0.1.0 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
 
 ## License
 

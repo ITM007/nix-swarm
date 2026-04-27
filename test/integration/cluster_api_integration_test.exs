@@ -1,4 +1,4 @@
-defmodule Swarm.ClusterApiIntegrationTest do
+defmodule NixSwarm.ClusterApiIntegrationTest do
   @moduledoc """
   Integration coverage for the RPCs the TUI uses (cluster_overview, cluster_members,
   node_service_logs, cluster_logs, logs) plus the executor's unit-name validation
@@ -7,11 +7,11 @@ defmodule Swarm.ClusterApiIntegrationTest do
   use ExUnit.Case, async: false
 
   setup do
-    root = Path.join(System.tmp_dir!(), "swarm-api-int-#{System.unique_integer([:positive])}")
-    cluster = Swarm.TestCluster.start_three_node_cluster(root)
+    root = Path.join(System.tmp_dir!(), "nix-swarm-api-int-#{System.unique_integer([:positive])}")
+    cluster = NixSwarm.TestCluster.start_three_node_cluster(root)
 
     on_exit(fn ->
-      Swarm.TestCluster.stop_cluster(cluster)
+      NixSwarm.TestCluster.stop_cluster(cluster)
       File.rm_rf!(root)
     end)
 
@@ -21,7 +21,7 @@ defmodule Swarm.ClusterApiIntegrationTest do
   test "cluster_overview returns aggregated state with metrics", %{cluster: cluster} do
     [node_a, _, _] = cluster.nodes
 
-    overview = :rpc.call(node_a, Swarm.API, :cluster_overview, [])
+    overview = :rpc.call(node_a, NixSwarm.API, :cluster_overview, [])
     assert is_map(overview)
     assert Map.has_key?(overview, :members)
     assert Map.has_key?(overview, :status)
@@ -39,14 +39,27 @@ defmodule Swarm.ClusterApiIntegrationTest do
 
   test "cluster_members lists every live node", %{cluster: cluster} do
     [node_a, _, _] = cluster.nodes
-    members = :rpc.call(node_a, Swarm.API, :cluster_members, [])
+    members = :rpc.call(node_a, NixSwarm.API, :cluster_members, [])
     assert Enum.sort(members.live_nodes) == cluster.nodes
+  end
+
+  test "reconcile_cluster returns one observable result per live node", %{cluster: cluster} do
+    [node_a, _, _] = cluster.nodes
+    results = :rpc.call(node_a, NixSwarm.API, :reconcile_cluster, [])
+
+    assert Enum.sort(Enum.map(results, &elem(&1, 0))) == cluster.nodes
+
+    Enum.each(results, fn {node, result} ->
+      assert node in cluster.nodes
+      assert is_map(result)
+      assert Map.has_key?(result, :results)
+    end)
   end
 
   test "logs/2 returns log payloads for the running service", %{cluster: cluster} do
     [_, node_b, _] = cluster.nodes
 
-    logs = :rpc.call(node_b, Swarm.API, :logs, ["gitea", 25])
+    logs = :rpc.call(node_b, NixSwarm.API, :logs, ["gitea", 25])
 
     assert is_list(logs)
     assert length(logs) >= 1
@@ -59,13 +72,13 @@ defmodule Swarm.ClusterApiIntegrationTest do
 
   test "node_service_logs/2 returns per-node service logs", %{cluster: cluster} do
     [node_a, _, _] = cluster.nodes
-    result = :rpc.call(node_a, Swarm.API, :node_service_logs, [node_a, 10])
+    result = :rpc.call(node_a, NixSwarm.API, :node_service_logs, [node_a, 10])
     assert result != {:badrpc, :nodedown}
   end
 
-  test "cluster_logs/2 returns the swarmd log payload (or empty)", %{cluster: cluster} do
+  test "cluster_logs/2 returns the nix-swarmd log payload (or empty)", %{cluster: cluster} do
     [node_a, _, _] = cluster.nodes
-    output = :rpc.call(node_a, Swarm.API, :cluster_logs, [node_a, 5])
+    output = :rpc.call(node_a, NixSwarm.API, :cluster_logs, [node_a, 5])
     assert is_binary(output) or is_list(output) or is_map(output)
   end
 
@@ -75,10 +88,10 @@ defmodule Swarm.ClusterApiIntegrationTest do
 
     for bad <- ["--root=/etc/passwd", "../../etc/passwd", "foo;rm", "-rf"] do
       assert {:error, :invalid_unit_name} =
-               :rpc.call(node_a, Swarm.Executor, :start_unit, [bad])
+               :rpc.call(node_a, NixSwarm.Executor, :start_unit, [bad])
 
       assert {:error, :invalid_unit_name} =
-               :rpc.call(node_a, Swarm.Executor, :unit_logs, [bad, 5])
+               :rpc.call(node_a, NixSwarm.Executor, :unit_logs, [bad, 5])
     end
   end
 end

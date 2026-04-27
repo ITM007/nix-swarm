@@ -1,5 +1,5 @@
 {
-  description = "Swarm leaderless NixOS cluster runtime";
+  description = "Nix-Swarm leaderless NixOS cluster runtime";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -13,11 +13,11 @@
         );
     in
     {
-      packages = forAllSystems (system: pkgs: let
-        swarm = import ./nix/swarm/package.nix { inherit pkgs; };
+      packages = forAllSystems (_system: pkgs: let
+        nixSwarm = import ./nix/nix-swarm/package.nix { inherit pkgs; };
       in {
-        inherit swarm;
-        default = swarm;
+        nix-swarm = nixSwarm;
+        default = nixSwarm;
       });
 
       devShells = forAllSystems (_system: pkgs: {
@@ -27,8 +27,8 @@
       });
 
       nixosModules = {
-        swarm = import ./nix/swarm/module.nix;
-        default = self.nixosModules.swarm;
+        nix-swarm = import ./nix/nix-swarm/module.nix;
+        default = self.nixosModules.nix-swarm;
       };
     };
 }

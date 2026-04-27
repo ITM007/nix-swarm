@@ -1,1 +1,1 @@
-import ./swarm/package.nix
+import ./nix-swarm/package.nix

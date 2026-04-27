@@ -1,4 +1,4 @@
-defmodule Swarm.TestCluster do
+defmodule NixSwarm.TestCluster do
   @moduledoc false
 
   def start_three_node_cluster(root) do
@@ -41,20 +41,20 @@ defmodule Swarm.TestCluster do
         {:ok, peer, node} =
           :peer.start_link(%{name: node_name, longnames: true, connection: :standard_io})
 
-        :ok = :peer.call(peer, :application, :set_env, [:swarm, :cluster_config, config])
+        :ok = :peer.call(peer, :application, :set_env, [:nix_swarm, :cluster_config, config])
 
         Enum.each(:code.get_path(), fn path ->
           :peer.call(peer, :code, :add_patha, [path])
         end)
 
-        {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:swarm])
-        :ok = :peer.call(peer, Swarm.Cluster, :connect_now, [])
+        {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:nix_swarm])
+        :ok = :peer.call(peer, NixSwarm.Cluster, :connect_now, [])
         {peer, node}
       end)
 
     wait_until(fn ->
       Enum.all?(nodes, fn node ->
-        status = :rpc.call(node, Swarm.API, :cluster_members, [])
+        status = :rpc.call(node, NixSwarm.API, :cluster_members, [])
         Enum.sort(status.live_nodes) == nodes
       end)
     end)

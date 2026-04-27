@@ -1,1 +1,0 @@
-import ./swarm/module.nix

@@ -5,7 +5,7 @@ case :net_kernel.start([:"verify-controller@127.0.0.1", :longnames]) do
   {:error, {:already_started, _pid}} -> :ok
 end
 
-root = Path.join(System.tmp_dir!(), "swarm-verify-#{System.unique_integer([:positive])}")
+root = Path.join(System.tmp_dir!(), "nix-swarm-verify-#{System.unique_integer([:positive])}")
 File.rm_rf!(root)
 File.mkdir_p!(root)
 
@@ -73,14 +73,14 @@ end
 
 start_peer = fn node_name ->
   {:ok, peer, node} = :peer.start_link(%{name: node_name, longnames: true, connection: :standard_io})
-  :ok = :peer.call(peer, :application, :set_env, [:swarm, :cluster_config, config])
+  :ok = :peer.call(peer, :application, :set_env, [:nix_swarm, :cluster_config, config])
 
   Enum.each(:code.get_path(), fn path ->
     :peer.call(peer, :code, :add_patha, [path])
   end)
 
-  {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:swarm])
-  :ok = :peer.call(peer, Swarm.Cluster, :connect_now, [])
+  {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:nix_swarm])
+  :ok = :peer.call(peer, NixSwarm.Cluster, :connect_now, [])
   {peer, node}
 end
 
@@ -91,13 +91,13 @@ peers =
 
 wait_until.(wait_until, fn ->
   Enum.all?(nodes, fn node ->
-    status = :rpc.call(node, Swarm.API, :cluster_members, [])
+    status = :rpc.call(node, NixSwarm.API, :cluster_members, [])
     Enum.sort(status.live_nodes) == nodes
   end)
 end, System.monotonic_time(:millisecond) + 5_000)
 
 wait_until.(wait_until, fn ->
-  status = :rpc.call(hd(nodes), Swarm.API, :cluster_status, [])
+  status = :rpc.call(hd(nodes), NixSwarm.API, :cluster_status, [])
   converged?.(nodes, status.placements)
 end, System.monotonic_time(:millisecond) + 5_000)
 
@@ -119,17 +119,17 @@ end
 
 IO.puts("=== initial cluster status ===")
 hd(nodes)
-|> :rpc.call(Swarm.API, :cluster_status, [])
+|> :rpc.call(NixSwarm.API, :cluster_status, [])
 |> format_summary.()
 |> IO.puts()
 
-restart_results = :rpc.call(Enum.at(nodes, 1), Swarm.API, :restart_service, ["gitea"])
+restart_results = :rpc.call(Enum.at(nodes, 1), NixSwarm.API, :restart_service, ["gitea"])
 
 if length(restart_results) != 2 do
   raise "expected restart across two gitea owners, got #{inspect(restart_results)}"
 end
 
-logs = :rpc.call(Enum.at(nodes, 2), Swarm.API, :logs, ["gitea", 50])
+logs = :rpc.call(Enum.at(nodes, 2), NixSwarm.API, :logs, ["gitea", 50])
 
 unless Enum.any?(logs, fn {_node, entries} ->
          Enum.any?(entries, &String.contains?(&1.logs, "restart"))
@@ -143,19 +143,19 @@ end
 survivors = List.delete(nodes, node_a)
 
 wait_until.(wait_until, fn ->
-  status = :rpc.call(hd(survivors), Swarm.API, :cluster_status, [])
+  status = :rpc.call(hd(survivors), NixSwarm.API, :cluster_status, [])
   Enum.sort(status.live_nodes) == Enum.sort(survivors)
 end, System.monotonic_time(:millisecond) + 5_000)
 
 wait_until.(wait_until, fn ->
-  status = :rpc.call(hd(survivors), Swarm.API, :cluster_status, [])
+  status = :rpc.call(hd(survivors), NixSwarm.API, :cluster_status, [])
   converged?.(survivors, status.placements)
 end, System.monotonic_time(:millisecond) + 5_000)
 
 IO.puts("")
 IO.puts("=== status after node failure ===")
 hd(survivors)
-|> :rpc.call(Swarm.API, :cluster_status, [])
+|> :rpc.call(NixSwarm.API, :cluster_status, [])
 |> format_summary.()
 |> IO.puts()
 
