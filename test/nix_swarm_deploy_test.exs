@@ -2,9 +2,9 @@ defmodule NixSwarmDeployTest do
   use ExUnit.Case, async: true
 
   test "hosts parses comma-separated host list" do
-    assert NixSwarm.Deploy.hosts(hosts: "nixos-2, root@nixos-3 ,10.0.0.9") == [
-             "nixos-2",
-             "root@nixos-3",
+    assert NixSwarm.Deploy.hosts(hosts: "example-node-a, root@example-node-b ,10.0.0.9") == [
+             "example-node-a",
+             "root@example-node-b",
              "10.0.0.9"
            ]
   end
@@ -23,20 +23,25 @@ defmodule NixSwarmDeployTest do
   end
 
   test "rebuild command includes optional flake and build host" do
-    command = NixSwarm.Deploy.rebuild_command(flake: ".#nixos-2", build_host: "builder@10.0.0.10")
+    command =
+      NixSwarm.Deploy.rebuild_command(flake: ".#example-node-a", build_host: "builder@10.0.0.10")
 
     assert command ==
-             "'nixos-rebuild' 'switch' '--flake' '.#nixos-2' '--build-host' 'builder@10.0.0.10'"
+             "'nixos-rebuild' 'switch' '--flake' '.#example-node-a' '--build-host' 'builder@10.0.0.10'"
   end
 
   test "sync command targets the managed repo path" do
     command =
-      NixSwarm.Deploy.sync_command("/tmp/nix-swarm", "root@nixos-2", "/etc/nixos/nix-swarm")
+      NixSwarm.Deploy.sync_command(
+        "/tmp/nix-swarm",
+        "root@example-node-a",
+        "/etc/nixos/nix-swarm"
+      )
 
     assert command =~ "cd '/tmp/nix-swarm'"
 
     assert command =~
-             "'ssh' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=accept-new' '--' 'root@nixos-2'"
+             "'ssh' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=accept-new' '--' 'root@example-node-a'"
 
     assert command =~ "/etc/nixos/nix-swarm"
     assert command =~ "sudo -n true"
@@ -52,24 +57,27 @@ defmodule NixSwarmDeployTest do
   end
 
   test "rebuild host command elevates nixos-rebuild when needed" do
-    command = NixSwarm.Deploy.rebuild_host_command("nixos-2", "/etc/nixos", flake: ".#nixos-2")
+    command =
+      NixSwarm.Deploy.rebuild_host_command("example-node-a", "/etc/nixos",
+        flake: ".#example-node-a"
+      )
 
     assert command =~
-             "'ssh' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=accept-new' '--' 'nixos-2'"
+             "'ssh' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=accept-new' '--' 'example-node-a'"
 
     assert command =~ "sudo -n true"
     assert command =~ "as_root"
     assert command =~ "'nixos-rebuild'"
     assert command =~ "'--flake'"
-    assert command =~ "'.#nixos-2'"
+    assert command =~ "'.#example-node-a'"
     assert command =~ "remote rebuild requires root or passwordless sudo"
   end
 
   test "rebuild host command uses explicit nixos-config for non-flake rebuilds" do
-    command = NixSwarm.Deploy.rebuild_host_command("root@overlord", "/etc/nixos", [])
+    command = NixSwarm.Deploy.rebuild_host_command("root@example-control", "/etc/nixos", [])
 
     assert command =~
-             "'ssh' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=accept-new' '--' 'root@overlord'"
+             "'ssh' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=accept-new' '--' 'root@example-control'"
 
     assert command =~ "'-I'"
     assert command =~ "'nixos-config=/etc/nixos/configuration.nix'"
@@ -77,34 +85,40 @@ defmodule NixSwarmDeployTest do
 
   test "deploy commands reject unsafe remote inputs" do
     assert_raise ArgumentError, ~r/absolute path/, fn ->
-      NixSwarm.Deploy.sync_command("/tmp/nix-swarm", "root@nixos-2", "relative/path")
+      NixSwarm.Deploy.sync_command("/tmp/nix-swarm", "root@example-node-a", "relative/path")
     end
 
     assert_raise ArgumentError, ~r/must not contain '\.\.'/, fn ->
-      NixSwarm.Deploy.rebuild_host_command("root@nixos-2", "/etc/../tmp", [])
+      NixSwarm.Deploy.rebuild_host_command("root@example-node-a", "/etc/../tmp", [])
     end
 
     assert_raise ArgumentError, ~r/unsupported whitespace/, fn ->
-      NixSwarm.Deploy.sync_command("/tmp/nix-swarm", "root@nixos-2 bad", "/etc/nixos/nix-swarm")
+      NixSwarm.Deploy.sync_command(
+        "/tmp/nix-swarm",
+        "root@example-node-a bad",
+        "/etc/nixos/nix-swarm"
+      )
     end
   end
 
   test "validation commands evaluate machine modules through nixos eval-config" do
-    commands = NixSwarm.Deploy.validation_commands(["/tmp/nix-swarm/machines/nixos-2.nix"])
+    commands = NixSwarm.Deploy.validation_commands(["/tmp/nix-swarm/machines/example-node-a.nix"])
 
     assert commands == [
-             "nix-instantiate --eval --strict --expr 'let eval = import <nixpkgs/nixos/lib/eval-config.nix> {\n  system = builtins.currentSystem;\n  modules = [ (builtins.toPath \"/tmp/nix-swarm/machines/nixos-2.nix\") ];\n  specialArgs = { inputs = {}; };\n}; in {\n  node = eval.config.services.nix-swarm.nodeName;\n  peers = eval.config.services.nix-swarm.peers;\n  services = builtins.attrNames eval.config.services.nix-swarm.services;\n  ingress = builtins.attrNames eval.config.services.nix-swarm.ingress.sites;\n}'"
+             "nix-instantiate --eval --strict --expr 'let eval = import <nixpkgs/nixos/lib/eval-config.nix> {\n  system = builtins.currentSystem;\n  modules = [ (builtins.toPath \"/tmp/nix-swarm/machines/example-node-a.nix\") ];\n  specialArgs = { inputs = {}; };\n}; in {\n  node = eval.config.services.nix-swarm.nodeName;\n  peers = eval.config.services.nix-swarm.peers;\n  services = builtins.attrNames eval.config.services.nix-swarm.services;\n  ingress = builtins.attrNames eval.config.services.nix-swarm.ingress.sites;\n}'"
            ]
   end
 
   test "plan builds dry-run result commands per host" do
     source = Path.expand("..", __DIR__)
-    plan = NixSwarm.Deploy.plan(hosts: "nixos-2,nixos-3", source: source, dry_run: true)
+
+    plan =
+      NixSwarm.Deploy.plan(hosts: "example-node-a,example-node-b", source: source, dry_run: true)
 
     assert plan.dry_run
     assert length(plan.validation.machine_files) >= 2
     assert Enum.any?(plan.validation.commands, &String.contains?(&1, "eval-config.nix"))
-    assert Enum.map(plan.results, & &1.host) == ["nixos-2", "nixos-3"]
+    assert Enum.map(plan.results, & &1.host) == ["example-node-a", "example-node-b"]
     assert Enum.all?(plan.results, &String.contains?(&1.sync_command, "/etc/nixos/nix-swarm"))
     assert Enum.all?(plan.results, &String.contains?(&1.rebuild_command, "nixos-rebuild"))
   end

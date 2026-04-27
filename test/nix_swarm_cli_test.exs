@@ -29,7 +29,7 @@ defmodule NixSwarmCLITest do
              NixSwarm.CLI.run(
                [
                  "--target",
-                 "nix-swarm@192.168.1.226",
+                 "nix-swarm@example-node-a.local",
                  "--cookie-file",
                  "/tmp/nix-swarm.cookie",
                  "--source",
@@ -39,13 +39,14 @@ defmodule NixSwarmCLITest do
              )
 
     assert_receive {:launched, opts}
-    assert Keyword.get(opts, :target) == "nix-swarm@192.168.1.226"
+    assert Keyword.get(opts, :target) == "nix-swarm@example-node-a.local"
     assert Keyword.get(opts, :cookie_file) == "/tmp/nix-swarm.cookie"
     assert Keyword.get(opts, :source) == "/tmp/nix-swarm"
   end
 
   test "legacy subcommands return a migration error" do
-    assert {:error, message} = NixSwarm.CLI.run(["--target", "nix-swarm@192.168.1.226", "status"])
+    assert {:error, message} =
+             NixSwarm.CLI.run(["--target", "nix-swarm@example-node-a.local", "status"])
 
     assert message =~ "`status` was removed from the public command surface"
     assert message =~ "Nix-Swarm is TUI-first in v0.1.0 alpha"

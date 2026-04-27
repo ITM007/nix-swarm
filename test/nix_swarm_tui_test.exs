@@ -29,7 +29,7 @@ defmodule NixSwarmTUITest do
     terminal = ExRatatui.init_test_terminal(120, 40)
 
     state = %{
-      remote: %{target: "nix-swarm@192.168.1.226"},
+      remote: %{target: "nix-swarm@example-node-a.local"},
       lines: 50,
       refresh_ms: 3_000,
       active_view: :dashboard,
@@ -37,7 +37,7 @@ defmodule NixSwarmTUITest do
       selected_node: :"node-b@127.0.0.1",
       update_fun: &NixSwarm.Update.run/2,
       diagnostic: %{
-        target: "nix-swarm@192.168.1.226",
+        target: "nix-swarm@example-node-a.local",
         connect_result: true
       },
       overview: %{
@@ -159,14 +159,14 @@ defmodule NixSwarmTUITest do
     terminal = ExRatatui.init_test_terminal(120, 40)
 
     state = %{
-      remote: %{target: "nix-swarm@192.168.1.226"},
+      remote: %{target: "nix-swarm@example-node-a.local"},
       lines: 50,
       refresh_ms: 1_000,
       active_view: :dashboard,
       selected_service: nil,
       selected_node: nil,
       update_fun: &NixSwarm.Update.run/2,
-      diagnostic: %{target: "nix-swarm@192.168.1.226", connect_result: true},
+      diagnostic: %{target: "nix-swarm@example-node-a.local", connect_result: true},
       overview: %{members: %{live_nodes: []}, status: %{placements: %{}, nodes: []}},
       service_logs: [],
       cluster_logs: "",
@@ -676,12 +676,12 @@ defmodule NixSwarmTUITest do
         :cluster_logs,
         Enum.join(
           [
-            "Apr 26 10:44:59 overlord epmd[529625]: epmd: got partial packet only on file descriptor 6 (0)",
-            "Apr 27 03:50:40 overlord nix-swarmd[2209676]: 03:50:40.303 [notice]     :alarm_handler: {:set, {:system_memory_high_watermark, []}}",
-            "Apr 27 03:56:40 overlord nix-swarmd[2209676]: 03:56:40.313 [notice]     :alarm_handler: {:clear, :system_memory_high_watermark}",
-            "Apr 26 18:49:59 overlord nix-swarmd[1948512]: 18:49:59.187 [notice] SIGTERM received - shutting down",
-            "Apr 26 18:49:59 overlord nix-swarmd[1948512]: State: [data: [{~c\"Timeout\", 60000}], items: {~c\"Memory Usage\", [{~c\"Allocated\", 25275826176}]}]",
-            "Apr 26 10:45:00 overlord nix-swarmd[123]: service restarted"
+            "Apr 26 10:44:59 example-control epmd[529625]: epmd: got partial packet only on file descriptor 6 (0)",
+            "Apr 27 03:50:40 example-control nix-swarmd[2209676]: 03:50:40.303 [notice]     :alarm_handler: {:set, {:system_memory_high_watermark, []}}",
+            "Apr 27 03:56:40 example-control nix-swarmd[2209676]: 03:56:40.313 [notice]     :alarm_handler: {:clear, :system_memory_high_watermark}",
+            "Apr 26 18:49:59 example-control nix-swarmd[1948512]: 18:49:59.187 [notice] SIGTERM received - shutting down",
+            "Apr 26 18:49:59 example-control nix-swarmd[1948512]: State: [data: [{~c\"Timeout\", 60000}], items: {~c\"Memory Usage\", [{~c\"Allocated\", 25275826176}]}]",
+            "Apr 26 10:45:00 example-control nix-swarmd[123]: service restarted"
           ],
           "\n"
         )
@@ -733,16 +733,16 @@ defmodule NixSwarmTUITest do
         :cluster_event_logs,
         Enum.join(
           [
-            "== nix-swarm@192.168.1.100 ==",
-            "Apr 26 18:49:59 overlord nix-swarmd[1948512]: 18:49:59.187 [notice] SIGTERM received - shutting down",
-            "Apr 26 18:49:59 overlord nix-swarmd[1948512]: State: [data: [{~c\"Timeout\", 60000}], items: {~c\"Memory Usage\", [{~c\"Allocated\", 25275826176}]}]",
+            "== nix-swarm@example-control.local ==",
+            "Apr 26 18:49:59 example-control nix-swarmd[1948512]: 18:49:59.187 [notice] SIGTERM received - shutting down",
+            "Apr 26 18:49:59 example-control nix-swarmd[1948512]: State: [data: [{~c\"Timeout\", 60000}], items: {~c\"Memory Usage\", [{~c\"Allocated\", 25275826176}]}]",
             "",
-            "== nix-swarm@192.168.1.121 ==",
-            "Apr 26 01:25:09 nixos-3 nix-swarmd[194114]: 01:25:09.566 [warning] 'global' at node :\"nix-swarm@192.168.1.121\" requested disconnect from node :\"nix-swarm@192.168.1.100\" in order to prevent overlapping partitions",
+            "== nix-swarm@example-node-b.local ==",
+            "Apr 26 01:25:09 example-node-b nix-swarmd[194114]: 01:25:09.566 [warning] 'global' at node :\"nix-swarm@example-node-b.local\" requested disconnect from node :\"nix-swarm@example-control.local\" in order to prevent overlapping partitions",
             "",
-            "== nix-swarm@192.168.1.226 ==",
-            "Apr 26 01:25:09 nixos-2 nix-swarmd[188883]: 01:25:09.565 [warning] 'global' at :\"nix-swarm@192.168.1.226\" failed to connect to :\"nix-swarm@192.168.1.100\"",
-            "Apr 26 01:25:10 nixos-2 nix-swarmd[188883]: 01:25:10.565 [warning] service still unhealthy"
+            "== nix-swarm@example-node-a.local ==",
+            "Apr 26 01:25:09 example-node-a nix-swarmd[188883]: 01:25:09.565 [warning] 'global' at :\"nix-swarm@example-node-a.local\" failed to connect to :\"nix-swarm@example-control.local\"",
+            "Apr 26 01:25:10 example-node-a nix-swarmd[188883]: 01:25:10.565 [warning] service still unhealthy"
           ],
           "\n"
         )
