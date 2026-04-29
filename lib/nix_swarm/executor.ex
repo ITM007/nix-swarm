@@ -75,7 +75,8 @@ defmodule NixSwarm.Executor do
   end
 
   defp adapter do
-    executor_config = NixSwarm.Config.runtime().executor
+    runtime = NixSwarm.Config.runtime()
+    executor_config = Map.put(runtime.executor, :command_timeout_ms, runtime.command_timeout_ms)
 
     case executor_config.adapter do
       :systemd -> {NixSwarm.Executor.Systemd, executor_config}

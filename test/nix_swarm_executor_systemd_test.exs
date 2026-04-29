@@ -77,6 +77,18 @@ defmodule NixSwarmExecutorSystemdTest do
     )
   end
 
+  test "systemd commands time out instead of blocking callers" do
+    with_fake_systemctl(
+      """
+      #!/bin/sh
+      sleep 1
+      """,
+      fn ->
+        assert {:ok, :unknown} = Systemd.unit_status("demo.service", %{command_timeout_ms: 10})
+      end
+    )
+  end
+
   defp with_fake_systemctl(script, fun) do
     tmp_dir =
       Path.join(System.tmp_dir!(), "nix-swarm-systemctl-#{System.unique_integer([:positive])}")

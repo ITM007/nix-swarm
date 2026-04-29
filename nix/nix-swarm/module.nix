@@ -4,6 +4,20 @@ let
   cfg = config.services.nix-swarm;
   inherit (lib) concatMapStringsSep genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
 
+  escapeErlString = value:
+    builtins.replaceStrings
+      [ "\\" "\"" "\n" "\r" "\t" ]
+      [ "\\\\" "\\\"" "\\n" "\\r" "\\t" ]
+      value;
+
+  escapeErlAtom = value:
+    builtins.replaceStrings
+      [ "\\" "'" "\n" "\r" "\t" ]
+      [ "\\\\" "\\'" "\\n" "\\r" "\\t" ]
+      value;
+
+  toErlAtom = value: "'${escapeErlAtom value}'";
+
   toErlTerm =
     value:
     if value == null then
@@ -13,40 +27,37 @@ let
     else if builtins.isInt value then
       toString value
     else if builtins.isString value then
-      "\"${value}\""
+      "<<\"${escapeErlString value}\">>"
     else if builtins.isList value then
       "[${concatMapStringsSep ", " toErlTerm value}]"
     else if builtins.isAttrs value then
-      "[${concatMapStringsSep ", " (name: "{${name}, ${toErlTerm value.${name}}}") (builtins.attrNames value)}]"
+      "[${concatMapStringsSep ", " (name: "{${toErlAtom name}, ${toErlTerm value.${name}}}") (builtins.attrNames value)}]"
     else
       throw "unsupported Erlang term conversion in nix-swarm-module.nix";
 
   mkStringList = values:
-    "[${concatMapStringsSep ", " (value: "\"${value}\"") values}]";
-
-  mkPeerAtoms = peers:
-    "[${concatMapStringsSep ", " (peer: "'${peer}'") peers}]";
+    "[${concatMapStringsSep ", " toErlTerm values}]";
 
   mkNodeEntry = name: nodeCfg: ''
-    {'${name}', [
+    {${toErlTerm name}, [
       {labels, ${mkStringList nodeCfg.labels}}${if nodeCfg.deployHost == null then "" else ",\n      {deploy_host, ${toErlTerm nodeCfg.deployHost}}"}
     ]}
   '';
 
   mkServiceEntry = name: serviceCfg: ''
       [
-        {name, "${name}"},
+        {name, ${toErlTerm name}},
         {replicas, ${toString serviceCfg.replicas}},
         {unit_template, ${toErlTerm serviceCfg.unitTemplate}},
         {constraints, ${mkStringList serviceCfg.constraints}},
-        {preferred_nodes, ${mkPeerAtoms serviceCfg.preferredNodes}},
-        {healthcheck, ${if serviceCfg.healthcheck == null then "undefined" else "\"${serviceCfg.healthcheck}\""}},
+        {preferred_nodes, ${mkStringList serviceCfg.preferredNodes}},
+        {healthcheck, ${toErlTerm serviceCfg.healthcheck}},
         {settings, ${toErlTerm serviceCfg.settings}}
       ]
     '';
 
-  renderedConfig = pkgs.writeText "nix-swarm.config" ''
-    {peers, ${mkPeerAtoms cfg.peers}}.
+  renderedConfigText = ''
+    {peers, ${mkStringList cfg.peers}}.
     {nodes, [
       ${concatMapStringsSep ",\n      " (entry: entry) (mapAttrsToList mkNodeEntry cfg.nodes)}
     ]}.
@@ -56,9 +67,17 @@ let
     {runtime, [
       {connect_interval_ms, ${toString cfg.runtime.connectIntervalMs}},
       {reconcile_interval_ms, ${toString cfg.runtime.reconcileIntervalMs}},
-      {generation, "${cfg.runtime.generation}"},
+      {command_timeout_ms, ${toString cfg.runtime.commandTimeoutMs}},
+      {generation, ${toErlTerm cfg.runtime.generation}},
       {executor, [{adapter, systemd}]}
     ]}.
+  '';
+
+  rawRenderedConfig = pkgs.writeText "nix-swarm.config.unvalidated" renderedConfigText;
+
+  renderedConfig = pkgs.runCommand "nix-swarm.config" {} ''
+    cp ${rawRenderedConfig} "$out"
+    ${pkgs.erlang}/bin/erl -noshell -eval 'case file:consult("'$out'") of {ok, _Terms} -> halt(0); {error, Reason} -> io:format(standard_error, "invalid nix-swarm config: ~p~n", [Reason]), halt(1) end.'
   '';
 
   nodeHost = last (splitString "@" cfg.nodeName);
@@ -195,6 +214,12 @@ in
       reconcileIntervalMs = mkOption {
         type = types.int;
         default = 500;
+      };
+
+      commandTimeoutMs = mkOption {
+        type = types.int;
+        default = 5000;
+        description = "Timeout in milliseconds for local systemd/journal/metrics commands issued by the executor.";
       };
 
       generation = mkOption {

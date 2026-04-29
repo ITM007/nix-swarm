@@ -27,52 +27,66 @@ defmodule NixSwarm.TUI do
   @type state :: map()
 
   def run(opts) do
-    ensure_runtime_supported!()
-    remote = Remote.options!(opts)
+    with_terminal_logging_suppressed(fn ->
+      ensure_runtime_supported!()
+      remote = Remote.options!(opts)
 
-    config_paths =
-      ConfigFiles.defaults(Keyword.get(opts, :source))
-      |> Map.merge(%{
-        cluster_file:
-          Keyword.get(
-            opts,
-            :cluster_file,
-            ConfigFiles.defaults(Keyword.get(opts, :source)).cluster_file
-          ),
-        machines_dir:
-          Keyword.get(
-            opts,
-            :machines_dir,
-            ConfigFiles.defaults(Keyword.get(opts, :source)).machines_dir
-          ),
-        services_dir:
-          Keyword.get(
-            opts,
-            :services_dir,
-            ConfigFiles.defaults(Keyword.get(opts, :source)).services_dir
-          ),
-        remote_path: Keyword.get(opts, :remote_path, Deploy.defaults().remote_path),
-        nixos_dir: Keyword.get(opts, :nixos_dir, Deploy.defaults().nixos_dir)
-      })
+      config_paths =
+        ConfigFiles.defaults(Keyword.get(opts, :source))
+        |> Map.merge(%{
+          cluster_file:
+            Keyword.get(
+              opts,
+              :cluster_file,
+              ConfigFiles.defaults(Keyword.get(opts, :source)).cluster_file
+            ),
+          machines_dir:
+            Keyword.get(
+              opts,
+              :machines_dir,
+              ConfigFiles.defaults(Keyword.get(opts, :source)).machines_dir
+            ),
+          services_dir:
+            Keyword.get(
+              opts,
+              :services_dir,
+              ConfigFiles.defaults(Keyword.get(opts, :source)).services_dir
+            ),
+          remote_path: Keyword.get(opts, :remote_path, Deploy.defaults().remote_path),
+          nixos_dir: Keyword.get(opts, :nixos_dir, Deploy.defaults().nixos_dir)
+        })
 
-    # Establish connection in the main process before starting the UI
-    # This ensures net_kernel is tied to the long-running main process
-    # rather than transient refresh tasks.
-    Remote.connect!(remote)
+      # Establish connection in the main process before starting the UI
+      # This ensures net_kernel is tied to the long-running main process
+      # rather than transient refresh tasks.
+      Remote.connect!(remote)
 
-    run_session(
-      [
-        name: nil,
-        remote: remote,
-        lines: Keyword.get(opts, :lines, @default_lines),
-        refresh_ms: Keyword.get(opts, :refresh_ms, @default_refresh_ms),
-        config_paths: config_paths,
-        owner_pid: self(),
-        deploy_fun: Keyword.get(opts, :deploy_fun, &Deploy.run/1)
-      ],
-      %{},
-      Keyword.get(opts, :editor_runner, &run_system_editor/1)
-    )
+      run_session(
+        [
+          name: nil,
+          remote: remote,
+          lines: Keyword.get(opts, :lines, @default_lines),
+          refresh_ms: Keyword.get(opts, :refresh_ms, @default_refresh_ms),
+          config_paths: config_paths,
+          owner_pid: self(),
+          deploy_fun: Keyword.get(opts, :deploy_fun, &Deploy.run/1)
+        ],
+        %{},
+        Keyword.get(opts, :editor_runner, &run_system_editor/1)
+      )
+    end)
+  end
+
+  @doc false
+  def with_terminal_logging_suppressed(fun) when is_function(fun, 0) do
+    previous_level = Logger.level()
+    Logger.configure(level: :none)
+
+    try do
+      fun.()
+    after
+      Logger.configure(level: previous_level)
+    end
   end
 
   @doc false
@@ -1217,18 +1231,11 @@ defmodule NixSwarm.TUI do
   end
 
   defp cluster_log_payload(target_node, selected_node, overview, lines) do
-    if remote_function_exported?(target_node, NixSwarm.API, :cluster_logs, 2) &&
-         remote_function_exported?(selected_node, NixSwarm.API, :local_cluster_logs, 1) do
+    if Remote.function_exported?(target_node, NixSwarm.API, :cluster_logs, 2) &&
+         Remote.function_exported?(selected_node, NixSwarm.API, :local_cluster_logs, 1) do
       Remote.rpc!(target_node, NixSwarm.API, :cluster_logs, [selected_node, lines])
     else
       legacy_cluster_logs(selected_node, overview)
-    end
-  end
-
-  defp remote_function_exported?(node, module, function, arity) do
-    case :rpc.call(node, :erlang, :function_exported, [module, function, arity], 5_000) do
-      true -> true
-      _ -> false
     end
   end
 

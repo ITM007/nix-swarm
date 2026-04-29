@@ -34,8 +34,8 @@ defmodule NixSwarm.Deploy do
     else
       results =
         Enum.map(plan.results, fn result ->
-          sync!(result.sync_command)
-          rebuild_output = rebuild!(result.rebuild_command)
+          sync!(result.host, result.sync_command)
+          rebuild_output = rebuild!(result.host, result.rebuild_command)
           Map.put(result, :rebuild_output, rebuild_output)
         end)
 
@@ -257,7 +257,12 @@ defmodule NixSwarm.Deploy do
   end
 
   defp validate!(plan) do
-    Enum.each(plan.validation.commands, &run_shell!/1)
+    plan.validation.commands
+    |> Enum.zip(plan.validation.machine_files)
+    |> Enum.each(fn {command, machine_file} ->
+      run_shell!(command, "validation for #{machine_file}")
+    end)
+
     plan
   end
 
@@ -297,18 +302,18 @@ defmodule NixSwarm.Deploy do
     "nix-instantiate --eval --strict --expr #{shell_escape(expr)}"
   end
 
-  defp sync!(command) do
-    run_shell!(command)
+  defp sync!(host, command) do
+    run_shell!(command, "sync to #{host}")
   end
 
-  defp rebuild!(command) do
-    run_shell!(command)
+  defp rebuild!(host, command) do
+    run_shell!(command, "rebuild on #{host}")
   end
 
-  defp run_shell!(command) do
+  defp run_shell!(command, context) do
     case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
       {output, 0} -> output
-      {output, status} -> raise "command failed with status #{status}: #{output}"
+      {output, status} -> raise "#{context} failed with status #{status}: #{String.trim(output)}"
     end
   end
 
@@ -372,6 +377,12 @@ defmodule NixSwarm.Deploy do
       "ssh",
       "-o",
       "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+      "-o",
+      "ServerAliveInterval=10",
+      "-o",
+      "ServerAliveCountMax=3",
       "-o",
       "StrictHostKeyChecking=accept-new",
       "--",

@@ -1,42 +1,52 @@
 defmodule NixSwarm.Executor.Systemd do
   @moduledoc false
 
-  def start_unit(unit, _config) do
-    reset_failed(unit)
-    systemctl(["start", unit])
+  @default_command_timeout_ms 5_000
+
+  def start_unit(unit, config) do
+    reset_failed(unit, config)
+    systemctl(["start", unit], config)
   end
 
-  def stop_unit(unit, _config), do: systemctl(["stop", unit])
+  def stop_unit(unit, config), do: systemctl(["stop", unit], config)
 
-  def restart_unit(unit, _config) do
-    reset_failed(unit)
-    systemctl(["restart", unit])
+  def restart_unit(unit, config) do
+    reset_failed(unit, config)
+    systemctl(["restart", unit], config)
   end
 
-  def unit_status(unit, _config) do
+  def unit_status(unit, config) do
     properties = ["ActiveState", "SubState", "Result"]
 
-    case System.cmd("systemctl", ["show", unit] ++ Enum.map(properties, &"--property=#{&1}"),
-           stderr_to_stdout: true
+    case system_cmd(
+           "systemctl",
+           ["show", unit] ++ Enum.map(properties, &"--property=#{&1}"),
+           config
          ) do
       {output, 0} ->
         {:ok, output |> parse_properties() |> map_unit_status()}
+
+      {:error, :timeout} ->
+        {:ok, :unknown}
 
       {_output, _status} ->
         {:ok, :unknown}
     end
   end
 
-  def unit_logs(unit, lines, _config) do
-    case System.cmd("journalctl", ["-u", unit, "-n", Integer.to_string(lines), "--no-pager"],
-           stderr_to_stdout: true
+  def unit_logs(unit, lines, config) do
+    case system_cmd(
+           "journalctl",
+           ["-u", unit, "-n", Integer.to_string(lines), "--no-pager"],
+           config
          ) do
       {output, 0} -> {:ok, String.trim_trailing(output)}
+      {:error, :timeout} -> {:error, {:journalctl_failed, :timeout, ""}}
       {output, status} -> {:error, {:journalctl_failed, status, output}}
     end
   end
 
-  def unit_metrics(unit, _config) do
+  def unit_metrics(unit, config) do
     properties = [
       "CPUUsageNSec",
       "MemoryCurrent",
@@ -51,8 +61,10 @@ defmodule NixSwarm.Executor.Systemd do
       "RootDirectory"
     ]
 
-    case System.cmd("systemctl", ["show", unit] ++ Enum.map(properties, &"--property=#{&1}"),
-           stderr_to_stdout: true
+    case system_cmd(
+           "systemctl",
+           ["show", unit] ++ Enum.map(properties, &"--property=#{&1}"),
+           config
          ) do
       {output, 0} ->
         values = parse_properties(output)
@@ -60,7 +72,7 @@ defmodule NixSwarm.Executor.Systemd do
         %{
           cpu: %{usage_ns: numeric_property(values, "CPUUsageNSec")},
           memory: %{used: numeric_property(values, "MemoryCurrent")},
-          disk: %{used: disk_usage_bytes(values)},
+          disk: %{used: disk_usage_bytes(values, config)},
           network: %{
             counter:
               numeric_property(values, "IPIngressBytes") +
@@ -69,23 +81,27 @@ defmodule NixSwarm.Executor.Systemd do
           started_at_ns: numeric_property(values, "ActiveEnterTimestampUSec") * 1_000
         }
 
+      {:error, :timeout} ->
+        default_metrics()
+
       {_output, _status} ->
         default_metrics()
     end
   end
 
-  def restart_host(_config), do: systemctl(["reboot"])
-  def shutdown_host(_config), do: systemctl(["poweroff"])
+  def restart_host(config), do: systemctl(["reboot"], config)
+  def shutdown_host(config), do: systemctl(["poweroff"], config)
 
-  defp systemctl(args) do
-    case System.cmd("systemctl", args, stderr_to_stdout: true) do
+  defp systemctl(args, config) do
+    case system_cmd("systemctl", args, config) do
       {_, 0} -> :ok
+      {:error, :timeout} -> {:error, {:systemctl_failed, :timeout, ""}}
       {output, status} -> {:error, {:systemctl_failed, status, output}}
     end
   end
 
-  defp reset_failed(unit) do
-    System.cmd("systemctl", ["reset-failed", unit], stderr_to_stdout: true)
+  defp reset_failed(unit, config) do
+    system_cmd("systemctl", ["reset-failed", unit], config)
     :ok
   end
 
@@ -161,7 +177,7 @@ defmodule NixSwarm.Executor.Systemd do
       String.contains?(to_string(result), "start-limit")
   end
 
-  defp disk_usage_bytes(values) do
+  defp disk_usage_bytes(values, config) do
     values
     |> disk_paths()
     |> Enum.uniq()
@@ -171,10 +187,30 @@ defmodule NixSwarm.Executor.Systemd do
         0
 
       paths ->
-        case System.cmd("du", ["-sb"] ++ paths, stderr_to_stdout: true) do
+        case system_cmd("du", ["-sb"] ++ paths, config) do
           {output, 0} -> sum_du_output(output)
+          {:error, :timeout} -> 0
           {_output, _status} -> 0
         end
+    end
+  end
+
+  defp system_cmd(command, args, config) do
+    task = Task.async(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+
+    try do
+      Task.await(task, command_timeout_ms(config))
+    catch
+      :exit, {:timeout, _} ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, :timeout}
+    end
+  end
+
+  defp command_timeout_ms(config) do
+    case Map.get(config, :command_timeout_ms, @default_command_timeout_ms) do
+      value when is_integer(value) and value > 0 -> value
+      _ -> @default_command_timeout_ms
     end
   end
 

@@ -29,7 +29,8 @@ defmodule NixSwarm.CLI do
   end
 
   def run(argv, tui_runner \\ &NixSwarm.TUI.run/1) do
-    {opts, args, _invalid} = OptionParser.parse(argv, strict: @strict_opts)
+    {opts, args, invalid} = OptionParser.parse(argv, strict: @strict_opts)
+    validate_parse_result!(opts, invalid)
     maybe_warn_cookie(opts)
 
     cond do
@@ -51,6 +52,35 @@ defmodule NixSwarm.CLI do
   rescue
     error in [NixSwarm.Remote.Error, ArgumentError, RuntimeError] ->
       {:error, Exception.message(error)}
+  end
+
+  defp validate_parse_result!(_opts, [{option, nil} | _invalid]) do
+    raise ArgumentError, "unsupported option: #{option}"
+  end
+
+  defp validate_parse_result!(_opts, [{option, value} | _invalid]) do
+    raise ArgumentError, "invalid value for #{option}: #{value}"
+  end
+
+  defp validate_parse_result!(opts, []) do
+    validate_positive_integer!(opts, :lines, "--lines")
+    validate_minimum_integer!(opts, :refresh_ms, "--refresh-ms", 100)
+  end
+
+  defp validate_positive_integer!(opts, key, label) do
+    case Keyword.get(opts, key) do
+      nil -> :ok
+      value when is_integer(value) and value > 0 -> :ok
+      _value -> raise ArgumentError, "#{label} must be a positive integer"
+    end
+  end
+
+  defp validate_minimum_integer!(opts, key, label, minimum) do
+    case Keyword.get(opts, key) do
+      nil -> :ok
+      value when is_integer(value) and value >= minimum -> :ok
+      _value -> raise ArgumentError, "#{label} must be at least #{minimum}"
+    end
   end
 
   defp maybe_warn_cookie(opts) do

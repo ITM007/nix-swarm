@@ -64,11 +64,13 @@ defmodule NixSwarm.API do
 
   def cluster_status do
     live_nodes = NixSwarm.Cluster.live_nodes()
+    config = NixSwarm.Config.current()
 
     %{
       queried_node: Node.self(),
       live_nodes: live_nodes,
-      placements: Placement.plan(NixSwarm.Config.current(), live_nodes),
+      placements: Placement.plan(config, live_nodes),
+      placement_diagnostics: Placement.diagnostics(config, live_nodes),
       nodes: collect_statuses(live_nodes)
     }
   end

@@ -23,6 +23,7 @@ defmodule NixSwarm.ThreeNodeClusterTest do
 
     status = :rpc.call(node_a, NixSwarm.API, :cluster_status, [])
     assert Enum.sort(status.live_nodes) == cluster.nodes
+    assert status.placement_diagnostics == []
     assert Map.has_key?(status.placements, "gitea")
     assert Map.has_key?(status.placements, "proxy")
 

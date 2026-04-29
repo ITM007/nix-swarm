@@ -63,9 +63,32 @@ defmodule NixSwarm.Service do
   end
 
   defp normalize_settings(settings) when settings in [%{}, [], :undefined, "undefined"], do: %{}
-  defp normalize_settings(settings) when is_map(settings), do: settings
-  defp normalize_settings(settings) when is_list(settings), do: Enum.into(settings, %{})
+
+  defp normalize_settings(settings) when is_map(settings) do
+    Map.new(settings, fn {key, value} -> {key, normalize_setting_value(value)} end)
+  end
+
+  defp normalize_settings(settings) when is_list(settings) do
+    if Keyword.keyword?(settings) do
+      settings
+      |> Enum.into(%{})
+      |> normalize_settings()
+    else
+      %{}
+    end
+  end
+
   defp normalize_settings(_settings), do: %{}
+
+  defp normalize_setting_value(value) when is_list(value) do
+    cond do
+      Keyword.keyword?(value) -> normalize_settings(value)
+      List.ascii_printable?(value) -> to_string(value)
+      true -> Enum.map(value, &normalize_setting_value/1)
+    end
+  end
+
+  defp normalize_setting_value(value), do: value
 
   defp normalize_integer(value, _default) when is_integer(value), do: value
 

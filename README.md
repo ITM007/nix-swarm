@@ -219,6 +219,13 @@ The repository keeps tracked starter files under `examples/config/`. The package
 4. Use `y` to preview and `p` to apply config changes
 5. Use `u` to roll updated code/config to running nodes; the rollout waits until the targeted nodes come back and report one version
 
+## More documentation
+
+- [Getting started](docs/GETTING_STARTED.md)
+- [Configuration reference](docs/CONFIG_REFERENCE.md)
+- [Operations guide](docs/OPERATIONS.md)
+- [Security model](docs/SECURITY.md)
+
 ## Troubleshooting
 
 - **Cannot connect to the target:** confirm `nix-swarmd` is running, the cookie matches, and TCP `4369` plus `4370` are reachable from the operator machine.

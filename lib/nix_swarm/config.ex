@@ -7,6 +7,7 @@ defmodule NixSwarm.Config do
   @default_runtime %{
     connect_interval_ms: 500,
     reconcile_interval_ms: 500,
+    command_timeout_ms: 5_000,
     executor: %{adapter: :fake, root: Path.join(System.tmp_dir!(), "nix-swarm")},
     generation: "dev"
   }
@@ -108,6 +109,11 @@ defmodule NixSwarm.Config do
         normalize_integer(
           fetch(raw_runtime, :reconcile_interval_ms),
           @default_runtime.reconcile_interval_ms
+        ),
+      command_timeout_ms:
+        normalize_integer(
+          fetch(raw_runtime, :command_timeout_ms),
+          @default_runtime.command_timeout_ms
         ),
       generation: to_string(fetch(raw_runtime, :generation, @default_runtime.generation)),
       executor: executor

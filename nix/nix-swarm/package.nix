@@ -100,6 +100,7 @@ pkgs.runCommand "nix-swarm-${version}" {} ''
   done
 
   cp -a ${src} "$out/share/nix-swarm/template"
+  chmod -R u+w "$out/share/nix-swarm/template"
   cp -a "$out/share/nix-swarm/template/examples/config/cluster" "$out/share/nix-swarm/template/cluster"
   cp -a "$out/share/nix-swarm/template/examples/config/machines" "$out/share/nix-swarm/template/machines"
   ln -s ${release}/bin/nix_swarm "$out/bin/nix-swarmd"

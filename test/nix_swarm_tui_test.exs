@@ -25,6 +25,26 @@ defmodule NixSwarmTUITest do
     assert message =~ missing_dir
   end
 
+  test "terminal logging is suppressed and restored for interactive TUI sessions" do
+    original_level = Logger.level()
+
+    try do
+      Logger.configure(level: :warning)
+
+      assert :ok =
+               NixSwarm.TUI.with_terminal_logging_suppressed(fn ->
+                 assert Logger.level() == :none
+                 :logger.warning("hidden while TUI owns the screen")
+                 Logger.flush()
+                 :ok
+               end)
+
+      assert Logger.level() == :warning
+    after
+      Logger.configure(level: original_level)
+    end
+  end
+
   test "scene renders the ascii dashboard" do
     terminal = ExRatatui.init_test_terminal(120, 40)
 

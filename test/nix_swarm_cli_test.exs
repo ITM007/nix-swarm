@@ -52,4 +52,17 @@ defmodule NixSwarmCLITest do
     assert message =~ "Nix-Swarm is TUI-first in v0.1.0 alpha"
     assert message =~ "nix-swarm --target NODE"
   end
+
+  test "invalid numeric options return actionable errors" do
+    assert {:error, "--lines must be a positive integer"} =
+             NixSwarm.CLI.run(["--target", "nix-swarm@example-node-a.local", "--lines", "-1"])
+
+    assert {:error, "--refresh-ms must be at least 100"} =
+             NixSwarm.CLI.run([
+               "--target",
+               "nix-swarm@example-node-a.local",
+               "--refresh-ms",
+               "50"
+             ])
+  end
 end

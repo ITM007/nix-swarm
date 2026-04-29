@@ -90,6 +90,30 @@ defmodule NixSwarmPlacementTest do
     assert hd(config.services).settings == %{domain: "gitea.home", http_port: 3000}
   end
 
+  test "service settings loaded from erlang charlists are normalized" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "nix-swarm-settings-#{System.unique_integer([:positive])}.config"
+      )
+
+    File.write!(
+      path,
+      """
+      {services, [[
+        {name, "gitea"},
+        {settings, [{domain, "gitea.home"}, {http_port, 3000}]}
+      ]]}.
+      """
+    )
+
+    config = path |> NixSwarm.Config.load_from_path() |> NixSwarm.Config.normalize()
+
+    assert hd(config.services).settings == %{domain: "gitea.home", http_port: 3000}
+
+    File.rm_rf!(path)
+  end
+
   test "service defaults derive the unit template from the replica count" do
     single =
       NixSwarm.Config.normalize(%{
@@ -140,5 +164,37 @@ defmodule NixSwarmPlacementTest do
       |> Enum.map(& &1.owner)
 
     assert owners == [:"node-c@127.0.0.1", :"node-a@127.0.0.1"]
+  end
+
+  test "placement diagnostics explain unowned and underspread services" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1"],
+        nodes: %{
+          :"node-a@127.0.0.1" => %{labels: ["ssd"]},
+          :"node-b@127.0.0.1" => %{labels: ["edge"]}
+        },
+        services: [
+          %{name: "db", replicas: 2, constraints: ["ssd"]},
+          %{name: "gpu", replicas: 1, constraints: ["gpu"]}
+        ]
+      })
+
+    diagnostics = NixSwarm.Placement.diagnostics(config, [:"node-a@127.0.0.1"])
+
+    assert Enum.any?(
+             diagnostics,
+             &match?(%{service: "db", reason: :replicas_exceed_live_eligible_nodes}, &1)
+           )
+
+    assert Enum.any?(
+             diagnostics,
+             &match?(%{service: "gpu", reason: :no_configured_eligible_nodes}, &1)
+           )
+
+    assert Enum.any?(
+             diagnostics,
+             &match?(%{service: "gpu", reason: :unowned_slots, slots: [0]}, &1)
+           )
   end
 end

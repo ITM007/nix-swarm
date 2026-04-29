@@ -6,6 +6,7 @@ defmodule NixSwarm.Remote do
   @epmd_port 4369
   @default_distribution_port 4370
   @tcp_connect_timeout_ms 1_000
+  @legacy_api_module Swarm.API
 
   defmodule Error do
     defexception [:message]
@@ -105,16 +106,35 @@ defmodule NixSwarm.Remote do
     %{name: NodeName.to_node!(name, label: "CLI node name"), mode: node_mode}
   end
 
-  def rpc!(node, module, function, args) do
-    case :rpc.call(node, module, function, args, 5_000) do
-      {:badrpc, reason} ->
-        fail(
-          "remote call #{inspect(module)}.#{function}/#{length(args)} failed on #{node}: #{inspect(reason)}"
-        )
+  def rpc!(node, module, function, args), do: rpc!(node, module, function, args, &:rpc.call/5)
 
-      result ->
+  @doc false
+  def rpc!(node, module, function, args, rpc_fun) when is_function(rpc_fun, 5) do
+    case rpc_result(node, module, function, args, rpc_fun) do
+      {:ok, _module, result} ->
         result
+
+      {:error, attempted_module, reason} ->
+        fail(
+          "remote call #{inspect(attempted_module)}.#{function}/#{length(args)} failed on #{node}: #{inspect(reason)}"
+        )
     end
+  end
+
+  @doc false
+  def function_exported?(node, module, function, arity),
+    do: function_exported?(node, module, function, arity, &:rpc.call/5)
+
+  @doc false
+  def function_exported?(node, module, function, arity, rpc_fun) when is_function(rpc_fun, 5) do
+    module
+    |> compatible_modules()
+    |> Enum.any?(fn candidate ->
+      case rpc_fun.(node, :erlang, :function_exported, [candidate, function, arity], 5_000) do
+        true -> true
+        _ -> false
+      end
+    end)
   end
 
   def doctor_context_rows(diagnostic) do
@@ -434,8 +454,18 @@ defmodule NixSwarm.Remote do
   defp probe_remote(target_node, _connect_result) do
     %{
       remote_self: rpc_probe(target_node, Node, :self, []),
-      cluster_members: rpc_probe(target_node, NixSwarm.API, :cluster_members, [])
+      cluster_members: api_rpc_probe(target_node, :cluster_members, [])
     }
+  end
+
+  defp api_rpc_probe(node, function, args) do
+    case rpc_result(node, NixSwarm.API, function, args, &:rpc.call/5) do
+      {:ok, _module, value} ->
+        %{status: :ok, value: value}
+
+      {:error, _module, reason} ->
+        %{status: :error, detail: inspect(reason)}
+    end
   end
 
   defp rpc_probe(node, module, function, args) do
@@ -589,7 +619,7 @@ defmodule NixSwarm.Remote do
   defp name_override_solution(_diagnostic), do: nil
 
   defp remote_api_solution(%{remote_probe: %{cluster_members: %{status: :error}}}) do
-    "The Erlang node answered, but `NixSwarm.API` did not. Make sure the `nix_swarm` application is running on the target."
+    "The Erlang node answered, but the expected API module did not. Make sure the target is running either the current `nix_swarm` release or a legacy `swarm` release."
   end
 
   defp remote_api_solution(_diagnostic), do: nil
@@ -631,6 +661,34 @@ defmodule NixSwarm.Remote do
   defp format_list(values), do: Enum.join(values, ", ")
 
   defp format_nodes(nodes), do: nodes |> Enum.map(&Atom.to_string/1) |> Enum.join(", ")
+
+  defp rpc_result(node, module, function, args, rpc_fun) do
+    candidates = compatible_modules(module)
+
+    candidates
+    |> Enum.reduce_while(nil, fn candidate, _last_error ->
+      case rpc_fun.(node, candidate, function, args, 5_000) do
+        {:badrpc, reason} ->
+          if undefined_remote_function?(reason) and candidate != List.last(candidates) do
+            {:cont, {:error, candidate, reason}}
+          else
+            {:halt, {:error, candidate, reason}}
+          end
+
+        result ->
+          {:halt, {:ok, candidate, result}}
+      end
+    end)
+  end
+
+  defp compatible_modules(NixSwarm.API), do: [NixSwarm.API, @legacy_api_module]
+  defp compatible_modules(module), do: [module]
+
+  defp undefined_remote_function?(reason) do
+    reason
+    |> inspect()
+    |> String.contains?(":undef")
+  end
 
   defp fail(message), do: raise(Error, message: message)
 end
