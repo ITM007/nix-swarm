@@ -13,6 +13,8 @@ defmodule NixSwarm.Service do
       replicas: replicas,
       unit_template: unit_template,
       constraints: fetch(raw, :constraints, []) |> normalize_labels(),
+      allowed_nodes:
+        fetch(raw, :allowed_nodes, fetch(raw, :allowedNodes, [])) |> normalize_nodes(),
       preferred_nodes:
         fetch(raw, :preferred_nodes, fetch(raw, :preferredNodes, [])) |> normalize_nodes(),
       healthcheck: normalize_optional(fetch(raw, :healthcheck)),

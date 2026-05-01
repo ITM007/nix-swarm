@@ -47,7 +47,12 @@ defmodule NixSwarm.Reconciler do
   @impl true
   def init(state) do
     state =
-      %{service_modes: %{}, service_modes_synced?: true, monitoring_nodes?: false}
+      %{
+        service_modes: %{},
+        service_modes_synced?: true,
+        monitoring_nodes?: false,
+        previous_owned_units: %{}
+      }
       |> Map.merge(state)
       |> maybe_enable_node_monitoring()
 
@@ -61,7 +66,8 @@ defmodule NixSwarm.Reconciler do
   @impl true
   def handle_call(:reconcile_now, _from, state) do
     state = maybe_sync_service_modes(state)
-    {:reply, reconcile(state), state}
+    {reply, state} = reconcile(state)
+    {:reply, reply, state}
   end
 
   @impl true
@@ -86,7 +92,8 @@ defmodule NixSwarm.Reconciler do
       _service ->
         service_modes = update_service_mode(state.service_modes, service_name, desired_state)
         next_state = %{state | service_modes: service_modes, service_modes_synced?: true}
-        {:reply, apply_service_mode(next_state, service_name, desired_state), next_state}
+        {reply, next_state} = apply_service_mode(next_state, service_name, desired_state)
+        {:reply, reply, next_state}
     end
   end
 
@@ -98,7 +105,7 @@ defmodule NixSwarm.Reconciler do
   @impl true
   def handle_info(:reconcile, state) do
     state = maybe_sync_service_modes(state)
-    reconcile(state)
+    {_reply, state} = reconcile(state)
 
     unless control_node?() do
       schedule_reconcile()
@@ -127,7 +134,15 @@ defmodule NixSwarm.Reconciler do
 
   defp reconcile(state) do
     if control_node?() do
-      %{owned_units: [], results: [], service_modes: state.service_modes, skipped: :control_node}
+      {
+        %{
+          owned_units: [],
+          results: [],
+          service_modes: state.service_modes,
+          skipped: :control_node
+        },
+        state
+      }
     else
       config = NixSwarm.Config.current()
       live_nodes = NixSwarm.Cluster.live_nodes()
@@ -141,13 +156,9 @@ defmodule NixSwarm.Reconciler do
         |> Enum.map(& &1.unit)
         |> MapSet.new()
 
-      all_units =
-        config.services
-        |> Enum.flat_map(fn service ->
-          Enum.map(Service.slots(service), fn slot ->
-            Service.unit_name(service, slot)
-          end)
-        end)
+      previous_owned_units = Map.get(state, :previous_owned_units, %{})
+      known_zero_replica_units = zero_replica_units(config.services, previous_owned_units)
+      all_units = current_units(config.services) ++ known_zero_replica_units
 
       results =
         Enum.map(all_units, fn unit ->
@@ -165,11 +176,18 @@ defmodule NixSwarm.Reconciler do
           end
         end)
 
-      %{
+      reply = %{
         owned_units: MapSet.to_list(desired_units),
         results: results,
         service_modes: state.service_modes
       }
+
+      {reply,
+       %{
+         state
+         | previous_owned_units:
+             remember_owned_units(previous_owned_units, config.services, owned)
+       }}
     end
   end
 
@@ -226,6 +244,38 @@ defmodule NixSwarm.Reconciler do
     end
   end
 
+  defp current_units(services) do
+    Enum.flat_map(services, fn service ->
+      Enum.map(Service.slots(service), fn slot ->
+        Service.unit_name(service, slot)
+      end)
+    end)
+  end
+
+  defp zero_replica_units(services, previous_owned_units) do
+    services
+    |> Enum.filter(&(&1.replicas == 0))
+    |> Enum.flat_map(fn service ->
+      service.name
+      |> then(&Map.get(previous_owned_units, &1, MapSet.new()))
+      |> MapSet.to_list()
+    end)
+  end
+
+  defp remember_owned_units(previous_owned_units, services, owned) do
+    owned_by_service =
+      owned
+      |> Enum.group_by(& &1.service, & &1.unit)
+      |> Map.new(fn {service, units} -> {service, MapSet.new(units)} end)
+
+    Enum.reduce(services, previous_owned_units, fn service, acc ->
+      case service.replicas do
+        0 -> acc
+        _ -> Map.put(acc, service.name, Map.get(owned_by_service, service.name, MapSet.new()))
+      end
+    end)
+  end
+
   defp schedule_reconcile do
     Process.send_after(self(), :reconcile, NixSwarm.Config.runtime().reconcile_interval_ms)
   end
@@ -271,11 +321,15 @@ defmodule NixSwarm.Reconciler do
   end
 
   defp apply_service_mode(state, service_name, desired_state) do
-    %{
+    {reconcile_result, state} = reconcile(state)
+
+    reply = %{
       service: service_name,
       desired_state: desired_state,
-      reconcile: reconcile(state)
+      reconcile: reconcile_result
     }
+
+    {reply, state}
   end
 
   defp update_service_mode(service_modes, service_name, :running) do

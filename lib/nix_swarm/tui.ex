@@ -531,6 +531,14 @@ defmodule NixSwarm.TUI do
   end
 
   def handle_event(
+        %Event.Key{code: "b", modifiers: modifiers, kind: "press"},
+        %{active_view: :machines} = state
+      )
+      when modifiers in [nil, []] do
+    {:noreply, state |> request_node_service_action(:start) |> note_input()}
+  end
+
+  def handle_event(
         %Event.Key{code: "z", modifiers: modifiers, kind: "press"},
         %{active_view: view} = state
       )
@@ -539,11 +547,27 @@ defmodule NixSwarm.TUI do
   end
 
   def handle_event(
+        %Event.Key{code: "z", modifiers: modifiers, kind: "press"},
+        %{active_view: :machines} = state
+      )
+      when modifiers in [nil, []] do
+    {:noreply, state |> request_node_service_action(:stop) |> note_input()}
+  end
+
+  def handle_event(
         %Event.Key{code: "x", modifiers: modifiers, kind: "press"},
         %{active_view: view} = state
       )
       when view in [:dashboard, :services] and modifiers in [nil, []] do
     {:noreply, state |> request_restart() |> note_input()}
+  end
+
+  def handle_event(
+        %Event.Key{code: "x", modifiers: modifiers, kind: "press"},
+        %{active_view: :machines} = state
+      )
+      when modifiers in [nil, []] do
+    {:noreply, state |> request_node_service_action(:restart) |> note_input()}
   end
 
   def handle_event(
@@ -577,6 +601,30 @@ defmodule NixSwarm.TUI do
 
   def handle_event(%Event.Key{code: "y", kind: "press"}, state) do
     {:noreply, state |> request_apply(true) |> note_input()}
+  end
+
+  def handle_event(
+        %Event.Key{code: "a", modifiers: modifiers, kind: "press"},
+        %{active_view: view} = state
+      )
+      when view in [:machines, :services] and modifiers in [nil, []] do
+    {:noreply, state |> open_add_config_prompt(view) |> note_input()}
+  end
+
+  def handle_event(
+        %Event.Key{code: "e", modifiers: modifiers, kind: "press"},
+        %{active_view: view} = state
+      )
+      when view in [:machines, :services] and modifiers in [nil, []] do
+    external_action_transition(edit_selected_config_file(state, view))
+  end
+
+  def handle_event(
+        %Event.Key{code: "d", modifiers: modifiers, kind: "press"},
+        %{active_view: view} = state
+      )
+      when view in [:machines, :services] and modifiers in [nil, []] do
+    {:noreply, state |> delete_selected_config(view) |> note_input()}
   end
 
   def handle_event(_event, state) do
@@ -762,6 +810,55 @@ defmodule NixSwarm.TUI do
     end)
   end
 
+  defp request_node_service_action(%{selected_node: nil} = state, action) do
+    put_flash(state, "select a machine before #{service_action_verb(action)} a local service")
+  end
+
+  defp request_node_service_action(%{selected_service: nil} = state, action) do
+    put_flash(state, "select a service before #{service_action_verb(action)} it on one machine")
+  end
+
+  defp request_node_service_action(
+         %{job_ref: nil, selected_node: node, selected_service: service} = state,
+         action
+       ) do
+    launch_node_service_action(state, action, node, service)
+  end
+
+  defp request_node_service_action(
+         %{selected_node: node, selected_service: service} = state,
+         action
+       ) do
+    queue_operator_action(
+      state,
+      {:node_service_action, action, node, service},
+      "#{service_action_label(action)} queued for #{service} on #{node_hostname(state.overview, node)}"
+    )
+  end
+
+  defp launch_node_service_action(state, action, node, service) do
+    launch_job(state, {:node_service_action, action, node, service}, fn ->
+      target_node = Remote.connect!(state.remote)
+
+      result =
+        Remote.rpc!(target_node, NixSwarm.API, node_service_action_api(action), [node, service])
+
+      snapshot = fetch_snapshot(state.remote, state.lines, service, node)
+
+      %{
+        snapshot: snapshot,
+        flash:
+          node_service_action_message(
+            action,
+            service,
+            node,
+            result,
+            snapshot.overview || state.overview
+          )
+      }
+    end)
+  end
+
   defp request_restart(state), do: request_service_action(state, :restart)
 
   defp request_machine_action(%{selected_node: nil} = state, action) do
@@ -922,6 +1019,10 @@ defmodule NixSwarm.TUI do
   defp service_action_api(:stop), do: :stop_service
   defp service_action_api(:restart), do: :restart_service
 
+  defp node_service_action_api(:start), do: :start_service_on_node
+  defp node_service_action_api(:stop), do: :stop_service_on_node
+  defp node_service_action_api(:restart), do: :restart_service_on_node
+
   defp machine_action_api(:restart), do: :restart_machine
   defp machine_action_api(:shutdown), do: :shutdown_machine
 
@@ -993,6 +1094,51 @@ defmodule NixSwarm.TUI do
     state
     |> Map.put(:prompt, nil)
     |> apply_log_search(value)
+  end
+
+  defp submit_prompt(%{prompt: %{kind: :add_machine, value: value}} = state) do
+    case parse_add_machine_input(value) do
+      {:ok, node_name, deploy_host, labels} ->
+        case ConfigFiles.add_machine(state.config_paths, node_name,
+               deploy_host: deploy_host,
+               labels: labels
+             ) do
+          {:ok, path} ->
+            state
+            |> Map.put(:prompt, nil)
+            |> Map.put(:pending_action, external_action(:edit, "machine-file", path))
+            |> put_flash("machine added: #{node_name}; opening #{Path.basename(path)}")
+
+          {:error, message} ->
+            put_error(state, message)
+        end
+
+      {:error, message} ->
+        put_error(state, message)
+    end
+  end
+
+  defp submit_prompt(%{prompt: %{kind: :add_service, value: value}} = state) do
+    case parse_add_service_input(value) do
+      {:ok, service_name, replicas, constraints, preferred_nodes} ->
+        case ConfigFiles.add_service(state.config_paths, service_name,
+               replicas: replicas,
+               constraints: constraints,
+               preferred_nodes: preferred_nodes
+             ) do
+          {:ok, path} ->
+            state
+            |> Map.put(:prompt, nil)
+            |> Map.put(:pending_action, external_action(:edit, "service-file", path))
+            |> put_flash("service added: #{service_name}; opening #{Path.basename(path)}")
+
+          {:error, message} ->
+            put_error(state, message)
+        end
+
+      {:error, message} ->
+        put_error(state, message)
+    end
   end
 
   defp submit_prompt(state) do
@@ -1143,6 +1289,15 @@ defmodule NixSwarm.TUI do
 
   defp run_operator_action(state, {:service_action, action, service}) do
     launch_service_action(%{state | selected_service: service}, action, service)
+  end
+
+  defp run_operator_action(state, {:node_service_action, action, node, service}) do
+    launch_node_service_action(
+      %{state | selected_node: node, selected_service: service},
+      action,
+      node,
+      service
+    )
   end
 
   defp run_operator_action(state, {:machine_action, action, node}) do
@@ -2526,6 +2681,7 @@ defmodule NixSwarm.TUI do
 
   defp external_action(:copy, label, text), do: {:copy_text, label, text}
   defp external_action(:export, label, text), do: {:export_text, label, text}
+  defp external_action(:edit, _label, path), do: {:edit_file, path}
 
   defp external_action_transition({:ok, state}) do
     {:stop, note_input(state)}
@@ -3074,6 +3230,118 @@ defmodule NixSwarm.TUI do
     end
   end
 
+  defp open_add_config_prompt(state, :machines) do
+    %{
+      state
+      | prompt: %{
+          kind: :add_machine,
+          title: "add machine",
+          label: "nodeName deployHost labels(comma-separated)",
+          value: ""
+        }
+    }
+    |> put_flash("enter machine as: nix-swarm@host root@host label1,label2")
+  end
+
+  defp open_add_config_prompt(state, :services) do
+    %{
+      state
+      | prompt: %{
+          kind: :add_service,
+          title: "add service",
+          label:
+            "name replicas constraints(comma-separated) preferredNodes(comma-separated, optional)",
+          value: ""
+        }
+    }
+    |> put_flash("enter service as: name 1 label1,label2 nix-swarm@host")
+  end
+
+  defp edit_selected_config_file(state, view) do
+    case current_selected_file(state, view) do
+      nil ->
+        {:error, put_error(state, "no #{config_view_label(view)} file is selected")}
+
+      path ->
+        {:ok,
+         %{
+           state
+           | pending_action: external_action(:edit, "#{config_view_label(view)}-file", path)
+         }}
+    end
+  end
+
+  defp delete_selected_config(state, :machines) do
+    case current_selected_file(state, :machines) do
+      nil ->
+        put_error(state, "no machine file is selected")
+
+      path ->
+        case ConfigFiles.delete_machine(state.config_paths, path) do
+          {:ok, _path, warnings} -> put_flash(state, delete_message("machine", warnings))
+          {:error, message} -> put_error(state, message)
+        end
+    end
+  end
+
+  defp delete_selected_config(%{selected_service: nil} = state, :services) do
+    put_error(state, "no service is selected")
+  end
+
+  defp delete_selected_config(state, :services) do
+    case ConfigFiles.delete_service(state.config_paths, state.selected_service) do
+      {:ok, _path, warnings} -> put_flash(state, delete_message("service", warnings))
+      {:error, message} -> put_error(state, message)
+    end
+  end
+
+  defp parse_add_machine_input(value) do
+    case String.split(value, ~r/\s+/, parts: 3, trim: true) do
+      [node_name, deploy_host, labels] -> {:ok, node_name, deploy_host, split_csv(labels)}
+      [node_name, deploy_host] -> {:ok, node_name, deploy_host, []}
+      _ -> {:error, "machine input must be: nodeName deployHost labels"}
+    end
+  end
+
+  defp parse_add_service_input(value) do
+    case String.split(value, ~r/\s+/, parts: 4, trim: true) do
+      [name, replicas, constraints, preferred_nodes] ->
+        with {:ok, replicas} <- parse_non_negative_integer(replicas) do
+          {:ok, name, replicas, split_csv(constraints), split_csv(preferred_nodes)}
+        end
+
+      [name, replicas, constraints] ->
+        with {:ok, replicas} <- parse_non_negative_integer(replicas) do
+          {:ok, name, replicas, split_csv(constraints), []}
+        end
+
+      _ ->
+        {:error, "service input must be: name replicas constraints [preferredNodes]"}
+    end
+  end
+
+  defp parse_non_negative_integer(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 -> {:ok, parsed}
+      _ -> {:error, "replicas must be zero or greater"}
+    end
+  end
+
+  defp split_csv("-"), do: []
+
+  defp split_csv(value) do
+    value
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp config_view_label(:machines), do: "machine"
+  defp config_view_label(:services), do: "service"
+
+  defp delete_message(kind, []), do: "#{kind} deleted"
+  defp delete_message(kind, warnings), do: "#{kind} deleted; #{Enum.join(warnings, "; ")}"
+
   defp selected_node_services(state) do
     state
     |> selected_node_status()
@@ -3457,6 +3725,10 @@ defmodule NixSwarm.TUI do
   defp busy_label({:start, service}), do: "starting #{service}"
   defp busy_label({:stop, service}), do: "stopping #{service}"
   defp busy_label({:restart, service}) when is_binary(service), do: "restarting #{service}"
+
+  defp busy_label({:node_service_action, action, _node, service}),
+    do: "#{service_action_verb(action)} #{service} on selected machine"
+
   defp busy_label({:restart, node}) when is_atom(node), do: "restarting #{node_hostname(node)}"
 
   defp busy_label({:shutdown, node}) when is_atom(node),
@@ -3483,6 +3755,10 @@ defmodule NixSwarm.TUI do
 
   defp machine_action_message(action, node, _result, overview) do
     "#{machine_action_label(action)} requested for #{node_hostname(overview, node)}"
+  end
+
+  defp node_service_action_message(action, service, node, _result, overview) do
+    "#{service_action_label(action)} requested for #{service} on #{node_hostname(overview, node)} only"
   end
 
   defp reconcile_message(results) do
@@ -3567,7 +3843,12 @@ defmodule NixSwarm.TUI do
 
   defp event_transition(state) do
     state = note_input(state)
-    {:noreply, maybe_flush_pending_refresh(state)}
+
+    if Map.get(state, :pending_action) do
+      {:stop, state}
+    else
+      {:noreply, maybe_flush_pending_refresh(state)}
+    end
   end
 
   defp reset_content_scroll(state) do

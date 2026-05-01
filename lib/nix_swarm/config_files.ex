@@ -88,12 +88,17 @@ defmodule NixSwarm.ConfigFiles do
     end
   end
 
-  def add_machine(paths, node_name) when is_binary(node_name) do
+  def add_machine(paths, node_name, opts \\ []) when is_binary(node_name) do
     with :ok <- validate_generated_name(node_name, "node name") do
       node_name = String.trim(node_name)
       paths = normalize_paths(paths)
       output = next_machine_path(paths, node_name)
       cookie_file = existing_cookie_file(paths)
+
+      deploy_host =
+        opts |> Keyword.get(:deploy_host, node_host(node_name)) |> to_string() |> String.trim()
+
+      labels = opts |> Keyword.get(:labels, []) |> normalize_label_list()
       module_path = relative_nix_path(Path.join(paths.source, "nix/nix-swarm/module.nix"), output)
       cluster_path = relative_nix_path(paths.cluster_file, output)
 
@@ -119,11 +124,12 @@ defmodule NixSwarm.ConfigFiles do
 
       File.mkdir_p!(Path.dirname(output))
       File.write!(output, content)
+      update_machine_topology!(paths.cluster_file, node_name, deploy_host, labels)
       {:ok, output}
     end
   end
 
-  def add_service(paths, service_name) when is_binary(service_name) do
+  def add_service(paths, service_name, opts \\ []) when is_binary(service_name) do
     with :ok <- validate_generated_name(service_name, "service name") do
       service_name = String.trim(service_name)
       paths = normalize_paths(paths)
@@ -146,6 +152,15 @@ defmodule NixSwarm.ConfigFiles do
         )
 
         ensure_service_import(paths.cluster_file, Path.basename(output))
+
+        ensure_service_entry!(
+          paths.cluster_file,
+          service_name,
+          Keyword.get(opts, :replicas, 1),
+          Keyword.get(opts, :constraints, []),
+          Keyword.get(opts, :preferred_nodes, Keyword.get(opts, :preferredNodes, []))
+        )
+
         {:ok, output}
       end
     end
@@ -161,12 +176,31 @@ defmodule NixSwarm.ConfigFiles do
     end
   end
 
+  def delete_machine(paths, path) do
+    node_name = if path, do: machine_node_name(path)
+
+    case delete_machine_file(path) do
+      {:ok, deleted_path} ->
+        if node_name do
+          {:ok, deleted_path, remove_machine_topology(paths, node_name)}
+        else
+          {:ok, deleted_path,
+           ["machine file did not contain a nodeName; cluster topology was not updated"]}
+        end
+
+      {:error, _message} = error ->
+        error
+    end
+  end
+
   def delete_service(paths, service_name) when is_binary(service_name) do
     paths = normalize_paths(paths)
     path = Path.join(paths.services_dir, "#{service_name}.nix")
 
     with :ok <- remove_file(path),
-         :ok <- remove_service_import(paths.cluster_file, Path.basename(path)) do
+         :ok <- remove_service_import(paths.cluster_file, Path.basename(path)),
+         :ok <- remove_service_entry(paths.cluster_file, service_name),
+         :ok <- remove_ingress_entry(paths.cluster_file, service_name) do
       {:ok, path, service_reference_warnings(paths.cluster_file, service_name)}
     end
   end
@@ -253,6 +287,164 @@ defmodule NixSwarm.ConfigFiles do
     end
   end
 
+  defp update_machine_topology!(cluster_file, node_name, deploy_host, labels) do
+    contents = File.read!(cluster_file)
+    contents = ensure_swarm_block(contents)
+    contents = ensure_peers_entry(contents, node_name)
+    contents = ensure_nodes_entry(contents, node_name, deploy_host, labels)
+    File.write!(cluster_file, contents)
+  end
+
+  defp ensure_swarm_block(contents) do
+    if String.contains?(contents, "services.nix-swarm = {") do
+      contents
+    else
+      String.replace(contents, ~r/\n}\s*$/s, "\n  services.nix-swarm = {\n  };\n}\n")
+    end
+  end
+
+  defp ensure_peers_entry(contents, node_name) do
+    peer_line = "      #{nix_string_literal(node_name)};"
+
+    cond do
+      String.contains?(contents, nix_string_literal(node_name)) and
+          String.contains?(contents, "peers = [") ->
+        contents
+
+      String.contains?(contents, "peers = [") ->
+        String.replace(contents, "peers = [", "peers = [\n#{peer_line}", global: false)
+
+      true ->
+        String.replace(
+          contents,
+          "services.nix-swarm = {",
+          "services.nix-swarm = {\n    peers = [\n#{peer_line}\n    ];",
+          global: false
+        )
+    end
+  end
+
+  defp ensure_nodes_entry(contents, node_name, deploy_host, labels) do
+    node_attr = nix_attr_name(node_name)
+
+    if String.contains?(contents, "#{node_attr} = {") do
+      contents
+    else
+      entry = """
+          #{node_attr} = {
+            labels = #{nix_string_list(labels)};
+            deployHost = #{nix_string_literal(deploy_host)};
+          };
+      """
+
+      cond do
+        String.contains?(contents, "nodes = {") ->
+          String.replace(contents, "nodes = {", "nodes = {\n#{String.trim_trailing(entry)}",
+            global: false
+          )
+
+        true ->
+          String.replace(
+            contents,
+            "services.nix-swarm = {",
+            "services.nix-swarm = {\n    nodes = {\n#{String.trim_trailing(entry)}\n    };",
+            global: false
+          )
+      end
+    end
+  end
+
+  defp ensure_service_entry!(cluster_file, service_name, replicas, constraints, preferred_nodes) do
+    contents = File.read!(cluster_file)
+    contents = ensure_swarm_block(contents)
+    service_attr = nix_attr_name(service_name)
+
+    if String.contains?(contents, "#{service_attr} = {") and
+         String.contains?(contents, "services = {") do
+      :ok
+    else
+      entry = """
+          #{service_attr} = {
+            replicas = #{normalize_replicas(replicas)};
+            constraints = #{nix_string_list(normalize_label_list(constraints))};
+            preferredNodes = #{nix_string_list(normalize_node_list(preferred_nodes))};
+          };
+      """
+
+      updated =
+        if String.contains?(contents, "services = {") do
+          String.replace(contents, "services = {", "services = {\n#{String.trim_trailing(entry)}",
+            global: false
+          )
+        else
+          String.replace(
+            contents,
+            "services.nix-swarm = {",
+            "services.nix-swarm = {\n    services = {\n#{String.trim_trailing(entry)}\n    };",
+            global: false
+          )
+        end
+
+      File.write!(cluster_file, updated)
+      :ok
+    end
+  end
+
+  defp remove_machine_topology(paths, node_name) do
+    paths = normalize_paths(paths)
+
+    case File.read(paths.cluster_file) do
+      {:ok, contents} ->
+        updated =
+          contents
+          |> String.replace(~r/^\s*#{Regex.escape(nix_string_literal(node_name))};\n/m, "")
+          |> remove_attr_block(node_name)
+
+        File.write!(paths.cluster_file, updated)
+
+        [
+          "review placement diagnostics before applying; removing #{node_name} may reduce capacity"
+        ]
+
+      {:error, reason} ->
+        ["failed to update #{paths.cluster_file}: #{:file.format_error(reason)}"]
+    end
+  end
+
+  defp remove_service_entry(cluster_file, service_name) do
+    update_cluster_file(cluster_file, &remove_attr_block(&1, service_name))
+  end
+
+  defp remove_ingress_entry(cluster_file, service_name) do
+    update_cluster_file(cluster_file, fn contents ->
+      contents
+      |> remove_attr_block("services.nix-swarm.ingress.sites.#{service_name}")
+      |> remove_attr_block(service_name)
+    end)
+  end
+
+  defp update_cluster_file(cluster_file, fun) do
+    case File.read(cluster_file) do
+      {:ok, contents} ->
+        File.write!(cluster_file, fun.(contents))
+        :ok
+
+      {:error, reason} ->
+        {:error, "failed to update #{cluster_file}: #{:file.format_error(reason)}"}
+    end
+  end
+
+  defp remove_attr_block(contents, attr_name) do
+    escaped_attr =
+      attr_name
+      |> nix_attr_name()
+      |> Regex.escape()
+
+    contents
+    |> String.replace(~r/^\s*#{escaped_attr}\s*=\s*\{.*?^\s*\};\n/ms, "")
+    |> String.replace(~r/^\s*#{Regex.escape(attr_name)}\s*=\s*\{.*?^\s*\};\n/ms, "")
+  end
+
   defp service_reference_warnings(cluster_file, service_name) do
     case File.read(cluster_file) do
       {:ok, contents} ->
@@ -326,6 +518,56 @@ defmodule NixSwarm.ConfigFiles do
       |> String.replace("${", "\\${")
 
     "\"#{escaped}\""
+  end
+
+  defp nix_attr_name(value) do
+    escaped =
+      value
+      |> to_string()
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("${", "\\${")
+
+    "\"#{escaped}\""
+  end
+
+  defp nix_string_list(values) do
+    values
+    |> List.wrap()
+    |> Enum.map(&nix_string_literal/1)
+    |> Enum.join(" ")
+    |> then(&"[ #{&1} ]")
+  end
+
+  defp normalize_label_list(value) when is_binary(value) do
+    value
+    |> String.split([",", " "], trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp normalize_label_list(values) do
+    values
+    |> List.wrap()
+    |> Enum.map(&(&1 |> to_string() |> String.trim()))
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp normalize_node_list(values), do: normalize_label_list(values)
+
+  defp normalize_replicas(value) when is_integer(value) and value >= 0, do: value
+
+  defp normalize_replicas(value) do
+    case Integer.parse(to_string(value)) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _ -> raise ArgumentError, "replicas must be zero or greater"
+    end
+  end
+
+  defp node_host(node_name) do
+    node_name
+    |> String.split("@", parts: 2)
+    |> List.last()
   end
 
   defp validate_generated_name(value, label) do

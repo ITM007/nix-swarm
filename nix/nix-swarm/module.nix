@@ -2,7 +2,7 @@
 
 let
   cfg = config.services.nix-swarm;
-  inherit (lib) concatMapStringsSep genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
+  inherit (lib) all concatMapStringsSep elem genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
 
   escapeErlString = value:
     builtins.replaceStrings
@@ -40,7 +40,8 @@ let
 
   mkNodeEntry = name: nodeCfg: ''
     {${toErlTerm name}, [
-      {labels, ${mkStringList nodeCfg.labels}}${if nodeCfg.deployHost == null then "" else ",\n      {deploy_host, ${toErlTerm nodeCfg.deployHost}}"}
+      {labels, ${mkStringList nodeCfg.labels}},
+      {deploy_host, ${toErlTerm nodeCfg.deployHost}}
     ]}
   '';
 
@@ -50,11 +51,60 @@ let
         {replicas, ${toString serviceCfg.replicas}},
         {unit_template, ${toErlTerm serviceCfg.unitTemplate}},
         {constraints, ${mkStringList serviceCfg.constraints}},
+        {allowed_nodes, ${mkStringList serviceCfg.allowedNodes}},
         {preferred_nodes, ${mkStringList serviceCfg.preferredNodes}},
         {healthcheck, ${toErlTerm serviceCfg.healthcheck}},
         {settings, ${toErlTerm serviceCfg.settings}}
       ]
     '';
+
+  effectiveUnitTemplate = name: serviceCfg:
+    if serviceCfg.unitTemplate != null then
+      serviceCfg.unitTemplate
+    else if serviceCfg.replicas <= 1 then
+      "%{service}.service"
+    else
+      "%{service}@%{slot}.service";
+
+  nodeEligibleFor = serviceCfg: node:
+    let
+      nodeCfg = cfg.nodes.${node};
+      allowedOk = serviceCfg.allowedNodes == [] || elem node serviceCfg.allowedNodes;
+      labelsOk = all (label: elem label nodeCfg.labels) serviceCfg.constraints;
+    in
+      allowedOk && labelsOk;
+
+  preferredNodesEligible = serviceCfg:
+    all (node: elem node cfg.peers && builtins.hasAttr node cfg.nodes && nodeEligibleFor serviceCfg node) serviceCfg.preferredNodes;
+
+  allowedNodesKnown = serviceCfg:
+    all (node: elem node cfg.peers) serviceCfg.allowedNodes;
+
+  serviceAssertions =
+    builtins.concatLists (map (name:
+      let
+        serviceCfg = cfg.services.${name};
+        template = effectiveUnitTemplate name serviceCfg;
+      in
+      [
+        {
+          assertion = serviceCfg.replicas >= 0;
+          message = "services.nix-swarm.services.${name}.replicas must be zero or greater";
+        }
+        {
+          assertion = serviceCfg.replicas <= 1 || hasInfix "%{slot}" template;
+          message = "services.nix-swarm.services.${name}.unitTemplate must include `%{slot}` when replicas > 1";
+        }
+        {
+          assertion = allowedNodesKnown serviceCfg;
+          message = "services.nix-swarm.services.${name}.allowedNodes must reference configured peers";
+        }
+        {
+          assertion = preferredNodesEligible serviceCfg;
+          message = "services.nix-swarm.services.${name}.preferredNodes must reference nodes eligible after allowedNodes and constraints";
+        }
+      ]
+    ) (builtins.attrNames cfg.services));
 
   renderedConfigText = ''
     {peers, ${mkStringList cfg.peers}}.
@@ -154,8 +204,7 @@ in
           };
 
           deployHost = mkOption {
-            type = types.nullOr types.str;
-            default = null;
+            type = types.str;
             description = "SSH host used by `nix-swarm update` when this node is live.";
           };
         };
@@ -181,6 +230,12 @@ in
           constraints = mkOption {
             type = types.listOf types.str;
             default = [];
+          };
+
+          allowedNodes = mkOption {
+            type = types.listOf types.str;
+            default = [];
+            description = "Optional hard allowlist of peer node names. Empty means no hard node restriction.";
           };
 
           preferredNodes = mkOption {
@@ -230,6 +285,21 @@ in
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = elem cfg.nodeName cfg.peers;
+        message = "services.nix-swarm.nodeName must be included in services.nix-swarm.peers";
+      }
+      {
+        assertion = all (peer: builtins.hasAttr peer cfg.nodes) cfg.peers;
+        message = "every services.nix-swarm.peers entry must have matching services.nix-swarm.nodes metadata";
+      }
+      {
+        assertion = all (peer: builtins.hasAttr peer cfg.nodes && cfg.nodes.${peer}.deployHost != "") cfg.peers;
+        message = "every services.nix-swarm.nodes.<peer>.deployHost must be non-empty";
+      }
+    ] ++ serviceAssertions;
+
     networking.firewall = mkMerge [
       (mkIf (cfg.openFirewall && cfg.firewallInterfaces == []) {
         allowedTCPPorts = [ cfg.epmdPort cfg.distributionPort ];

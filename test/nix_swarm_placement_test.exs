@@ -166,6 +166,47 @@ defmodule NixSwarmPlacementTest do
     assert owners == [:"node-c@127.0.0.1", :"node-a@127.0.0.1"]
   end
 
+  test "allowed nodes are a hard filter before preferred node ordering" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1", :"node-c@127.0.0.1"],
+        nodes: %{
+          :"node-a@127.0.0.1" => %{labels: ["apps"]},
+          :"node-b@127.0.0.1" => %{labels: ["apps"]},
+          :"node-c@127.0.0.1" => %{labels: ["apps"]}
+        },
+        services: [
+          %{
+            name: "api",
+            replicas: 2,
+            constraints: ["apps"],
+            allowed_nodes: [:"node-a@127.0.0.1", :"node-b@127.0.0.1"],
+            preferred_nodes: [:"node-c@127.0.0.1", :"node-b@127.0.0.1"]
+          }
+        ]
+      })
+
+    owners =
+      config
+      |> NixSwarm.Placement.plan(config.peers)
+      |> Map.fetch!("api")
+      |> Enum.map(& &1.owner)
+
+    assert owners == [:"node-b@127.0.0.1", :"node-a@127.0.0.1"]
+  end
+
+  test "zero replicas disables placement without a diagnostic" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1"],
+        nodes: %{:"node-a@127.0.0.1" => %{labels: ["apps"]}},
+        services: [%{name: "api", replicas: 0, constraints: ["apps"]}]
+      })
+
+    assert NixSwarm.Placement.plan(config, config.peers)["api"] == []
+    refute Enum.any?(NixSwarm.Placement.diagnostics(config, config.peers), &(&1.service == "api"))
+  end
+
   test "placement diagnostics explain unowned and underspread services" do
     config =
       NixSwarm.Config.normalize(%{

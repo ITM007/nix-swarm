@@ -135,6 +135,39 @@ defmodule NixSwarm.ThreeNodeClusterTest do
     assert diagnostic.remote_probe.cluster_members.status == :ok
   end
 
+  test "replicas zero best-effort stops previously owned units", %{cluster: cluster} do
+    assert :ok ==
+             NixSwarm.TestCluster.wait_until(fn ->
+               status = :rpc.call(hd(cluster.nodes), NixSwarm.API, :cluster_status, [])
+               converged?(cluster.root, cluster.nodes, status.placements)
+             end)
+
+    disabled_config =
+      Map.update!(cluster.config, :services, fn services ->
+        Enum.map(services, fn
+          %{name: "gitea"} = service -> %{service | replicas: 0}
+          service -> service
+        end)
+      end)
+
+    Enum.each(cluster.nodes, fn node ->
+      :ok =
+        :rpc.call(node, :application, :set_env, [:nix_swarm, :cluster_config, disabled_config])
+    end)
+
+    :rpc.call(hd(cluster.nodes), NixSwarm.API, :reconcile_cluster, [])
+
+    assert :ok ==
+             NixSwarm.TestCluster.wait_until(fn ->
+               Enum.all?(cluster.nodes, fn node ->
+                 NixSwarm.TestCluster.unit_state(cluster.root, node, "gitea@0.service") ==
+                   "stopped" and
+                   NixSwarm.TestCluster.unit_state(cluster.root, node, "gitea@1.service") ==
+                     "stopped"
+               end)
+             end)
+  end
+
   defp service_stopped?(cluster, service_name) do
     status = :rpc.call(hd(cluster.nodes), NixSwarm.API, :cluster_status, [])
 

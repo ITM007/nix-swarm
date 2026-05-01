@@ -19,6 +19,16 @@ Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a contain
 - **Cluster + per-machine/service metrics**
 - **Built-in config editing** from the TUI, with your system editor and return-to-TUI flow
 
+## v1 design boundaries
+
+- Nix remains the durable source of truth; TUI start/stop controls are temporary in-memory overrides.
+- Placement is deterministic from shared config plus live configured peers. There is no leader, consensus scheduler, metric-based rebalancer, or durable control-plane state.
+- v1 targets small trusted clusters, roughly 2-10 NixOS nodes, and assumes stateless or externally-backed services.
+- `constraints` are hard all-of label filters, `allowedNodes` is an optional hard node allowlist, and `preferredNodes` is only a soft ordering bias.
+- `replicas = 0` declaratively disables a service. Multi-replica services must use slot-addressable systemd template units and slot-distinct ports.
+- Healthchecks and metrics are visibility metadata in v1; they do not drive restarts, failover, placement, or rebalancing.
+- Built-in apply/update uses a local working tree, SSH sync, and sequential `nixos-rebuild switch`; failures are reported for manual recovery rather than automatic rollback.
+
 ## Security model
 
 Nix-Swarm uses distributed Erlang for node-to-node RPC. Authentication is based on a shared Erlang cookie; traffic is not TLS-encrypted by Nix-Swarm itself.
@@ -117,7 +127,7 @@ Core TUI actions:
 - `j` / `k`: move selection
 - `shift+h/j/k/l`: scroll wide or long panes
 - `r`: refresh
-- `b` / `z` / `x`: start, stop, or restart the selected service
+- `b` / `z` / `x`: start, stop, or restart the selected service; on **Machines**, the action is scoped to the selected machine and selected service
 - `R` / `Z`: confirm restart or shutdown for the selected machine
 - `c`: reconcile cluster
 - `y`: dry-run config rollout

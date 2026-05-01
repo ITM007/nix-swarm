@@ -66,10 +66,7 @@ defmodule NixSwarm.Placement do
 
   defp eligible_nodes(service, nodes, node_info) do
     nodes
-    |> Enum.filter(fn node ->
-      service
-      |> Service.eligible?(Map.get(node_info, node, %{labels: MapSet.new()}))
-    end)
+    |> Enum.filter(&eligible_node?(service, &1, node_info))
     |> Enum.sort()
   end
 
@@ -80,10 +77,7 @@ defmodule NixSwarm.Placement do
       |> Map.new()
 
     live_nodes
-    |> Enum.filter(fn node ->
-      service
-      |> Service.eligible?(Map.get(node_info, node, %{labels: MapSet.new()}))
-    end)
+    |> Enum.filter(&eligible_node?(service, &1, node_info))
     |> Enum.sort_by(fn node ->
       score = :erlang.phash2({service.name, node}, 1_073_741_824)
       preferred_rank = Map.get(preferred_indexes, node, map_size(preferred_indexes))
@@ -91,14 +85,21 @@ defmodule NixSwarm.Placement do
     end)
   end
 
+  defp eligible_node?(service, node, node_info) do
+    allowed_nodes = Map.get(service, :allowed_nodes, [])
+
+    (allowed_nodes == [] or node in allowed_nodes) and
+      Service.eligible?(service, Map.get(node_info, node, %{labels: MapSet.new()}))
+  end
+
   defp maybe_add_invalid_replica_count(diagnostics, %{replicas: replicas} = service)
-       when replicas <= 0 do
+       when replicas < 0 do
     [
       %{
         service: service.name,
         severity: :error,
         reason: :invalid_replica_count,
-        message: "#{service.name}: replicas must be greater than 0"
+        message: "#{service.name}: replicas must be zero or greater"
       }
       | diagnostics
     ]

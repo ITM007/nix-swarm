@@ -57,13 +57,23 @@ defmodule NixSwarmConfigFilesTest do
     assert ConfigFiles.machine_node_name(path) == "nix-swarm@10.0.0.1"
   end
 
-  test "add_machine creates a machine file with relative imports", %{paths: paths} do
-    assert {:ok, path} = ConfigFiles.add_machine(paths, "nix-swarm@10.0.0.2")
+  test "add_machine creates a machine file and topology entry", %{paths: paths} do
+    assert {:ok, path} =
+             ConfigFiles.add_machine(paths, "nix-swarm@10.0.0.2",
+               deploy_host: "root@10.0.0.2",
+               labels: ["apps", "ingress"]
+             )
 
     contents = File.read!(path)
     assert contents =~ ~s(nodeName = "nix-swarm@10.0.0.2")
     assert contents =~ "(import ../nix/nix-swarm/module.nix)"
     assert contents =~ "../cluster/cluster.nix"
+
+    cluster = File.read!(paths.cluster_file)
+    assert cluster =~ ~s("nix-swarm@10.0.0.2";)
+    assert cluster =~ ~s("nix-swarm@10.0.0.2" = {)
+    assert cluster =~ ~s(labels = [ "apps" "ingress" ];)
+    assert cluster =~ ~s(deployHost = "root@10.0.0.2";)
   end
 
   test "add_machine escapes generated nix string values", %{paths: paths} do
@@ -71,11 +81,21 @@ defmodule NixSwarmConfigFilesTest do
              ConfigFiles.add_machine(paths, ~s(nix-swarm@10.0.0.2"${bad}))
   end
 
-  test "add_service creates a service file and imports it from cluster.nix", %{paths: paths} do
-    assert {:ok, path} = ConfigFiles.add_service(paths, "forgejo")
+  test "add_service creates a service file, import, and placement entry", %{paths: paths} do
+    assert {:ok, path} =
+             ConfigFiles.add_service(paths, "forgejo",
+               replicas: 2,
+               constraints: ["apps"],
+               preferred_nodes: ["nix-swarm@10.0.0.1"]
+             )
 
     assert File.exists?(path)
-    assert File.read!(paths.cluster_file) =~ "./services/forgejo.nix"
+    cluster = File.read!(paths.cluster_file)
+    assert cluster =~ "./services/forgejo.nix"
+    assert cluster =~ ~s("forgejo" = {)
+    assert cluster =~ "replicas = 2;"
+    assert cluster =~ ~s(constraints = [ "apps" ];)
+    assert cluster =~ ~s(preferredNodes = [ "nix-swarm@10.0.0.1" ];)
   end
 
   test "add_service rejects path traversal names", %{paths: paths} do
@@ -85,11 +105,54 @@ defmodule NixSwarmConfigFilesTest do
     refute File.exists?(Path.join(paths.source, "outside.nix"))
   end
 
-  test "delete_service removes the file and import line", %{paths: paths} do
+  test "delete_machine removes the file and topology entry", %{paths: paths} do
+    assert {:ok, path} =
+             ConfigFiles.add_machine(paths, "nix-swarm@10.0.0.2",
+               deploy_host: "root@10.0.0.2",
+               labels: ["apps"]
+             )
+
+    assert {:ok, _path, warnings} = ConfigFiles.delete_machine(paths, path)
+
+    refute File.exists?(path)
+    cluster = File.read!(paths.cluster_file)
+    refute cluster =~ ~s("nix-swarm@10.0.0.2";)
+    refute cluster =~ ~s("nix-swarm@10.0.0.2" = {)
+    assert warnings != []
+  end
+
+  test "delete_service removes the file, import, placement entry, and ingress entry", %{
+    paths: paths
+  } do
+    assert {:ok, _path} = ConfigFiles.add_service(paths, "forgejo", replicas: 1)
+
+    File.write!(
+      paths.cluster_file,
+      File.read!(paths.cluster_file) <>
+        """
+
+          services.nix-swarm.ingress.sites.forgejo = {
+            domain = "forgejo.test";
+            service = "forgejo";
+            ports = [ 3000 ];
+          };
+        """
+    )
+
+    assert File.read!(paths.cluster_file) =~ ~s("forgejo" = {)
+    assert File.read!(paths.cluster_file) =~ "ingress.sites.forgejo"
+
     assert {:ok, _path, warnings} = ConfigFiles.delete_service(paths, "gitea")
 
     refute File.exists?(Path.join(paths.services_dir, "gitea.nix"))
     refute File.read!(paths.cluster_file) =~ "./services/gitea.nix"
+    assert warnings == []
+
+    assert {:ok, _path, warnings} = ConfigFiles.delete_service(paths, "forgejo")
+    cluster = File.read!(paths.cluster_file)
+    refute cluster =~ "./services/forgejo.nix"
+    refute cluster =~ ~s("forgejo" = {)
+    refute cluster =~ "ingress.sites.forgejo"
     assert warnings == []
   end
 end

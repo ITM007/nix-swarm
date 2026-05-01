@@ -126,6 +126,24 @@ defmodule NixSwarm.API do
     end)
   end
 
+  def start_service_on_node(node_name, service_name) do
+    node_name
+    |> normalize_target_node()
+    |> rpc(__MODULE__, :start_local_service, [to_string(service_name)])
+  end
+
+  def stop_service_on_node(node_name, service_name) do
+    node_name
+    |> normalize_target_node()
+    |> rpc(__MODULE__, :stop_local_service, [to_string(service_name)])
+  end
+
+  def restart_service_on_node(node_name, service_name) do
+    node_name
+    |> normalize_target_node()
+    |> rpc(__MODULE__, :restart_local_service, [to_string(service_name)])
+  end
+
   def start_local_service(service_name) do
     Reconciler.start_local_service(service_name)
   end

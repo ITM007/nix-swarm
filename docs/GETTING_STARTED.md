@@ -43,9 +43,11 @@ A Nix-Swarm service has two pieces:
 - a placement entry under `services.nix-swarm.services.<name>` in `cluster/cluster.nix`
 - a NixOS service definition under `cluster/services/<name>.nix`
 
-For one replica, the default unit template is `%{service}.service`. For multiple replicas, it is `%{service}@%{slot}.service`.
+For one replica, the default unit template is `%{service}.service`. For multiple replicas, it is `%{service}@%{slot}.service`, so the backing NixOS module must define a matching template unit such as `systemd.services."example-web@"`. If a service exposes ports, each slot needs a distinct port because placement may wrap and run more than one slot on a node when replicas exceed live eligible nodes.
 
 If constraints match no nodes, or if eligible nodes are offline, cluster status now reports placement diagnostics so the TUI/API can explain why slots have no owner.
+
+Set `replicas = 0` to disable a service declaratively. Nix-Swarm schedules no slots and best-effort stops units it previously owned while the daemon still remembers them.
 
 ## Troubleshooting quick checks
 

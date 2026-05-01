@@ -8,6 +8,7 @@ defmodule NixSwarm.MixProject do
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      escript: [main_module: NixSwarm.CLI],
       deps: deps()
     ]
   end
