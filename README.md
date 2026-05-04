@@ -4,7 +4,7 @@ Nix-Swarm is a **TUI-first, leaderless NixOS orchestrator** for small clusters. 
 
 Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container platform and **not** a storage orchestrator.
 
-> **v0.1.1 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
+> **v0.1.2 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
 
 ![Nix-Swarm dashboard](docs/screenshots/dashboard.svg)
 
@@ -54,7 +54,7 @@ Add Nix-Swarm as a flake input and install the packaged `nix-swarm` package, whi
 
 ```nix
 {
-  inputs.nix-swarm.url = "github:ITM007/swarm/v0.1.1";
+  inputs.nix-swarm.url = "git+https://github.com/ITM007/swarm?ref=refs/tags/v0.1.2";
 
   outputs = { self, nixpkgs, nix-swarm, ... }: {
     nixosConfigurations.operator = nixpkgs.lib.nixosSystem {
@@ -251,7 +251,7 @@ mix format
 mix test
 ```
 
-The v0.1.1 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
+The v0.1.2 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
 
 ## License
 

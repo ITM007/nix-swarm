@@ -1,7 +1,7 @@
 { pkgs }:
 
 let
-  version = "0.1.1";
+  version = "0.1.2";
   mixDepsHash =
     if pkgs.lib.versionAtLeast pkgs.elixir.version "1.18.0" then
       "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8="
@@ -58,21 +58,29 @@ let
       ELIXIR_ERL_OPTIONS = "+fnu";
     });
 
-  cliWrapper = pkgs.writeShellScript "swarm" ''
+  cookieRuntimeSetup = ''
     default_cookie_file=/etc/nixos/nix-swarm/secrets/nix-swarm.cookie
 
-    if [ -z "''${NIX_SWARM_COOKIE:-}" ] && [ -z "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$default_cookie_file" ]; then
-      export NIX_SWARM_COOKIE_FILE="$default_cookie_file"
-    fi
+    resolve_cookie() {
+      app_name="$1"
 
-    if [ -n "''${NIX_SWARM_COOKIE:-}" ]; then
-      export RELEASE_COOKIE="$NIX_SWARM_COOKIE"
-    elif [ -n "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$NIX_SWARM_COOKIE_FILE" ]; then
-      export RELEASE_COOKIE="$(${pkgs.coreutils}/bin/tr -d '\n' < "$NIX_SWARM_COOKIE_FILE")"
-    else
-      echo "error: missing Nix-Swarm cookie; set NIX_SWARM_COOKIE_FILE or NIX_SWARM_COOKIE before launching swarm" >&2
-      exit 1
-    fi
+      if [ -z "''${NIX_SWARM_COOKIE:-}" ] && [ -z "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$default_cookie_file" ]; then
+        export NIX_SWARM_COOKIE_FILE="$default_cookie_file"
+      fi
+
+      if [ -n "''${NIX_SWARM_COOKIE:-}" ]; then
+        export RELEASE_COOKIE="$NIX_SWARM_COOKIE"
+      elif [ -n "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$NIX_SWARM_COOKIE_FILE" ]; then
+        export RELEASE_COOKIE="$(${pkgs.coreutils}/bin/tr -d '\n' < "$NIX_SWARM_COOKIE_FILE")"
+      else
+        echo "error: missing Nix-Swarm cookie; set NIX_SWARM_COOKIE_FILE or NIX_SWARM_COOKIE before launching $app_name" >&2
+        exit 1
+      fi
+    }
+  '';
+
+  cliWrapper = pkgs.writeShellScript "swarm" ''
+    ${cookieRuntimeSetup}
 
     config_root="''${NIX_SWARM_SOURCE:-$HOME/.config/nix-swarm}"
     template_root="$(cd "$(dirname "$0")/../share/nix-swarm/template" && pwd)"
@@ -82,9 +90,17 @@ let
       cp -a "$template_root" "$config_root"
     fi
 
+    chmod -R u+w "$config_root"
     export NIX_SWARM_SOURCE="$config_root"
+    resolve_cookie swarm
 
     exec ${release}/bin/nix_swarm eval 'NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
+  '';
+
+  daemonWrapper = pkgs.writeShellScript "nix-swarmd" ''
+    ${cookieRuntimeSetup}
+    resolve_cookie nix-swarmd
+    exec ${release}/bin/nix_swarm "$@"
   '';
 in
 pkgs.runCommand "nix-swarm-${version}" {} ''
@@ -103,7 +119,7 @@ pkgs.runCommand "nix-swarm-${version}" {} ''
   chmod -R u+w "$out/share/nix-swarm/template"
   cp -a "$out/share/nix-swarm/template/examples/config/cluster" "$out/share/nix-swarm/template/cluster"
   cp -a "$out/share/nix-swarm/template/examples/config/machines" "$out/share/nix-swarm/template/machines"
-  ln -s ${release}/bin/nix_swarm "$out/bin/nix-swarmd"
+  install -Dm755 ${daemonWrapper} "$out/bin/nix-swarmd"
   install -Dm755 ${cliWrapper} "$out/bin/swarm"
   ln -s swarm "$out/bin/nix-swarm"
 ''

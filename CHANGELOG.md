@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-05-04
+
+### Fixed
+- The packaged `swarm` launcher now makes the seeded `~/.config/nix-swarm` tree user-writable, including upgrades from earlier read-only seeded copies.
+- The packaged `nix-swarmd` entrypoint now resolves the same cookie sources as `swarm`, so direct `eval` and other release commands work consistently outside the NixOS module wrapper.
+- Release install examples now use the working `git+https` tagged flake input form for the GitHub repository.
+
 ## [0.1.1] - 2026-05-04
 
 ### Changed
