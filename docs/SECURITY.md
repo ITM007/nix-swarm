@@ -13,11 +13,11 @@ tr -dc 'A-Za-z0-9_.-' </dev/urandom | head -c 48 > nix-swarm.cookie
 install -m 600 -o root -g root nix-swarm.cookie /etc/nixos/nix-swarm/secrets/nix-swarm.cookie
 ```
 
-Prefer `NIX_SWARM_COOKIE_FILE` for operator launches:
+Prefer a local cookie file under `~/.config/nix-swarm/secrets/` or `NIX_SWARM_COOKIE_FILE` for operator launches:
 
 ```bash
-export NIX_SWARM_COOKIE_FILE=/path/to/nix-swarm.cookie
-swarm --target nix-swarm@example-node-a.local
+install -Dm600 /path/to/nix-swarm.cookie ~/.config/nix-swarm/secrets/swarm.cookie
+swarm
 ```
 
 Avoid `--cookie` except for temporary local testing because command-line arguments can be visible in process listings.

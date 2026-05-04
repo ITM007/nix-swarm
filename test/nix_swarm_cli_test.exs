@@ -10,6 +10,7 @@ defmodule NixSwarmCLITest do
       end)
 
     assert output =~ "Launch the operator TUI"
+    assert output =~ "\n  swarm\n"
     assert output =~ "swarm --target NODE"
     assert output =~ "--cluster-file PATH"
     assert output =~ "--machines-dir PATH"
@@ -49,7 +50,8 @@ defmodule NixSwarmCLITest do
              NixSwarm.CLI.run(["--target", "nix-swarm@example-node-a.local", "status"])
 
     assert message =~ "`status` was removed from the public command surface"
-    assert message =~ "Nix-Swarm is TUI-first in v0.1.2 alpha"
+    assert message =~ "Nix-Swarm is TUI-first in v0.1.3 alpha"
+    assert message =~ "\n  swarm\n"
     assert message =~ "swarm --target NODE"
   end
 
@@ -64,5 +66,39 @@ defmodule NixSwarmCLITest do
                "--refresh-ms",
                "50"
              ])
+  end
+
+  test "run defaults target from cluster config when not provided" do
+    root = Path.join(System.tmp_dir!(), "nix-swarm-cli-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(Path.join(root, "cluster/services"))
+    File.mkdir_p!(Path.join(root, "machines"))
+
+    File.write!(
+      Path.join(root, "cluster/cluster.nix"),
+      """
+      { ... }:
+      {
+        services.nix-swarm = {
+          peers = [
+            "swarm@192.168.1.100"
+          ];
+        };
+      }
+      """
+    )
+
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    test_pid = self()
+
+    runner = fn opts ->
+      send(test_pid, {:launched, opts})
+      :ok
+    end
+
+    assert :ok == NixSwarm.CLI.run(["--source", root], runner)
+
+    assert_receive {:launched, opts}
+    assert Keyword.get(opts, :target) == "swarm@192.168.1.100"
   end
 end

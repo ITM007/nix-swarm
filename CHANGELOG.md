@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-05-04
+
+### Changed
+- `swarm` now defaults its target from `NIX_SWARM_TARGET` or the first peer in the configured cluster file, so a configured workstation can launch the TUI without an explicit `--target`.
+
+### Fixed
+- The packaged operator now auto-discovers local cookies from `~/.config/nix-swarm/secrets/{nix-swarm.cookie,swarm.cookie}` before falling back to `/etc/nixos/...`.
+- The release wrapper no longer blocks `swarm --help` just because no cookie is present.
+
 ## [0.1.2] - 2026-05-04
 
 ### Fixed

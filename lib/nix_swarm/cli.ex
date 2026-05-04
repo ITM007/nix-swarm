@@ -1,6 +1,8 @@
 defmodule NixSwarm.CLI do
   @moduledoc false
 
+  alias NixSwarm.ConfigFiles
+
   @strict_opts [
     help: :boolean,
     target: :string,
@@ -31,6 +33,7 @@ defmodule NixSwarm.CLI do
   def run(argv, tui_runner \\ &NixSwarm.TUI.run/1) do
     {opts, args, invalid} = OptionParser.parse(argv, strict: @strict_opts)
     validate_parse_result!(opts, invalid)
+    opts = apply_launch_defaults(opts)
     maybe_warn_cookie(opts)
 
     cond do
@@ -93,15 +96,76 @@ defmodule NixSwarm.CLI do
     end
   end
 
+  defp apply_launch_defaults(opts) do
+    config_paths = config_paths(opts)
+    maybe_set_default_cookie_env(opts, config_paths)
+    maybe_put_default_target(opts, config_paths)
+  end
+
+  defp config_paths(opts) do
+    defaults = ConfigFiles.defaults(Keyword.get(opts, :source))
+
+    ConfigFiles.normalize_paths(%{
+      source: defaults.source,
+      cluster_file: Keyword.get(opts, :cluster_file, defaults.cluster_file),
+      machines_dir: Keyword.get(opts, :machines_dir, defaults.machines_dir),
+      services_dir: Keyword.get(opts, :services_dir, defaults.services_dir)
+    })
+  end
+
+  defp maybe_set_default_cookie_env(opts, config_paths) do
+    cond do
+      Keyword.has_key?(opts, :cookie) ->
+        :ok
+
+      Keyword.has_key?(opts, :cookie_file) ->
+        :ok
+
+      present_env(System.get_env("NIX_SWARM_COOKIE")) ->
+        :ok
+
+      present_env(System.get_env("NIX_SWARM_COOKIE_FILE")) ->
+        :ok
+
+      cookie_path = ConfigFiles.local_cookie_file(config_paths) ->
+        System.put_env("NIX_SWARM_COOKIE_FILE", cookie_path)
+
+      true ->
+        :ok
+    end
+  end
+
+  defp maybe_put_default_target(opts, config_paths) do
+    cond do
+      Keyword.has_key?(opts, :target) ->
+        opts
+
+      env_target = present_env(System.get_env("NIX_SWARM_TARGET")) ->
+        Keyword.put(opts, :target, env_target)
+
+      config_target = ConfigFiles.default_target(config_paths) ->
+        Keyword.put(opts, :target, config_target)
+
+      true ->
+        opts
+    end
+  end
+
+  defp present_env(nil), do: nil
+  defp present_env(""), do: nil
+  defp present_env(value), do: value
+
   defp legacy_command_error(args) do
     command = Enum.join(args, " ")
-    launch = NixSwarm.operator_launch()
+    launch = NixSwarm.operator_command()
+    explicit_launch = NixSwarm.operator_launch()
 
     """
     `#{command}` was removed from the public command surface.
 
       Nix-Swarm is TUI-first in #{NixSwarm.release_label()} alpha. Launch the console instead:
       #{launch}
+      #{explicit_launch}
 
     Inside the TUI you can:
       - inspect dashboard, map, machines, and services
@@ -114,17 +178,20 @@ defmodule NixSwarm.CLI do
   end
 
   defp print_help do
+    command = NixSwarm.operator_command()
     launch = NixSwarm.operator_launch()
 
     IO.puts("""
     Nix-Swarm
 
     Launch the operator TUI:
+      #{command}
       #{launch}
       #{launch} --source /path/to/checkout
 
-    Required:
+    Remote target:
       --target NODE              remote Nix-Swarm node to connect to
+                                 defaults to NIX_SWARM_TARGET or the first peer in cluster/cluster.nix
 
     Remote connection options:
       --cookie VALUE             explicit Erlang cookie (discouraged; visible in `ps`)
@@ -145,7 +212,7 @@ defmodule NixSwarm.CLI do
       - Run this from a Mix or release runtime with the ex_ratatui native library available.
       - The old one-shot CLI subcommands were removed; the TUI is now the primary operator interface.
       - Without --source, Nix-Swarm prefers NIX_SWARM_SOURCE, then a local checkout/examples root, then ~/.config/nix-swarm.
-      - Set NIX_SWARM_COOKIE_FILE once in your shell to keep launches short.
+      - Without an explicit cookie option, Nix-Swarm prefers NIX_SWARM_COOKIE_FILE, then SOURCE/secrets/{nix-swarm.cookie,swarm.cookie}, then /etc/nixos/nix-swarm/secrets/nix-swarm.cookie.
     """)
   end
 end

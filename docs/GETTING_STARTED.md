@@ -15,15 +15,16 @@ Nix-Swarm is for small, trusted NixOS clusters where Nix defines desired state, 
 
 3. Keep shared topology in `cluster/cluster.nix`, machine-specific runtime setup in `machines/*.nix`, and backing service modules in `cluster/services/*.nix`.
 
-4. Launch the operator TUI from a workstation that can reach one cluster node:
+4. Put the shared operator cookie under `~/.config/nix-swarm/secrets/swarm.cookie` and launch the TUI from a workstation that can reach one cluster node:
 
    ```bash
-   export NIX_SWARM_COOKIE_FILE=/path/to/nix-swarm.cookie
-   swarm --target nix-swarm@example-node-a.local
+   install -Dm600 /path/to/nix-swarm.cookie ~/.config/nix-swarm/secrets/swarm.cookie
+   swarm
    ```
 
-5. Use the TUI to inspect health, view placement, read logs, dry-run config changes, apply config changes, and roll out code/config updates.
-6. Keep the editable config tree in `~/.config/nix-swarm`, or point `--source` at a Git checkout when you want version-controlled cluster changes.
+5. `swarm` uses `NIX_SWARM_TARGET` when it is set; otherwise it connects to the first peer in `cluster/cluster.nix`. Use `--target NODE` to override that default for one launch.
+6. Use the TUI to inspect health, view placement, read logs, dry-run config changes, apply config changes, and roll out code/config updates.
+7. Keep the editable config tree in `~/.config/nix-swarm`, or point `--source` at a Git checkout when you want version-controlled cluster changes.
 
 ## Network requirements
 

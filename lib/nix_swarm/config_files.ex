@@ -2,6 +2,7 @@ defmodule NixSwarm.ConfigFiles do
   @moduledoc false
 
   @default_cookie_file "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie"
+  @local_cookie_filenames ["nix-swarm.cookie", "swarm.cookie"]
   @safe_generated_name_regex ~r/^[A-Za-z0-9][A-Za-z0-9_.@-]*$/
 
   def defaults(source \\ nil) do
@@ -223,6 +224,28 @@ defmodule NixSwarm.ConfigFiles do
         _ -> nil
       end
     end)
+  end
+
+  def local_cookie_file(paths) do
+    paths = normalize_paths(paths)
+
+    @local_cookie_filenames
+    |> Enum.map(&Path.join([paths.source, "secrets", &1]))
+    |> Kernel.++([existing_cookie_file(paths), @default_cookie_file])
+    |> Enum.uniq()
+    |> Enum.find(&(is_binary(&1) and File.exists?(&1)))
+  end
+
+  def default_target(paths) do
+    paths = normalize_paths(paths)
+
+    with {:ok, contents} <- File.read(paths.cluster_file),
+         [_, peers_block] <- Regex.run(~r/peers\s*=\s*\[(.*?)\];/ms, contents),
+         [[target] | _rest] <- Regex.scan(~r/"([^"]+)"/, peers_block, capture: :all_but_first) do
+      target
+    else
+      _ -> nil
+    end
   end
 
   defp next_machine_path(paths, node_name) do

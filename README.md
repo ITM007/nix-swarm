@@ -4,7 +4,7 @@ Nix-Swarm is a **TUI-first, leaderless NixOS orchestrator** for small clusters. 
 
 Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container platform and **not** a storage orchestrator.
 
-> **v0.1.2 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
+> **v0.1.3 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
 
 ![Nix-Swarm dashboard](docs/screenshots/dashboard.svg)
 
@@ -42,9 +42,9 @@ Nix-Swarm uses distributed Erlang for node-to-node RPC. Authentication is based 
 install -m 600 -o root -g root /path/to/generated.cookie /etc/nixos/nix-swarm/secrets/nix-swarm.cookie
 ```
 
-The packaged operator will use `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` when it is readable. Otherwise set `NIX_SWARM_COOKIE_FILE` or `NIX_SWARM_COOKIE`; it fails rather than falling back to a public default cookie.
+The packaged operator first checks `~/.config/nix-swarm/secrets/{nix-swarm.cookie,swarm.cookie}` for a local operator cookie, then falls back to `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` when it is readable. You can still override that with `NIX_SWARM_COOKIE_FILE` or `NIX_SWARM_COOKIE`.
 
-On first launch, the packaged operator also seeds a full editable working tree under `~/.config/nix-swarm`. That tree includes public-safe `cluster/`, `machines/`, and `cluster/services/` examples you can customize without modifying the installed package, and you can commit that working tree to Git for version-controlled cluster changes.
+On first launch, the packaged operator also seeds a full editable working tree under `~/.config/nix-swarm`. That tree includes public-safe `cluster/`, `machines/`, `cluster/services/`, and `secrets/.gitignore` examples you can customize without modifying the installed package, and you can commit that working tree to Git while keeping secrets out of version control.
 
 ## Add the release to a NixOS system
 
@@ -54,7 +54,7 @@ Add Nix-Swarm as a flake input and install the packaged `nix-swarm` package, whi
 
 ```nix
 {
-  inputs.nix-swarm.url = "git+https://github.com/ITM007/swarm?ref=refs/tags/v0.1.2";
+  inputs.nix-swarm.url = "git+https://github.com/ITM007/swarm?ref=refs/tags/v0.1.3";
 
   outputs = { self, nixpkgs, nix-swarm, ... }: {
     nixosConfigurations.operator = nixpkgs.lib.nixosSystem {
@@ -71,12 +71,11 @@ Add Nix-Swarm as a flake input and install the packaged `nix-swarm` package, whi
 }
 ```
 
-If your workstation is not itself a managed Nix-Swarm node, export the shared cookie once before launching:
+If your workstation is not itself a managed Nix-Swarm node, place the shared cookie at `~/.config/nix-swarm/secrets/swarm.cookie` (or export it through `NIX_SWARM_COOKIE_FILE`) before launching:
 
 ```bash
-chmod 600 /path/to/nix-swarm.cookie
-export NIX_SWARM_COOKIE_FILE=/path/to/nix-swarm.cookie
-swarm --target nix-swarm@example-node-a.local
+install -Dm600 /path/to/nix-swarm.cookie ~/.config/nix-swarm/secrets/swarm.cookie
+swarm
 ```
 
 ### Managed cluster node
@@ -105,8 +104,10 @@ Import the module and point `services.nix-swarm.package` at the release package:
 ## Launch
 
 ```bash
-swarm --target nix-swarm@example-node-a.local
+swarm
 ```
+
+`swarm` prefers `NIX_SWARM_TARGET` when it is set. Otherwise it uses the first peer from `~/.config/nix-swarm/cluster/cluster.nix`. Pass `--target NODE` any time you want to override that default for one launch.
 
 Useful launch options:
 
@@ -223,7 +224,7 @@ The repository keeps tracked starter files under `examples/config/`. The package
 
 ## Day-to-day workflow
 
-1. Launch `swarm --target NODE`
+1. Launch `swarm`
 2. Inspect cluster health from **Dashboard**, **Map**, **Machines**, and **Services**
 3. Use `a`, `e`, and `d` to manage machine/service files
 4. Use `y` to preview and `p` to apply config changes
@@ -251,7 +252,7 @@ mix format
 mix test
 ```
 
-The v0.1.2 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
+The v0.1.3 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
 
 ## License
 

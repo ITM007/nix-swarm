@@ -1,7 +1,7 @@
 { pkgs }:
 
 let
-  version = "0.1.2";
+  version = "0.1.3";
   mixDepsHash =
     if pkgs.lib.versionAtLeast pkgs.elixir.version "1.18.0" then
       "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8="
@@ -60,12 +60,22 @@ let
 
   cookieRuntimeSetup = ''
     default_cookie_file=/etc/nixos/nix-swarm/secrets/nix-swarm.cookie
+    config_root="''${NIX_SWARM_SOURCE:-$HOME/.config/nix-swarm}"
 
     resolve_cookie() {
       app_name="$1"
 
-      if [ -z "''${NIX_SWARM_COOKIE:-}" ] && [ -z "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$default_cookie_file" ]; then
-        export NIX_SWARM_COOKIE_FILE="$default_cookie_file"
+      if [ -z "''${NIX_SWARM_COOKIE:-}" ] && [ -z "''${NIX_SWARM_COOKIE_FILE:-}" ]; then
+        for candidate in \
+          "$config_root/secrets/nix-swarm.cookie" \
+          "$config_root/secrets/swarm.cookie" \
+          "$default_cookie_file"
+        do
+          if [ -r "$candidate" ]; then
+            export NIX_SWARM_COOKIE_FILE="$candidate"
+            break
+          fi
+        done
       fi
 
       if [ -n "''${NIX_SWARM_COOKIE:-}" ]; then
@@ -80,10 +90,8 @@ let
   '';
 
   cliWrapper = pkgs.writeShellScript "swarm" ''
-    ${cookieRuntimeSetup}
-
-    config_root="''${NIX_SWARM_SOURCE:-$HOME/.config/nix-swarm}"
     template_root="$(cd "$(dirname "$0")/../share/nix-swarm/template" && pwd)"
+    config_root="''${NIX_SWARM_SOURCE:-$HOME/.config/nix-swarm}"
 
     if [ ! -e "$config_root" ]; then
       mkdir -p "$(dirname "$config_root")"
@@ -92,7 +100,6 @@ let
 
     chmod -R u+w "$config_root"
     export NIX_SWARM_SOURCE="$config_root"
-    resolve_cookie swarm
 
     exec ${release}/bin/nix_swarm eval 'NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
   '';

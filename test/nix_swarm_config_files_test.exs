@@ -10,6 +10,7 @@ defmodule NixSwarmConfigFilesTest do
     File.mkdir_p!(Path.join(root, "cluster/services"))
     File.mkdir_p!(Path.join(root, "machines"))
     File.mkdir_p!(Path.join(root, "nix/nix-swarm"))
+    File.mkdir_p!(Path.join(root, "secrets"))
 
     File.write!(
       Path.join(root, "cluster/cluster.nix"),
@@ -55,6 +56,32 @@ defmodule NixSwarmConfigFilesTest do
 
     assert path =~ "node-a.nix"
     assert ConfigFiles.machine_node_name(path) == "nix-swarm@10.0.0.1"
+  end
+
+  test "default_target returns the first configured peer", %{paths: paths} do
+    File.write!(
+      paths.cluster_file,
+      """
+      { ... }:
+      {
+        services.nix-swarm = {
+          peers = [
+            "swarm@192.168.1.100"
+            "swarm@192.168.1.101"
+          ];
+        };
+      }
+      """
+    )
+
+    assert ConfigFiles.default_target(paths) == "swarm@192.168.1.100"
+  end
+
+  test "local_cookie_file prefers a cookie under the source secrets directory", %{paths: paths} do
+    cookie_path = Path.join(paths.source, "secrets/swarm.cookie")
+    File.write!(cookie_path, "super-secret-cookie\n")
+
+    assert ConfigFiles.local_cookie_file(paths) == cookie_path
   end
 
   test "add_machine creates a machine file and topology entry", %{paths: paths} do
