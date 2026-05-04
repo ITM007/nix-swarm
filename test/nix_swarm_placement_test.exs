@@ -82,12 +82,12 @@ defmodule NixSwarmPlacementTest do
           %{
             name: "gitea",
             replicas: 1,
-            settings: %{domain: "gitea.home", http_port: 3000}
+            settings: %{domain: "gitea.example.internal", http_port: 3000}
           }
         ]
       })
 
-    assert hd(config.services).settings == %{domain: "gitea.home", http_port: 3000}
+    assert hd(config.services).settings == %{domain: "gitea.example.internal", http_port: 3000}
   end
 
   test "service settings loaded from erlang charlists are normalized" do
@@ -102,14 +102,14 @@ defmodule NixSwarmPlacementTest do
       """
       {services, [[
         {name, "gitea"},
-        {settings, [{domain, "gitea.home"}, {http_port, 3000}]}
+        {settings, [{domain, "gitea.example.internal"}, {http_port, 3000}]}
       ]]}.
       """
     )
 
     config = path |> NixSwarm.Config.load_from_path() |> NixSwarm.Config.normalize()
 
-    assert hd(config.services).settings == %{domain: "gitea.home", http_port: 3000}
+    assert hd(config.services).settings == %{domain: "gitea.example.internal", http_port: 3000}
 
     File.rm_rf!(path)
   end

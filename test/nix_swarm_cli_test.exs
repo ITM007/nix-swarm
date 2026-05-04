@@ -78,12 +78,12 @@ defmodule NixSwarmCLITest do
       """
       { ... }:
       {
-        services.nix-swarm = {
-          peers = [
-            "swarm@192.168.1.100"
-          ];
-        };
-      }
+          services.nix-swarm = {
+            peers = [
+            "swarm@198.51.100.10"
+            ];
+          };
+        }
       """
     )
 
@@ -99,6 +99,6 @@ defmodule NixSwarmCLITest do
     assert :ok == NixSwarm.CLI.run(["--source", root], runner)
 
     assert_receive {:launched, opts}
-    assert Keyword.get(opts, :target) == "swarm@192.168.1.100"
+    assert Keyword.get(opts, :target) == "swarm@198.51.100.10"
   end
 end

@@ -4,9 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.5] - 2026-05-04
 
+### Added
+
+- Added root-level OSS contributor guidance and security reporting policy.
+
 ### Fixed
 
 - Restore the packaged `swarm` wrapper's cookie bootstrap so bare `swarm` launches again after the `v0.1.4` release regression.
+- Align the packaged Nix release metadata with the `0.1.5` application version.
+- Replace real-style test IPs and internal hostnames with public-safe documentation values.
 
 ## [0.1.4] - 2026-05-04
 

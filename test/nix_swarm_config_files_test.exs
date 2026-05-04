@@ -63,18 +63,18 @@ defmodule NixSwarmConfigFilesTest do
       paths.cluster_file,
       """
       { ... }:
-      {
-        services.nix-swarm = {
-          peers = [
-            "swarm@192.168.1.100"
-            "swarm@192.168.1.101"
+        {
+          services.nix-swarm = {
+            peers = [
+            "swarm@198.51.100.10"
+            "swarm@198.51.100.11"
           ];
         };
       }
       """
     )
 
-    assert ConfigFiles.default_target(paths) == "swarm@192.168.1.100"
+    assert ConfigFiles.default_target(paths) == "swarm@198.51.100.10"
   end
 
   test "local_cookie_file prefers a cookie under the source secrets directory", %{paths: paths} do

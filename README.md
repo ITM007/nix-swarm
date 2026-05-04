@@ -235,6 +235,7 @@ The repository keeps tracked starter files under `examples/config/`. The package
 - [Getting started](docs/GETTING_STARTED.md)
 - [Configuration reference](docs/CONFIG_REFERENCE.md)
 - [Operations guide](docs/OPERATIONS.md)
+- [Security policy](SECURITY.md)
 - [Security model](docs/SECURITY.md)
 
 ## Troubleshooting

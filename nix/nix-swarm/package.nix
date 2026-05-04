@@ -1,7 +1,7 @@
 { pkgs }:
 
 let
-  version = "0.1.4";
+  version = "0.1.5";
   mixDepsHash =
     if pkgs.lib.versionAtLeast pkgs.elixir.version "1.18.0" then
       "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8="
