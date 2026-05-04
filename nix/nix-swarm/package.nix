@@ -1,7 +1,7 @@
 { pkgs }:
 
 let
-  version = "0.1.0";
+  version = "0.1.1";
   mixDepsHash =
     if pkgs.lib.versionAtLeast pkgs.elixir.version "1.18.0" then
       "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8="
@@ -58,7 +58,7 @@ let
       ELIXIR_ERL_OPTIONS = "+fnu";
     });
 
-  cliWrapper = pkgs.writeShellScript "nix-swarm" ''
+  cliWrapper = pkgs.writeShellScript "swarm" ''
     default_cookie_file=/etc/nixos/nix-swarm/secrets/nix-swarm.cookie
 
     if [ -z "''${NIX_SWARM_COOKIE:-}" ] && [ -z "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$default_cookie_file" ]; then
@@ -70,7 +70,7 @@ let
     elif [ -n "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$NIX_SWARM_COOKIE_FILE" ]; then
       export RELEASE_COOKIE="$(${pkgs.coreutils}/bin/tr -d '\n' < "$NIX_SWARM_COOKIE_FILE")"
     else
-      echo "error: missing Nix-Swarm cookie; set NIX_SWARM_COOKIE_FILE or NIX_SWARM_COOKIE before launching nix-swarm" >&2
+      echo "error: missing Nix-Swarm cookie; set NIX_SWARM_COOKIE_FILE or NIX_SWARM_COOKIE before launching swarm" >&2
       exit 1
     fi
 
@@ -104,5 +104,6 @@ pkgs.runCommand "nix-swarm-${version}" {} ''
   cp -a "$out/share/nix-swarm/template/examples/config/cluster" "$out/share/nix-swarm/template/cluster"
   cp -a "$out/share/nix-swarm/template/examples/config/machines" "$out/share/nix-swarm/template/machines"
   ln -s ${release}/bin/nix_swarm "$out/bin/nix-swarmd"
-  install -Dm755 ${cliWrapper} "$out/bin/nix-swarm"
+  install -Dm755 ${cliWrapper} "$out/bin/swarm"
+  ln -s swarm "$out/bin/nix-swarm"
 ''

@@ -19,10 +19,11 @@ Nix-Swarm is for small, trusted NixOS clusters where Nix defines desired state, 
 
    ```bash
    export NIX_SWARM_COOKIE_FILE=/path/to/nix-swarm.cookie
-   nix-swarm --target nix-swarm@example-node-a.local
+   swarm --target nix-swarm@example-node-a.local
    ```
 
 5. Use the TUI to inspect health, view placement, read logs, dry-run config changes, apply config changes, and roll out code/config updates.
+6. Keep the editable config tree in `~/.config/nix-swarm`, or point `--source` at a Git checkout when you want version-controlled cluster changes.
 
 ## Network requirements
 

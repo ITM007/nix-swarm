@@ -4,7 +4,7 @@ Nix-Swarm is a **TUI-first, leaderless NixOS orchestrator** for small clusters. 
 
 Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container platform and **not** a storage orchestrator.
 
-> **v0.1.0 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
+> **v0.1.1 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
 
 ![Nix-Swarm dashboard](docs/screenshots/dashboard.svg)
 
@@ -42,19 +42,19 @@ Nix-Swarm uses distributed Erlang for node-to-node RPC. Authentication is based 
 install -m 600 -o root -g root /path/to/generated.cookie /etc/nixos/nix-swarm/secrets/nix-swarm.cookie
 ```
 
-The packaged `nix-swarm` CLI will use `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` when it is readable. Otherwise set `NIX_SWARM_COOKIE_FILE` or `NIX_SWARM_COOKIE`; it fails rather than falling back to a public default cookie.
+The packaged operator will use `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` when it is readable. Otherwise set `NIX_SWARM_COOKIE_FILE` or `NIX_SWARM_COOKIE`; it fails rather than falling back to a public default cookie.
 
-On first launch, the packaged operator also seeds a full editable working tree under `~/.config/nix-swarm`. That tree includes public-safe `cluster/`, `machines/`, and `cluster/services/` examples you can customize without modifying the installed package.
+On first launch, the packaged operator also seeds a full editable working tree under `~/.config/nix-swarm`. That tree includes public-safe `cluster/`, `machines/`, and `cluster/services/` examples you can customize without modifying the installed package, and you can commit that working tree to Git for version-controlled cluster changes.
 
 ## Add the release to a NixOS system
 
 ### Operator workstation
 
-Add Nix-Swarm as a flake input and install the packaged `nix-swarm` binary:
+Add Nix-Swarm as a flake input and install the packaged `nix-swarm` package, which exposes `swarm` as the operator command:
 
 ```nix
 {
-  inputs.nix-swarm.url = "github:ITM007/nix-swarm/v0.1.0";
+  inputs.nix-swarm.url = "github:ITM007/swarm/v0.1.1";
 
   outputs = { self, nixpkgs, nix-swarm, ... }: {
     nixosConfigurations.operator = nixpkgs.lib.nixosSystem {
@@ -76,7 +76,7 @@ If your workstation is not itself a managed Nix-Swarm node, export the shared co
 ```bash
 chmod 600 /path/to/nix-swarm.cookie
 export NIX_SWARM_COOKIE_FILE=/path/to/nix-swarm.cookie
-nix-swarm --target nix-swarm@example-node-a.local
+swarm --target nix-swarm@example-node-a.local
 ```
 
 ### Managed cluster node
@@ -105,7 +105,7 @@ Import the module and point `services.nix-swarm.package` at the release package:
 ## Launch
 
 ```bash
-nix-swarm --target nix-swarm@example-node-a.local
+swarm --target nix-swarm@example-node-a.local
 ```
 
 Useful launch options:
@@ -223,7 +223,7 @@ The repository keeps tracked starter files under `examples/config/`. The package
 
 ## Day-to-day workflow
 
-1. Launch `nix-swarm --target NODE`
+1. Launch `swarm --target NODE`
 2. Inspect cluster health from **Dashboard**, **Map**, **Machines**, and **Services**
 3. Use `a`, `e`, and `d` to manage machine/service files
 4. Use `y` to preview and `p` to apply config changes
@@ -251,7 +251,7 @@ mix format
 mix test
 ```
 
-The v0.1.0 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
+The v0.1.1 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
 
 ## License
 

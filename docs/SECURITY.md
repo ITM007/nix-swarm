@@ -17,7 +17,7 @@ Prefer `NIX_SWARM_COOKIE_FILE` for operator launches:
 
 ```bash
 export NIX_SWARM_COOKIE_FILE=/path/to/nix-swarm.cookie
-nix-swarm --target nix-swarm@example-node-a.local
+swarm --target nix-swarm@example-node-a.local
 ```
 
 Avoid `--cookie` except for temporary local testing because command-line arguments can be visible in process listings.

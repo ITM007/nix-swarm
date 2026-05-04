@@ -429,14 +429,7 @@ defmodule NixSwarm.API do
   end
 
   defp build_version do
-    app_version =
-      case Application.spec(:nix_swarm, :vsn) do
-        nil -> "0.1.0"
-        vsn when is_list(vsn) -> List.to_string(vsn)
-        vsn -> to_string(vsn)
-      end
-
-    "v#{app_version}-#{@source_version_digest}"
+    "#{NixSwarm.release_label()}-#{@source_version_digest}"
   end
 
   defp logical_processors_available do

@@ -44,6 +44,7 @@ nix-swarm-*.tar
 /result-*
 /swarm
 /nix-swarm
+/nix_swarm
 
 # Local editable Nix-Swarm cluster state.
 /cluster/

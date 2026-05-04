@@ -7,7 +7,7 @@ Nix-Swarm configuration is declared through the NixOS module under `services.nix
 | Option | Type | Default | Notes |
 |---|---|---:|---|
 | `enable` | bool | `false` | Enables `nix-swarmd` on the node |
-| `package` | package | local package | Package exposing `bin/nix-swarm` and `bin/nix-swarmd` |
+| `package` | package | local package | Package exposing `bin/swarm`, compatibility `bin/nix-swarm`, and `bin/nix-swarmd` |
 | `nodeName` | string | required | Distributed Erlang node name, for example `nix-swarm@example-node-a.local` |
 | `cookieFile` | string | required | Absolute path to the shared Erlang cookie |
 | `epmdPort` | port | `4369` | EPMD discovery port |

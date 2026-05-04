@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-05-04
+
+### Changed
+- The packaged operator now installs `swarm` as the primary TUI command while keeping `nix-swarm` as a compatibility wrapper and leaving `nix-swarmd` unchanged for managed nodes.
+- Release examples and packaging docs now point operators at the `ITM007/swarm` GitHub flake input and the default editable config root at `~/.config/nix-swarm`.
+
+### Fixed
+- User-facing launch help and remote diagnostics no longer hardcode the previous `v0.1.0` release label.
+- The packaged starter tree is documented as a Git-friendly working copy for version-controlled cluster configuration.
+
 ## [0.1.0] - 2026-04-22
 
 ### Added

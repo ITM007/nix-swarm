@@ -21,7 +21,7 @@ defmodule NixSwarmTUITest do
     message = NixSwarm.TUI.runtime_support_error(fn :ex_ratatui, "priv/native" -> missing_dir end)
 
     assert message =~ "mix run -e 'NixSwarm.CLI.main(System.argv())' -- --target NODE"
-    assert message =~ "nix-swarm --target NODE"
+    assert message =~ "swarm --target NODE"
     assert message =~ missing_dir
   end
 

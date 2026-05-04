@@ -5,7 +5,7 @@
 Launch the TUI with:
 
 ```bash
-nix-swarm --target nix-swarm@example-node-a.local
+swarm --target nix-swarm@example-node-a.local
 ```
 
 The Dashboard, Map, Machines, Services, and Logs views show the same remote API snapshot from the target node. Placement diagnostics identify services that cannot place because constraints match no nodes or eligible nodes are offline.

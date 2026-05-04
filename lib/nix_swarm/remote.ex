@@ -189,7 +189,7 @@ defmodule NixSwarm.Remote do
     #{Enum.map_join(connection_solutions(diagnostic), "\n", &"  - #{&1}")}
 
     next step:
-      relaunch `nix-swarm --target #{diagnostic.target}` with the same cookie source after applying the fixes above
+      relaunch `#{NixSwarm.operator_launch(diagnostic.target)}` with the same cookie source after applying the fixes above
     """
     |> String.trim()
   end

@@ -104,7 +104,7 @@ defmodule NixSwarm.TUI do
 
     run one of these instead:
       mix run -e 'NixSwarm.CLI.main(System.argv())' -- --target NODE
-      nix-swarm --target NODE
+      #{NixSwarm.operator_launch()}
 
     expected ex_ratatui native directory:
       #{native_dir}

@@ -95,12 +95,13 @@ defmodule NixSwarm.CLI do
 
   defp legacy_command_error(args) do
     command = Enum.join(args, " ")
+    launch = NixSwarm.operator_launch()
 
     """
     `#{command}` was removed from the public command surface.
 
-      Nix-Swarm is TUI-first in v0.1.0 alpha. Launch the console instead:
-      nix-swarm --target NODE
+      Nix-Swarm is TUI-first in #{NixSwarm.release_label()} alpha. Launch the console instead:
+      #{launch}
 
     Inside the TUI you can:
       - inspect dashboard, map, machines, and services
@@ -113,12 +114,14 @@ defmodule NixSwarm.CLI do
   end
 
   defp print_help do
+    launch = NixSwarm.operator_launch()
+
     IO.puts("""
     Nix-Swarm
 
     Launch the operator TUI:
-      nix-swarm --target NODE
-      nix-swarm --target NODE --source /path/to/checkout
+      #{launch}
+      #{launch} --source /path/to/checkout
 
     Required:
       --target NODE              remote Nix-Swarm node to connect to
