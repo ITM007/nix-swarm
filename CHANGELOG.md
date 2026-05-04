@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-05-04
+
+### Fixed
+- The packaged `swarm` wrapper now exports the discovered cookie into the release runtime again, so bare launches work with local config-root cookies and `swarm --help` no longer fails before the CLI starts.
+
 ## [0.1.3] - 2026-05-04
 
 ### Changed

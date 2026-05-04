@@ -11,7 +11,7 @@ defmodule NixSwarm do
 
   def app_version do
     case Application.spec(:nix_swarm, :vsn) do
-      nil -> "0.1.3"
+      nil -> "0.1.4"
       vsn when is_list(vsn) -> List.to_string(vsn)
       vsn -> to_string(vsn)
     end

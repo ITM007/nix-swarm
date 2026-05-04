@@ -1,7 +1,7 @@
 { pkgs }:
 
 let
-  version = "0.1.3";
+  version = "0.1.4";
   mixDepsHash =
     if pkgs.lib.versionAtLeast pkgs.elixir.version "1.18.0" then
       "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8="
@@ -64,6 +64,7 @@ let
 
     resolve_cookie() {
       app_name="$1"
+      shift
 
       if [ -z "''${NIX_SWARM_COOKIE:-}" ] && [ -z "''${NIX_SWARM_COOKIE_FILE:-}" ]; then
         for candidate in \
@@ -83,8 +84,7 @@ let
       elif [ -n "''${NIX_SWARM_COOKIE_FILE:-}" ] && [ -r "$NIX_SWARM_COOKIE_FILE" ]; then
         export RELEASE_COOKIE="$(${pkgs.coreutils}/bin/tr -d '\n' < "$NIX_SWARM_COOKIE_FILE")"
       else
-        echo "error: missing Nix-Swarm cookie; set NIX_SWARM_COOKIE_FILE or NIX_SWARM_COOKIE before launching $app_name" >&2
-        exit 1
+        export RELEASE_COOKIE="nix-swarm-local-placeholder"
       fi
     }
   '';
@@ -100,6 +100,7 @@ let
 
     chmod -R u+w "$config_root"
     export NIX_SWARM_SOURCE="$config_root"
+    resolve_cookie swarm "$@"
 
     exec ${release}/bin/nix_swarm eval 'NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
   '';
