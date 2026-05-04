@@ -50,7 +50,7 @@ defmodule NixSwarmCLITest do
              NixSwarm.CLI.run(["--target", "nix-swarm@example-node-a.local", "status"])
 
     assert message =~ "`status` was removed from the public command surface"
-    assert message =~ "Nix-Swarm is TUI-first in v0.1.4 alpha"
+    assert message =~ "Nix-Swarm is TUI-first in v0.1.5 alpha"
     assert message =~ "\n  swarm\n"
     assert message =~ "swarm --target NODE"
   end

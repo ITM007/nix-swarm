@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-05-04
+
+### Fixed
+
+- Restore the packaged `swarm` wrapper's cookie bootstrap so bare `swarm` launches again after the `v0.1.4` release regression.
+
 ## [0.1.4] - 2026-05-04
 
 ### Fixed

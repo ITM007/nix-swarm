@@ -90,6 +90,7 @@ let
   '';
 
   cliWrapper = pkgs.writeShellScript "swarm" ''
+    ${cookieRuntimeSetup}
     template_root="$(cd "$(dirname "$0")/../share/nix-swarm/template" && pwd)"
     config_root="''${NIX_SWARM_SOURCE:-$HOME/.config/nix-swarm}"
 
