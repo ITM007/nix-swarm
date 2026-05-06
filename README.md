@@ -33,15 +33,25 @@ The packaged operator first checks `~/.config/nix-swarm/secrets/{nix-swarm.cooki
 
 On first launch, the packaged operator also seeds a full editable working tree under `~/.config/nix-swarm`. That tree includes public-safe `cluster/`, `machines/`, `cluster/services/`, and `secrets/.gitignore` examples you can customize without modifying the installed package, and you can commit that working tree to Git while keeping secrets out of version control.
 
-## Add the release to a NixOS system
+## Add Nix-Swarm to a NixOS system
+
+By default, use the flake directly from GitHub so your lock file tracks the latest `main` revision when you update it. If you want a specific release instead, pin the input with `?ref=vX.Y.Z`.
+
+The flake publishes these package outputs on each supported Linux system:
+
+| Output | Use |
+|---|---|
+| `packages.<system>.operator` | Operator workstation package exposing `swarm` and compatibility `nix-swarm` |
+| `packages.<system>.cluster` | Managed-node runtime package exposing `nix-swarmd` |
+| `packages.<system>.default` / `packages.<system>.nix-swarm` | Compatibility package containing both operator and cluster entrypoints |
 
 ### Operator workstation
 
-Add Nix-Swarm as a flake input and install the packaged `nix-swarm` package, which exposes `swarm` as the operator command:
+Add Nix-Swarm as a flake input and install the dedicated operator package, which exposes `swarm` as the operator command:
 
 ```nix
 {
-  inputs.nix-swarm.url = "git+https://github.com/ITM007/swarm?ref=refs/tags/v0.1.5";
+  inputs.nix-swarm.url = "github:ITM007/swarm";
 
   outputs = { self, nixpkgs, nix-swarm, ... }: {
     nixosConfigurations.operator = nixpkgs.lib.nixosSystem {
@@ -49,7 +59,7 @@ Add Nix-Swarm as a flake input and install the packaged `nix-swarm` package, whi
       modules = [
         ({ pkgs, ... }: {
           environment.systemPackages = [
-            nix-swarm.packages.${pkgs.system}.default
+            nix-swarm.packages.${pkgs.system}.operator
           ];
         })
       ];
@@ -67,7 +77,7 @@ swarm
 
 ### Managed cluster node
 
-Import the module and point `services.nix-swarm.package` at the release package:
+Import the module and point `services.nix-swarm.package` at the dedicated cluster package:
 
 ```nix
 { inputs, pkgs, ... }:
@@ -79,7 +89,7 @@ Import the module and point `services.nix-swarm.package` at the release package:
 
   services.nix-swarm = {
     enable = true;
-    package = inputs.nix-swarm.packages.${pkgs.system}.default;
+    package = inputs.nix-swarm.packages.${pkgs.system}.cluster;
     nodeName = "nix-swarm@example-node-a.local";
     cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
     openFirewall = true;
@@ -87,6 +97,8 @@ Import the module and point `services.nix-swarm.package` at the release package:
   };
 }
 ```
+
+Published GitHub releases also attach prebuilt Nix binary-cache tarballs for the `operator` and `cluster` packages on each supported Linux system.
 
 ## Launch
 
@@ -125,7 +137,7 @@ The repository keeps tracked starter files under `examples/config/`. The package
 
   services.nix-swarm = {
     enable = true;
-    package = inputs.nix-swarm.packages.${pkgs.system}.default;
+    package = inputs.nix-swarm.packages.${pkgs.system}.cluster;
     nodeName = "nix-swarm@example-node-a.local";
     cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
     openFirewall = true;

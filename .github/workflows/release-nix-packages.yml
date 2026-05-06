@@ -1,0 +1,78 @@
+name: Release Nix packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release-packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+
+    env:
+      TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build operator and cluster packages
+        run: |
+          nix build .#packages.${{ matrix.system }}.operator
+          nix build .#packages.${{ matrix.system }}.cluster
+
+      - name: Export operator package cache
+        run: |
+          mkdir -p release-cache/operator
+          cat > release-cache/operator/README.txt <<EOF
+          Import this binary cache with:
+            nix copy --from file://\$PWD .#packages.${{ matrix.system }}.operator
+          EOF
+          nix copy --to file://$PWD/release-cache/operator .#packages.${{ matrix.system }}.operator
+          tar -C release-cache/operator -czf nix-swarm-operator-${TAG_NAME}-${{ matrix.system }}-nix-cache.tar.gz .
+
+      - name: Export cluster package cache
+        run: |
+          mkdir -p release-cache/cluster
+          cat > release-cache/cluster/README.txt <<EOF
+          Import this binary cache with:
+            nix copy --from file://\$PWD .#packages.${{ matrix.system }}.cluster
+          EOF
+          nix copy --to file://$PWD/release-cache/cluster .#packages.${{ matrix.system }}.cluster
+          tar -C release-cache/cluster -czf nix-swarm-cluster-${TAG_NAME}-${{ matrix.system }}-nix-cache.tar.gz .
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nix-packages-${{ matrix.system }}
+          path: |
+            nix-swarm-operator-${{ env.TAG_NAME }}-${{ matrix.system }}-nix-cache.tar.gz
+            nix-swarm-cluster-${{ env.TAG_NAME }}-${{ matrix.system }}-nix-cache.tar.gz
+
+      - name: Attach release assets
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${TAG_NAME}" \
+            nix-swarm-operator-${TAG_NAME}-${{ matrix.system }}-nix-cache.tar.gz \
+            nix-swarm-cluster-${TAG_NAME}-${{ matrix.system }}-nix-cache.tar.gz \
+            --clobber

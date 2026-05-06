@@ -34,10 +34,10 @@ defmodule NixSwarmBootstrapTest do
         cookie_file: "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie",
         cluster_module: "../cluster/cluster.nix",
         module_ref: "inputs.nix-swarm.nixosModules.default",
-        package_ref: "inputs.nix-swarm.packages.${pkgs.system}.default"
+        package_ref: "inputs.nix-swarm.packages.${pkgs.system}.cluster"
       })
 
-    assert content =~ "package = inputs.nix-swarm.packages.${pkgs.system}.default;"
+    assert content =~ "package = inputs.nix-swarm.packages.${pkgs.system}.cluster;"
     assert content =~ "cookieFile = \"/etc/nixos/nix-swarm/secrets/nix-swarm.cookie\";"
   end
 end

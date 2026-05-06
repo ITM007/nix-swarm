@@ -152,7 +152,7 @@ in
     package = mkOption {
       type = types.package;
       default = import ./package.nix { inherit pkgs; };
-      description = "Package containing the Nix-Swarm operator TUI (`bin/swarm`, plus compatibility `bin/nix-swarm`) and node runtime (`bin/nix-swarmd`).";
+      description = "Package containing the Nix-Swarm node runtime (`bin/nix-swarmd`). The default compatibility package also includes the operator wrappers; release flakes additionally expose a dedicated `packages.<system>.cluster` output.";
     };
 
     nodeName = mkOption {

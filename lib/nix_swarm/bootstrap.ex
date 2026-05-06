@@ -8,7 +8,8 @@ defmodule NixSwarm.Bootstrap do
     %{
       cluster_module: @default_cluster_module,
       module_ref: @default_module_ref,
-      package_ref: "module default (import ../nix/nix-swarm/package.nix { inherit pkgs; })"
+      package_ref:
+        "module default (import ../nix/nix-swarm/package.nix { inherit pkgs; }; release flakes also expose packages.${pkgs.system}.cluster)"
     }
   end
 

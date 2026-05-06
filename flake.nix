@@ -13,12 +13,18 @@
         );
     in
     {
-      packages = forAllSystems (_system: pkgs: let
-        nixSwarm = import ./nix/nix-swarm/package.nix { inherit pkgs; };
-      in {
-        nix-swarm = nixSwarm;
-        default = nixSwarm;
-      });
+      packages = forAllSystems (_system: pkgs:
+        let
+          nixSwarm = import ./nix/nix-swarm/packages.nix { inherit pkgs; };
+        in
+        {
+          default = nixSwarm.combined;
+          nix-swarm = nixSwarm.combined;
+          operator = nixSwarm.operator;
+          cluster = nixSwarm.cluster;
+          nix-swarm-operator = nixSwarm.operator;
+          nix-swarm-cluster = nixSwarm.cluster;
+        });
 
       devShells = forAllSystems (_system: pkgs: {
         default = pkgs.mkShell {
