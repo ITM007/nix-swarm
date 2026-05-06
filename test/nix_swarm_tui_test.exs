@@ -1353,6 +1353,31 @@ defmodule NixSwarmTUITest do
     assert content =~ "v1.0.0 *"
   end
 
+  test "machines view strips build digests from displayed versions" do
+    terminal = ExRatatui.init_test_terminal(220, 40)
+
+    state =
+      sample_tui_state(:machines)
+      |> update_in([:overview, :status, :nodes], fn
+        [
+          {node_a, node_a_status},
+          {node_b, node_b_status}
+        ] ->
+          [
+            {node_a, %{node_a_status | version: "v1.0.0-0123456789"}},
+            {node_b, %{node_b_status | version: "v1.0.1-abcdef1234"}}
+          ]
+      end)
+
+    :ok = ExRatatui.draw(terminal, NixSwarm.TUI.scene(state, 220, 40))
+    content = ExRatatui.get_buffer_content(terminal)
+
+    assert content =~ "v1.0.0"
+    assert content =~ "v1.0.1"
+    refute content =~ "0123456789"
+    refute content =~ "abcdef1234"
+  end
+
   test "rollout confirmation can be cancelled with escape" do
     state =
       sample_tui_state(:services)

@@ -1400,7 +1400,7 @@ defmodule NixSwarm.TUI do
       |> node_status_for(selected_node)
       |> case do
         nil -> "unknown"
-        node_status -> Map.get(node_status, :version, "unknown")
+        node_status -> display_version_from_status(node_status)
       end
 
     [
@@ -2285,7 +2285,7 @@ defmodule NixSwarm.TUI do
     node = state.selected_node
     node_status = selected_node_status(state)
     network_info = Map.get(node_status || %{}, :network_info, %{})
-    version = if node_status, do: Map.get(node_status, :version, "unknown"), else: "unknown"
+    version = if node_status, do: display_version_from_status(node_status), else: "unknown"
     update_status = selected_node_update_status(state.overview, node)
 
     uptime =
@@ -2916,8 +2916,8 @@ defmodule NixSwarm.TUI do
       |> Map.keys()
       |> Enum.sort()
       |> Enum.map(fn node ->
-        before_version = Map.get(before_versions, node, "-")
-        after_version = Map.get(after_versions, node, "-")
+        before_version = display_version_value(Map.get(before_versions, node, "-"))
+        after_version = display_version_value(Map.get(after_versions, node, "-"))
 
         [
           node,
@@ -3122,7 +3122,7 @@ defmodule NixSwarm.TUI do
         host_name: node_hostname(state.overview, node),
         node_name: Atom.to_string(node),
         status: status,
-        version: if(node_status, do: Map.get(node_status, :version, "unknown"), else: "unknown"),
+        version: if(node_status, do: display_version_from_status(node_status), else: "unknown"),
         update_available?: node_update_available?(state.overview, node)
       }
     end)
@@ -5202,7 +5202,7 @@ defmodule NixSwarm.TUI do
   defp format_port_list(ports), do: Enum.map_join(ports, ", ", &to_string/1)
 
   defp version_summary(versions) do
-    case versions |> Map.values() |> Enum.uniq() do
+    case versions |> Map.values() |> Enum.map(&display_version_value/1) |> Enum.uniq() do
       [] -> "-"
       [version] -> version
       many -> "#{length(many)} versions"
@@ -5282,12 +5282,12 @@ defmodule NixSwarm.TUI do
     |> node_status_for(node)
     |> case do
       nil -> nil
-      node_status -> Map.get(node_status, :version)
+      node_status -> display_version_from_status(node_status)
     end
   end
 
   defp node_version_cell(overview, node, node_status) do
-    version = if(node_status, do: Map.get(node_status, :version, "unknown"), else: "unknown")
+    version = if(node_status, do: display_version_from_status(node_status), else: "unknown")
 
     if node_update_available?(overview, node) do
       Span.new("#{version} *", style: %Style{fg: :yellow, modifiers: [:bold]})
@@ -5323,13 +5323,27 @@ defmodule NixSwarm.TUI do
             |> node_status_for(node)
             |> case do
               nil -> "unknown"
-              node_status -> Map.get(node_status, :version, "unknown")
+              node_status -> display_version_from_status(node_status)
             end
 
           {Atom.to_string(node), version}
       end
     end)
   end
+
+  defp display_version_from_status(node_status) do
+    Map.get(node_status, :release_version) ||
+      display_version_value(Map.get(node_status, :version, "unknown"))
+  end
+
+  defp display_version_value(version) when is_binary(version) do
+    case Regex.run(~r/^(v.+)-[0-9a-f]{10}$/i, version, capture: :all_but_first) do
+      [release_version] -> release_version
+      _ -> version
+    end
+  end
+
+  defp display_version_value(version), do: to_string(version)
 
   defp resolve_rollout_node(node_name, cluster_nodes) when is_atom(node_name) do
     if node_name in cluster_nodes, do: node_name

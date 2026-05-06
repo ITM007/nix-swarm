@@ -35,7 +35,7 @@ On first launch, the packaged operator also seeds a full editable working tree u
 
 ## Add Nix-Swarm to a NixOS system
 
-By default, use the flake directly from GitHub so your lock file tracks the latest `main` revision when you update it. If you want a specific release instead, pin the input with `?ref=vX.Y.Z`.
+By default, use the flake directly from GitHub so your lock file can track the latest `main` revision. Flake-based rebuilds use the revision recorded in `flake.lock`, so move to the newest upstream commit with `nix flake update --update-input nix-swarm` when you want to refresh. If you want a specific release instead, pin the input with `?ref=vX.Y.Z`.
 
 The flake publishes these package outputs on each supported Linux system:
 
@@ -51,7 +51,7 @@ Add Nix-Swarm as a flake input and install the dedicated operator package, which
 
 ```nix
 {
-  inputs.nix-swarm.url = "github:ITM007/swarm";
+  inputs.nix-swarm.url = "github:ITM007/nix-swarm";
 
   outputs = { self, nixpkgs, nix-swarm, ... }: {
     nixosConfigurations.operator = nixpkgs.lib.nixosSystem {

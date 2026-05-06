@@ -39,11 +39,15 @@ defmodule NixSwarm.API do
                          )
 
   def local_status do
+    build_version = version()
+
     %{
       node: Node.self(),
       live_nodes: NixSwarm.Cluster.live_nodes(),
       generation: NixSwarm.Config.runtime().generation,
-      version: version(),
+      version: build_version,
+      build_version: build_version,
+      release_version: NixSwarm.release_label(),
       services: Reconciler.local_status(),
       metrics: node_metrics(),
       network_info: network_info()
