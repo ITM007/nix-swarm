@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-05-06
+
+### Added
+
+- Added dedicated flake package outputs for operator workstations (`packages.<system>.operator`) and managed cluster nodes (`packages.<system>.cluster`) while keeping a compatibility combined package.
+- Added automated GitHub release packaging that builds the Nix operator and cluster packages and uploads binary-cache tarballs as release assets.
+
+### Changed
+
+- Release installation docs now default to tracking the latest GitHub flake revision, with release pinning documented as an explicit opt-in.
+- Example machine configs and bootstrap package overrides now point managed nodes at the dedicated cluster package output.
+
+### Fixed
+
+- The flake now exports the new package split consistently for both supported Linux systems.
+- Security support guidance now matches the `0.2.x` release series.
+
 ## [0.1.5] - 2026-05-04
 
 ### Added

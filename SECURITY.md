@@ -2,9 +2,9 @@
 
 ## Supported versions
 
-Nix-Swarm is currently in the `0.1.x` alpha series. Security fixes are only guaranteed for the latest `v0.1.x` tag on `main`.
+Nix-Swarm is currently in the `0.2.x` alpha series. Security fixes are only guaranteed for the latest `v0.2.x` tag on `main`.
 
-Older tags should be treated as unsupported once a newer `v0.1.x` release is published.
+Older tags should be treated as unsupported once a newer `v0.2.x` release is published.
 
 ## Reporting a vulnerability
 
