@@ -125,19 +125,20 @@ mix run -e 'NixSwarm.CLI.main(System.argv())' -- --target nix-swarm@example-node
 
 The repository keeps tracked starter files under `examples/config/`. The packaged operator mirrors them into `~/.config/nix-swarm/` on first launch, where you edit the live copy.
 
+That seeded tree also includes `~/.config/nix-swarm/nix/nix-swarm/module.nix` as a local bridge back to the packaged NixOS module, so the starter machine files can import it directly without needing a separate flake input inside the working tree.
+
 ### `~/.config/nix-swarm/machines/example-node-a.nix`
 
 ```nix
-{ inputs, pkgs, ... }:
+{ ... }:
 {
   imports = [
-    inputs.nix-swarm.nixosModules.default
+    ../nix/nix-swarm/module.nix
     ../cluster/cluster.nix
   ];
 
   services.nix-swarm = {
     enable = true;
-    package = inputs.nix-swarm.packages.${pkgs.system}.cluster;
     nodeName = "nix-swarm@example-node-a.local";
     cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
     openFirewall = true;

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-05-06
+
+### Changed
+
+- The starter-config documentation now matches the packaged `examples/config` working tree, including the local `nix/nix-swarm/module.nix` bridge used by seeded machine files.
+- The release packaging workflow now opts JavaScript-based GitHub Actions into Node 24, removing the Node 20 deprecation warning from release builds.
+
+### Fixed
+
+- Cluster and machine views now display the user-facing release version instead of the internal build digest suffix.
+- Historical changelog references now use the canonical `ITM007/nix-swarm` repository name.
+
 ## [0.2.0] - 2026-05-06
 
 ### Added
@@ -56,7 +68,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - The packaged operator now installs `swarm` as the primary TUI command while keeping `nix-swarm` as a compatibility wrapper and leaving `nix-swarmd` unchanged for managed nodes.
-- Release examples and packaging docs now point operators at the `ITM007/swarm` GitHub flake input and the default editable config root at `~/.config/nix-swarm`.
+- Release examples and packaging docs now point operators at the `ITM007/nix-swarm` GitHub flake input and the default editable config root at `~/.config/nix-swarm`.
 
 ### Fixed
 - User-facing launch help and remote diagnostics no longer hardcode the previous `v0.1.0` release label.

@@ -2,7 +2,7 @@
 
 let
   lib = pkgs.lib;
-  version = "0.2.0";
+  version = "0.3.1";
   nifTarget =
     if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
       "aarch64-unknown-linux-gnu"
