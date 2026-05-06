@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - The starter-config documentation now matches the packaged `examples/config` working tree, including the local `nix/nix-swarm/module.nix` bridge used by seeded machine files.
-- The release packaging workflow now opts JavaScript-based GitHub Actions into Node 24, removing the Node 20 deprecation warning from release builds.
+- The release packaging workflow now uses Node 24-compatible action versions, removing the GitHub-hosted Node 20 deprecation warning from release builds.
 
 ### Fixed
 
