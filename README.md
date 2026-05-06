@@ -4,11 +4,8 @@ Nix-Swarm is a **TUI-first, leaderless NixOS orchestrator** for small clusters. 
 
 Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container platform and **not** a storage orchestrator.
 
-> **v0.1.5 alpha:** Nix-Swarm is ready for public testing on trusted homelab/LAN clusters, but the config format, TUI workflows, and remote API may still change. Do not expose the Erlang distribution ports to untrusted networks.
 
-![Nix-Swarm dashboard](docs/screenshots/dashboard.svg)
-
-![Nix-Swarm services view](docs/screenshots/services.svg)
+![Nix-Swarm dashboard](docs/screenshots/dashboard.png)
 
 ## Features
 
@@ -122,20 +119,6 @@ From a local checkout during development:
 mix run -e 'NixSwarm.CLI.main(System.argv())' -- --target nix-swarm@example-node-a.local
 ```
 
-Core TUI actions:
-
-- `tab` / `left` / `right`: switch views
-- `j` / `k`: move selection
-- `shift+h/j/k/l`: scroll wide or long panes
-- `r`: refresh
-- `b` / `z` / `x`: start, stop, or restart the selected service; on **Machines**, the action is scoped to the selected machine and selected service
-- `R` / `Z`: confirm restart or shutdown for the selected machine
-- `c`: reconcile cluster
-- `y`: dry-run config rollout
-- `p`: apply config rollout
-- `u`: preview a code rollout for the current scope; on **Machines**, use `c` for the whole cluster or `m` for the selected machine before confirming
-- `a` / `e` / `d`: add, edit, or delete machine/service config files
-
 ## Starter configs
 
 The repository keeps tracked starter files under `examples/config/`. The packaged operator mirrors them into `~/.config/nix-swarm/` on first launch, where you edit the live copy.
@@ -222,14 +205,6 @@ The repository keeps tracked starter files under `examples/config/`. The package
 }
 ```
 
-## Day-to-day workflow
-
-1. Launch `swarm`
-2. Inspect cluster health from **Dashboard**, **Map**, **Machines**, and **Services**
-3. Use `a`, `e`, and `d` to manage machine/service files
-4. Use `y` to preview and `p` to apply config changes
-5. Use `u` to roll updated code/config to running nodes; the rollout waits until the targeted nodes come back and report one version
-
 ## More documentation
 
 - [Getting started](docs/GETTING_STARTED.md)
@@ -246,14 +221,15 @@ The repository keeps tracked starter files under `examples/config/`. The package
 - **Mixed live versions after an update:** check the **Machines** or **Dashboard** views. Nix-Swarm marks version mismatches as an available update and keeps the rollout pending until the targeted nodes converge to one version.
 - **Cookie errors:** prefer `NIX_SWARM_COOKIE_FILE`; avoid `--cookie` because command-line arguments can be visible in process listings.
 
-## Development
+## More Screenshots
+![Nix-Swarm map view](docs/screenshots/map.png)
 
-```bash
-mix format
-mix test
-```
+![Nix-Swarm machines view](docs/screenshots/machines.png)
 
-The v0.1.5 test suite covers placement, deploy command generation, config file editing, executor safety, remote API calls, TUI navigation/actions, and multi-node failover behavior.
+![Nix-Swarm services view](docs/screenshots/services.png)
+
+![Nix-Swarm logs view](docs/screenshots/logs.png)
+
 
 ## License
 
