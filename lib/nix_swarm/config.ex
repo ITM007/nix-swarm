@@ -15,12 +15,21 @@ defmodule NixSwarm.Config do
   def current do
     raw =
       Application.get_env(:nix_swarm, :cluster_config) ||
-        load_from_path(
-          Application.get_env(:nix_swarm, :config_path) || System.get_env("NIX_SWARM_CONFIG_PATH")
-        ) ||
+        load_config_for_current() ||
         %{}
 
     normalize(raw)
+  end
+
+  defp load_config_for_current do
+    path =
+      Application.get_env(:nix_swarm, :config_path) || System.get_env("NIX_SWARM_CONFIG_PATH")
+
+    case load_from_path(path) do
+      {:ok, terms} -> terms
+      {:error, _reason} -> nil
+      nil -> nil
+    end
   end
 
   def peers do
@@ -36,24 +45,24 @@ defmodule NixSwarm.Config do
   def load_from_path(path) do
     case :file.consult(String.to_charlist(path)) do
       {:ok, terms} ->
-        terms
-        |> normalize_terms()
+        {:ok, terms |> normalize_terms()}
 
       {:error, reason} ->
-        raise "failed to read nix-swarm config at #{path}: #{inspect(reason)}"
+        {:error, "failed to read nix-swarm config at #{path}: #{inspect(reason)}"}
     end
   end
 
   def normalize(raw) do
-    nodes = normalize_nodes(fetch(raw, :nodes, %{}))
-    peers = normalize_peers(fetch(raw, :peers, Map.keys(nodes)))
-    runtime = normalize_runtime(fetch(raw, :runtime, %{}))
+    nodes = normalize_nodes(NixSwarm.fetch_value(raw, :nodes, %{}))
+    peers = normalize_peers(NixSwarm.fetch_value(raw, :peers, Map.keys(nodes)))
+    runtime = normalize_runtime(NixSwarm.fetch_value(raw, :runtime, %{}))
 
     %{
       peers: peers,
       nodes: nodes,
-      services: normalize_services(fetch(raw, :services, [])),
-      runtime: runtime
+      services: normalize_services(NixSwarm.fetch_value(raw, :services, [])),
+      runtime: runtime,
+      ingress: normalize_ingress(NixSwarm.fetch_value(raw, :ingress, []))
     }
   end
 
@@ -81,14 +90,14 @@ defmodule NixSwarm.Config do
     |> Enum.into(%{}, fn {node_name, attrs} ->
       labels =
         attrs
-        |> fetch(:labels, [])
+        |> NixSwarm.fetch_value(:labels, [])
         |> List.wrap()
         |> Enum.map(&to_string/1)
         |> MapSet.new()
 
       deploy_host =
         attrs
-        |> fetch(:deploy_host, fetch(attrs, :deployHost))
+        |> NixSwarm.fetch_value(:deploy_host, NixSwarm.fetch_value(attrs, :deployHost))
         |> normalize_optional_string()
 
       {normalize_node_name(node_name), %{labels: labels, deploy_host: deploy_host}}
@@ -96,26 +105,27 @@ defmodule NixSwarm.Config do
   end
 
   defp normalize_runtime(raw_runtime) do
-    executor = normalize_executor(fetch(raw_runtime, :executor, %{}))
+    executor = normalize_executor(NixSwarm.fetch_value(raw_runtime, :executor, %{}))
 
     @default_runtime
     |> Map.merge(%{
       connect_interval_ms:
         normalize_integer(
-          fetch(raw_runtime, :connect_interval_ms),
+          NixSwarm.fetch_value(raw_runtime, :connect_interval_ms),
           @default_runtime.connect_interval_ms
         ),
       reconcile_interval_ms:
         normalize_integer(
-          fetch(raw_runtime, :reconcile_interval_ms),
+          NixSwarm.fetch_value(raw_runtime, :reconcile_interval_ms),
           @default_runtime.reconcile_interval_ms
         ),
       command_timeout_ms:
         normalize_integer(
-          fetch(raw_runtime, :command_timeout_ms),
+          NixSwarm.fetch_value(raw_runtime, :command_timeout_ms),
           @default_runtime.command_timeout_ms
         ),
-      generation: to_string(fetch(raw_runtime, :generation, @default_runtime.generation)),
+      generation:
+        to_string(NixSwarm.fetch_value(raw_runtime, :generation, @default_runtime.generation)),
       executor: executor
     })
   end
@@ -125,7 +135,7 @@ defmodule NixSwarm.Config do
 
   defp normalize_executor(raw_executor) when is_map(raw_executor) or is_list(raw_executor) do
     adapter =
-      case fetch(raw_executor, :adapter, :fake) do
+      case NixSwarm.fetch_value(raw_executor, :adapter, :fake) do
         value when value in [:systemd, "systemd"] -> :systemd
         _ -> :fake
       end
@@ -137,7 +147,7 @@ defmodule NixSwarm.Config do
       :fake ->
         root =
           raw_executor
-          |> fetch(:root, @default_runtime.executor.root)
+          |> NixSwarm.fetch_value(:root, @default_runtime.executor.root)
           |> to_string()
 
         %{adapter: :fake, root: root}
@@ -165,10 +175,31 @@ defmodule NixSwarm.Config do
   defp normalize_optional_string(""), do: nil
   defp normalize_optional_string(value), do: to_string(value)
 
-  defp fetch(data, key, default \\ nil)
+  defp normalize_ingress(raw_sites) do
+    %{
+      sites:
+        raw_sites
+        |> List.wrap()
+        |> Enum.reduce(%{}, fn site, acc ->
+          name = NixSwarm.fetch_value(site, :name, "") |> to_string()
 
-  defp fetch(data, key, default) when is_map(data),
-    do: Map.get(data, key, Map.get(data, to_string(key), default))
+          next = %{
+            domain: NixSwarm.fetch_value(site, :domain, name) |> to_string(),
+            service: NixSwarm.fetch_value(site, :service, "") |> to_string(),
+            ports:
+              NixSwarm.fetch_value(site, :ports, [])
+              |> List.wrap()
+              |> Enum.map(&normalize_integer(&1, 0)),
+            scheme: NixSwarm.fetch_value(site, :scheme, "http") |> to_string(),
+            default: NixSwarm.fetch_value(site, :default, false) == true
+          }
 
-  defp fetch(data, key, default) when is_list(data), do: Keyword.get(data, key, default)
+          if next.service != "" do
+            Map.put(acc, name, next)
+          else
+            acc
+          end
+        end)
+    }
+  end
 end

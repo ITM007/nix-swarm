@@ -1,4 +1,2 @@
-let
-  pkgs = import <nixpkgs> { };
-in
-import ./nix/package.nix { inherit pkgs; }
+{ pkgs ? import <nixpkgs> { } }:
+import ./nix/nix-swarm/packages.nix { inherit pkgs; }

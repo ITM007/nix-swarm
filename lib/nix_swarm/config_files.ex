@@ -115,8 +115,8 @@ defmodule NixSwarm.ConfigFiles do
         # Keep the shared peer/service definitions in the shared cluster module.
         services.nix-swarm = {
           enable = true;
-          nodeName = #{nix_string_literal(node_name)};
-          cookieFile = #{nix_string_literal(cookie_file)};
+          nodeName = #{NixSwarm.nix_string_literal(node_name)};
+          cookieFile = #{NixSwarm.nix_string_literal(cookie_file)};
           openFirewall = true;
           firewallInterfaces = [ "eth0" ];
         };
@@ -327,10 +327,10 @@ defmodule NixSwarm.ConfigFiles do
   end
 
   defp ensure_peers_entry(contents, node_name) do
-    peer_line = "      #{nix_string_literal(node_name)};"
+    peer_line = "      #{NixSwarm.nix_string_literal(node_name)};"
 
     cond do
-      String.contains?(contents, nix_string_literal(node_name)) and
+      String.contains?(contents, NixSwarm.nix_string_literal(node_name)) and
           String.contains?(contents, "peers = [") ->
         contents
 
@@ -356,7 +356,7 @@ defmodule NixSwarm.ConfigFiles do
       entry = """
           #{node_attr} = {
             labels = #{nix_string_list(labels)};
-            deployHost = #{nix_string_literal(deploy_host)};
+            deployHost = #{NixSwarm.nix_string_literal(deploy_host)};
           };
       """
 
@@ -420,7 +420,10 @@ defmodule NixSwarm.ConfigFiles do
       {:ok, contents} ->
         updated =
           contents
-          |> String.replace(~r/^\s*#{Regex.escape(nix_string_literal(node_name))};\n/m, "")
+          |> String.replace(
+            ~r/^\s*#{Regex.escape(NixSwarm.nix_string_literal(node_name))};\n/m,
+            ""
+          )
           |> remove_attr_block(node_name)
 
         File.write!(paths.cluster_file, updated)
@@ -533,31 +536,12 @@ defmodule NixSwarm.ConfigFiles do
 
   defp strip_common_prefix(target_parts, from_parts), do: {target_parts, from_parts}
 
-  defp nix_string_literal(value) do
-    escaped =
-      value
-      |> String.replace("\\", "\\\\")
-      |> String.replace("\"", "\\\"")
-      |> String.replace("${", "\\${")
-
-    "\"#{escaped}\""
-  end
-
-  defp nix_attr_name(value) do
-    escaped =
-      value
-      |> to_string()
-      |> String.replace("\\", "\\\\")
-      |> String.replace("\"", "\\\"")
-      |> String.replace("${", "\\${")
-
-    "\"#{escaped}\""
-  end
+  defp nix_attr_name(value), do: NixSwarm.nix_string_literal(to_string(value))
 
   defp nix_string_list(values) do
     values
     |> List.wrap()
-    |> Enum.map(&nix_string_literal/1)
+    |> Enum.map(&NixSwarm.nix_string_literal/1)
     |> Enum.join(" ")
     |> then(&"[ #{&1} ]")
   end

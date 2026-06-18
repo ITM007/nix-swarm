@@ -65,7 +65,8 @@ defmodule NixSwarmPlacementTest do
       """
     )
 
-    config = path |> NixSwarm.Config.load_from_path() |> NixSwarm.Config.normalize()
+    {:ok, raw} = NixSwarm.Config.load_from_path(path)
+    config = NixSwarm.Config.normalize(raw)
 
     assert config.peers == [:"node-a@127.0.0.1", :"node-b@127.0.0.1"]
     assert length(config.services) == 1
@@ -107,7 +108,8 @@ defmodule NixSwarmPlacementTest do
       """
     )
 
-    config = path |> NixSwarm.Config.load_from_path() |> NixSwarm.Config.normalize()
+    {:ok, raw} = NixSwarm.Config.load_from_path(path)
+    config = NixSwarm.Config.normalize(raw)
 
     assert hd(config.services).settings == %{domain: "gitea.example.internal", http_port: 3000}
 
@@ -237,5 +239,103 @@ defmodule NixSwarmPlacementTest do
              diagnostics,
              &match?(%{service: "gpu", reason: :unowned_slots, slots: [0]}, &1)
            )
+  end
+
+  test "owner_for_slot cycles through ranked nodes" do
+    nodes = [:a@x, :b@x, :c@x]
+
+    assert NixSwarm.Placement.owner_for_slot(nodes, 0) == :a@x
+    assert NixSwarm.Placement.owner_for_slot(nodes, 1) == :b@x
+    assert NixSwarm.Placement.owner_for_slot(nodes, 2) == :c@x
+    assert NixSwarm.Placement.owner_for_slot(nodes, 3) == :a@x
+    assert NixSwarm.Placement.owner_for_slot(nodes, 4) == :b@x
+  end
+
+  test "owner_for_slot returns nil for empty node list" do
+    assert NixSwarm.Placement.owner_for_slot([], 0) == nil
+    assert NixSwarm.Placement.owner_for_slot([], 5) == nil
+  end
+
+  test "local_units filters to only the given node" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1"],
+        nodes: %{
+          :"node-a@127.0.0.1" => %{labels: ["apps"]},
+          :"node-b@127.0.0.1" => %{labels: ["apps"]}
+        },
+        services: [
+          %{name: "api", replicas: 2, constraints: ["apps"]}
+        ]
+      })
+
+    units_a = NixSwarm.Placement.local_units(:"node-a@127.0.0.1", config, config.peers)
+    units_b = NixSwarm.Placement.local_units(:"node-b@127.0.0.1", config, config.peers)
+
+    assert length(units_a) == 1
+    assert hd(units_a).service == "api"
+
+    assert length(units_b) == 1
+    assert hd(units_b).service == "api"
+
+    assert units_a != units_b
+  end
+
+  test "local_units returns empty list for a node that owns nothing" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1"],
+        nodes: %{
+          :"node-a@127.0.0.1" => %{labels: ["apps"]},
+          :"node-b@127.0.0.1" => %{labels: ["apps"]}
+        },
+        services: [
+          %{name: "api", replicas: 1, constraints: ["apps"]}
+        ]
+      })
+
+    plan = NixSwarm.Placement.plan(config, config.peers)
+    owner = plan["api"] |> hd() |> Map.fetch!(:owner)
+    non_owner = Enum.find(config.peers, &(&1 != owner))
+
+    units = NixSwarm.Placement.local_units(non_owner, config, config.peers)
+    assert units == []
+  end
+
+  test "placement wraps replicas around when there are more replicas than eligible nodes" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1"],
+        nodes: %{
+          :"node-a@127.0.0.1" => %{labels: ["apps"]},
+          :"node-b@127.0.0.1" => %{labels: ["apps"]}
+        },
+        services: [
+          %{name: "api", replicas: 4, constraints: ["apps"]}
+        ]
+      })
+
+    owners =
+      config
+      |> NixSwarm.Placement.plan(config.peers)
+      |> Map.fetch!("api")
+      |> Enum.map(& &1.owner)
+
+    assert length(owners) == 4
+    # With 2 eligible nodes and 4 replicas, each node should own 2 slots
+    assert Enum.count(owners, &(&1 == :"node-a@127.0.0.1")) == 2
+    assert Enum.count(owners, &(&1 == :"node-b@127.0.0.1")) == 2
+  end
+
+  test "diagnostics reports invalid replica count" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1"],
+        nodes: %{:"node-a@127.0.0.1" => %{labels: ["apps"]}},
+        services: [%{name: "api", replicas: -1, constraints: ["apps"]}]
+      })
+
+    diagnostics = NixSwarm.Placement.diagnostics(config, config.peers)
+    assert Enum.any?(diagnostics, &match?(%{service: "api", reason: :invalid_replica_count}, &1))
   end
 end

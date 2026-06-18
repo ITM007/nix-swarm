@@ -76,6 +76,12 @@ ${lib.optionalString (site.extraConfig != "") site.extraConfig}
 in
 {
   options.services.nix-swarm.ingress = {
+    httpPort = lib.mkOption {
+      type = lib.types.port;
+      default = 80;
+      description = "TCP port for HTTP ingress. Set to 443 and update site schemes to \"https\" for HTTPS-only.";
+    };
+
     sites = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule ({ ... }: {
         options = {
@@ -135,7 +141,7 @@ in
   config = lib.mkIf (sites != {}) {
     assertions = ingressAssertions;
 
-    networking.firewall.allowedTCPPorts = [ 80 ];
+    networking.firewall.allowedTCPPorts = [ cfg.ingress.httpPort ];
 
     services.nginx = {
       enable = true;

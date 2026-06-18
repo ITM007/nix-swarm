@@ -86,20 +86,6 @@ defmodule NixSwarm.Deploy do
     }
   end
 
-  def hosts(opts),
-    do:
-      hosts(
-        normalize_opts(opts),
-        source_root(Keyword.get(normalize_opts(opts), :source)),
-        Path.expand(
-          Keyword.get(
-            normalize_opts(opts),
-            :machines_dir,
-            default_machines_dir(source_root(Keyword.get(normalize_opts(opts), :source)))
-          )
-        )
-      )
-
   def hosts(opts, source, machines_dir \\ nil) do
     opts = normalize_opts(opts)
     machines_dir = if is_nil(machines_dir), do: default_machines_dir(source), else: machines_dir
@@ -183,6 +169,7 @@ defmodule NixSwarm.Deploy do
 
   def sync_command(source, host, remote_path) do
     validate_ssh_host!(host)
+    validate_source_path!(source, "source path")
     remote_path = validate_remote_path!(remote_path, "remote path")
 
     tar_args =
@@ -288,7 +275,7 @@ defmodule NixSwarm.Deploy do
       """
       let eval = import <nixpkgs/nixos/lib/eval-config.nix> {
         system = builtins.currentSystem;
-        modules = [ (builtins.toPath #{nix_string_literal(machine_file)}) ];
+        modules = [ (builtins.toPath #{NixSwarm.nix_string_literal(machine_file)}) ];
         specialArgs = { inputs = {}; };
       }; in {
         node = eval.config.services.nix-swarm.nodeName;
@@ -372,6 +359,25 @@ defmodule NixSwarm.Deploy do
     end
   end
 
+  defp validate_source_path!(path, label) do
+    path = to_string(path)
+
+    cond do
+      String.trim(path) == "" ->
+        raise ArgumentError, "#{label} cannot be blank"
+
+      String.match?(path, ~r/[\x00-\x08\x0B\x0C\x0E-\x1F]/) ->
+        raise ArgumentError, "#{label} contains unsupported control characters"
+
+      String.contains?(path, "`") or String.contains?(path, "$(") or
+          String.contains?(path, "${") ->
+        raise ArgumentError, "#{label} contains shell metacharacters"
+
+      true ->
+        path
+    end
+  end
+
   defp ssh_command(host, remote_command) do
     [
       "ssh",
@@ -400,15 +406,5 @@ defmodule NixSwarm.Deploy do
 
   defp shell_escape(value) do
     "'" <> String.replace(to_string(value), "'", "'\"'\"'") <> "'"
-  end
-
-  defp nix_string_literal(value) do
-    escaped =
-      value
-      |> String.replace("\\", "\\\\")
-      |> String.replace("\"", "\\\"")
-      |> String.replace("${", "\\${")
-
-    "\"#{escaped}\""
   end
 end

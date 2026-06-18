@@ -49,3 +49,4 @@ nix-swarm-*.tar
 # Local editable Nix-Swarm cluster state.
 /cluster/
 /machines/
+reasonix.toml

@@ -1,5 +1,11 @@
 defmodule NixSwarm.API do
-  @moduledoc false
+  @moduledoc """
+  Public API surface for the Nix-Swarm runtime.
+
+  Functions in this module are callable both locally and over distributed Erlang RPC
+  from the CLI/TUI operator tools. The module serves as the remote-callable contract
+  between the operator console and managed cluster nodes.
+  """
 
   alias NixSwarm.ClusterLogs
   alias NixSwarm.Executor
@@ -38,6 +44,10 @@ defmodule NixSwarm.API do
                            |> binary_part(0, 10)
                          )
 
+  @doc """
+  Returns the local node's status: node identity, live peer set, generation, version,
+  service status, host metrics, and network info.
+  """
   def local_status do
     build_version = version()
 
@@ -54,11 +64,18 @@ defmodule NixSwarm.API do
     }
   end
 
+  @doc "Returns the node's build version, cached in :persistent_term."
   def version do
     case :persistent_term.get(@version_cache_key, nil) do
       nil ->
         version = build_version()
-        :persistent_term.put(@version_cache_key, version)
+
+        try do
+          :persistent_term.put(@version_cache_key, version)
+        rescue
+          _ -> :ok
+        end
+
         version
 
       version ->
@@ -66,6 +83,7 @@ defmodule NixSwarm.API do
     end
   end
 
+  @doc "Returns cluster-wide status: placement plan, diagnostics, and per-node status."
   def cluster_status do
     live_nodes = NixSwarm.Cluster.live_nodes()
     config = NixSwarm.Config.current()
@@ -79,6 +97,7 @@ defmodule NixSwarm.API do
     }
   end
 
+  @doc "Returns the cluster membership view: live nodes, configured peers, and deploy hosts."
   def cluster_members do
     %{
       queried_node: Node.self(),
@@ -88,13 +107,22 @@ defmodule NixSwarm.API do
     }
   end
 
+  @doc "Returns the combined cluster overview (members + status) for the TUI dashboard."
   def cluster_overview do
     %{
       members: cluster_members(),
-      status: cluster_status()
+      status: cluster_status(),
+      ingress: ingress_info()
     }
   end
 
+  @doc "Returns ingress configuration from the current node's runtime config."
+  def ingress_info do
+    config = NixSwarm.Config.current()
+    Map.get(config, :ingress, %{sites: %{}})
+  end
+
+  @doc "Triggers immediate reconciliation across all live cluster nodes."
   def reconcile_cluster do
     NixSwarm.Cluster.live_nodes()
     |> Enum.map(fn node ->
@@ -102,6 +130,7 @@ defmodule NixSwarm.API do
     end)
   end
 
+  @doc "Starts a service across all live nodes."
   def start_service(service_name) do
     service_name = to_string(service_name)
 
@@ -111,6 +140,7 @@ defmodule NixSwarm.API do
     end)
   end
 
+  @doc "Stops a service across all live nodes."
   def stop_service(service_name) do
     service_name = to_string(service_name)
 
@@ -120,6 +150,7 @@ defmodule NixSwarm.API do
     end)
   end
 
+  @doc "Restarts a service on its owning nodes only."
   def restart_service(service_name) do
     service_name = to_string(service_name)
 
@@ -130,18 +161,21 @@ defmodule NixSwarm.API do
     end)
   end
 
+  @doc "Starts a service on a specific node."
   def start_service_on_node(node_name, service_name) do
     node_name
     |> normalize_target_node()
     |> rpc(__MODULE__, :start_local_service, [to_string(service_name)])
   end
 
+  @doc "Stops a service on a specific node."
   def stop_service_on_node(node_name, service_name) do
     node_name
     |> normalize_target_node()
     |> rpc(__MODULE__, :stop_local_service, [to_string(service_name)])
   end
 
+  @doc "Restarts a service on a specific node."
   def restart_service_on_node(node_name, service_name) do
     node_name
     |> normalize_target_node()
@@ -160,12 +194,14 @@ defmodule NixSwarm.API do
     Reconciler.restart_local_service(service_name)
   end
 
+  @doc "Restarts the target machine."
   def restart_machine(node_name) do
     node_name
     |> normalize_target_node()
     |> rpc(__MODULE__, :restart_local_machine, [])
   end
 
+  @doc "Shuts down the target machine."
   def shutdown_machine(node_name) do
     node_name
     |> normalize_target_node()
@@ -180,6 +216,7 @@ defmodule NixSwarm.API do
     Executor.shutdown_host()
   end
 
+  @doc "Fetches service logs from owning nodes."
   def logs(service_name, lines \\ 50) do
     service_name = to_string(service_name)
 
@@ -193,6 +230,7 @@ defmodule NixSwarm.API do
     end)
   end
 
+  @doc "Fetches node-level service logs from a specific node."
   def node_service_logs(node_name, lines \\ 50) do
     node_name
     |> normalize_target_node()
@@ -225,6 +263,7 @@ defmodule NixSwarm.API do
     end)
   end
 
+  @doc "Fetches cluster-level logs from a specific node."
   def cluster_logs(node_name, lines \\ 50) do
     node_name
     |> normalize_target_node()
@@ -265,6 +304,7 @@ defmodule NixSwarm.API do
     end)
   end
 
+  @doc "Returns host-level resource metrics (CPU, memory, disk, network, uptime)."
   def node_metrics do
     try do
       cpu_total = logical_processors_available()
@@ -316,6 +356,7 @@ defmodule NixSwarm.API do
     end
   end
 
+  @doc "Returns local network interface information (IPs and common ports)."
   def network_info do
     ips =
       case :inet.getifaddrs() do
@@ -357,7 +398,18 @@ defmodule NixSwarm.API do
         if node == Node.self() do
           local_status()
         else
-          rpc(node, __MODULE__, :local_status, [])
+          case :rpc.call(node, __MODULE__, :local_status, [], NixSwarm.rpc_timeout_ms()) do
+            {:badrpc, reason} ->
+              %{
+                node: node,
+                live_nodes: [],
+                error: :node_unreachable,
+                reason: inspect(reason)
+              }
+
+            result ->
+              result
+          end
         end
 
       {node, status}
@@ -368,7 +420,7 @@ defmodule NixSwarm.API do
     if node == Node.self() do
       apply(module, function, args)
     else
-      :rpc.call(node, module, function, args, 5_000)
+      :rpc.call(node, module, function, args, NixSwarm.rpc_timeout_ms())
     end
   end
 

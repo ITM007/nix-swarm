@@ -1,8 +1,8 @@
-{ pkgs }:
+{ pkgs, usePrebuiltNifs ? true }:
 
 let
   lib = pkgs.lib;
-  version = "0.3.1";
+  version = lib.trim (builtins.readFile ../../VERSION);
   nifTarget =
     if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
       "aarch64-unknown-linux-gnu"
@@ -35,40 +35,46 @@ let
       });
 
   exRatatuiNifCache =
-    let
-      fileNames = [
-        "libex_ratatui-v0.8.0-nif-2.16-${nifTarget}.so.tar.gz"
-        "libex_ratatui-v0.8.0-nif-2.17-${nifTarget}.so.tar.gz"
-      ];
+    if usePrebuiltNifs then
+      let
+        fileNames = [
+          "libex_ratatui-v0.8.0-nif-2.16-${nifTarget}.so.tar.gz"
+          "libex_ratatui-v0.8.0-nif-2.17-${nifTarget}.so.tar.gz"
+        ];
 
-      artifactHashes =
-        if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
-          [
-            "sha256-wNsrDx/P87+Rxv6tdouWKYEODFHxxdczfqHYzjjkU9U="
-            "sha256-JFdLuoRnley1jomJSVaZbHZOuaFCfKtX5xbEDJbWmPA="
-          ]
-        else
-          [
-            "sha256-f41G2I1+iXlRz1fbNKxf6WFSynKlAq8zL1Qw5/dUVa4="
-            "sha256-XHHHvm7p3/A8gabr8RZh/QuYWM6pCKDg57BepCm0VGA="
-          ];
+        artifactHashes =
+          if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
+            [
+              "sha256-wNsrDx/P87+Rxv6tdouWKYEODFHxxdczfqHYzjjkU9U="
+              "sha256-JFdLuoRnley1jomJSVaZbHZOuaFCfKtX5xbEDJbWmPA="
+            ]
+          else
+            [
+              "sha256-f41G2I1+iXlRz1fbNKxf6WFSynKlAq8zL1Qw5/dUVa4="
+              "sha256-XHHHvm7p3/A8gabr8RZh/QuYWM6pCKDg57BepCm0VGA="
+            ];
 
-      artifacts = [
-        (pkgs.fetchurl {
-          url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${builtins.elemAt fileNames 0}";
-          hash = builtins.elemAt artifactHashes 0;
-        })
-        (pkgs.fetchurl {
-          url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${builtins.elemAt fileNames 1}";
-          hash = builtins.elemAt artifactHashes 1;
-        })
-      ];
-    in
-    pkgs.runCommand "ex-ratatui-precompiled-nif-cache" {} ''
-      mkdir -p "$out"
-      ln -s ${builtins.elemAt artifacts 0} "$out/${builtins.elemAt fileNames 0}"
-      ln -s ${builtins.elemAt artifacts 1} "$out/${builtins.elemAt fileNames 1}"
-    '';
+        artifacts = [
+          (pkgs.fetchurl {
+            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${builtins.elemAt fileNames 0}";
+            hash = builtins.elemAt artifactHashes 0;
+          })
+          (pkgs.fetchurl {
+            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.8.0/${builtins.elemAt fileNames 1}";
+            hash = builtins.elemAt artifactHashes 1;
+          })
+        ];
+      in
+      pkgs.runCommand "ex-ratatui-precompiled-nif-cache" {} ''
+        mkdir -p "$out"
+        ln -s ${builtins.elemAt artifacts 0} "$out/${builtins.elemAt fileNames 0}"
+        ln -s ${builtins.elemAt artifacts 1} "$out/${builtins.elemAt fileNames 1}"
+      ''
+    else
+      pkgs.runCommand "ex-ratatui-source-nif-cache" {} ''
+        mkdir -p "$out"
+        echo "NIF cache built from source — place compiled .so tarballs here" > "$out/README"
+      '';
 
   release = (pkgs.beamPackages.mixRelease {
     pname = "nix-swarm";

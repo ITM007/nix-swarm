@@ -11,6 +11,8 @@ defmodule NixSwarm.TUI do
   alias ExRatatui.Widgets.{Block, Gauge, Paragraph, Table, Tabs, Throbber}
   alias NixSwarm.{Ascii, ClusterLogs, ConfigFiles, Deploy, Remote, Update}
 
+  require Logger
+
   @default_lines 50
   @default_refresh_ms 3_000
   @views [:dashboard, :map, :machines, :services, :logs]
@@ -627,7 +629,8 @@ defmodule NixSwarm.TUI do
     {:noreply, state |> delete_selected_config(view) |> note_input()}
   end
 
-  def handle_event(_event, state) do
+  def handle_event(event, state) do
+    Logger.debug("TUI unhandled event: #{inspect(event)}")
     {:noreply, state}
   end
 

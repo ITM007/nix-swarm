@@ -31,7 +31,8 @@ defmodule NixSwarm.Update do
       after_versions: version_map(post_update_state),
       version_changed?: versions_changed?(version_map(before), version_map(post_update_state)),
       completed_at:
-        NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second) |> NaiveDateTime.to_string()
+        NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second) |> NaiveDateTime.to_string(),
+      error: post_update_state && post_update_state[:error]
     }
   end
 
@@ -153,11 +154,20 @@ defmodule NixSwarm.Update do
           {:halt, current_state}
 
         attempt == attempts and current_state ->
-          raise RuntimeError, convergence_error_message(current_state.versions, expected_nodes)
+          {:halt,
+           %{
+             error: :convergence_timeout,
+             versions: current_state.versions,
+             expected_nodes: expected_nodes,
+             message: convergence_error_message(current_state.versions, expected_nodes)
+           }}
 
         attempt == attempts ->
-          raise RuntimeError,
-                "cluster update finished but the cluster did not come back online in time"
+          {:halt,
+           %{
+             error: :cluster_unreachable,
+             message: "cluster update finished but the cluster did not come back online in time"
+           }}
 
         true ->
           Process.sleep(retry_ms)
@@ -183,6 +193,7 @@ defmodule NixSwarm.Update do
 
   defp version_map(nil), do: %{}
   defp version_map(%{versions: versions}), do: versions
+  defp version_map(_other), do: %{}
 
   defp expected_target_nodes(opts, before, deploy_opts) do
     case fetch_option(opts, :target_nodes, nil) do

@@ -64,7 +64,7 @@ defmodule NixSwarm.Bootstrap do
         "    enable = true;",
         if(package_ref, do: "    package = #{package_ref};"),
         "    nodeName = \"#{node_name}\";",
-        "    cookieFile = #{nix_string_literal(cookie_file)};"
+        "    cookieFile = #{NixSwarm.nix_string_literal(cookie_file)};"
       ]
       |> Enum.reject(&is_nil/1)
       |> Enum.join("\n")
@@ -84,16 +84,6 @@ defmodule NixSwarm.Bootstrap do
       };
     }
     """
-  end
-
-  defp nix_string_literal(value) do
-    escaped =
-      value
-      |> String.replace("\\", "\\\\")
-      |> String.replace("\"", "\\\"")
-      |> String.replace("${", "\\${")
-
-    "\"#{escaped}\""
   end
 
   defp normalize_deploy_opts(opts) do

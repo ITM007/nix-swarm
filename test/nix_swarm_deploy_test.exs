@@ -2,11 +2,10 @@ defmodule NixSwarmDeployTest do
   use ExUnit.Case, async: true
 
   test "hosts parses comma-separated host list" do
-    assert NixSwarm.Deploy.hosts(hosts: "example-node-a, root@example-node-b ,10.0.0.9") == [
-             "example-node-a",
-             "root@example-node-b",
-             "10.0.0.9"
-           ]
+    source = Path.expand("..", __DIR__)
+
+    assert NixSwarm.Deploy.hosts([hosts: "example-node-a, root@example-node-b ,10.0.0.9"], source) ==
+             ["example-node-a", "root@example-node-b", "10.0.0.9"]
   end
 
   test "hosts defaults to all machine file basenames" do

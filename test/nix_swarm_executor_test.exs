@@ -65,7 +65,7 @@ defmodule NixSwarmExecutorTest do
       metrics = Executor.unit_metrics("../evil")
       assert metrics.cpu.usage_ns == 0
       assert metrics.memory.used == 0
-      assert metrics.disk.counter == 0
+      assert metrics.disk.used == 0
       assert metrics.network.counter == 0
     end
   end

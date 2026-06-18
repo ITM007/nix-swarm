@@ -4,21 +4,27 @@ defmodule NixSwarm.Service do
   alias NixSwarm.NodeName
 
   def normalize(raw) do
-    name = fetch(raw, :name) |> to_string()
-    replicas = fetch(raw, :replicas, 1) |> normalize_integer(1)
+    name = NixSwarm.fetch_value(raw, :name) |> to_string()
+    replicas = NixSwarm.fetch_value(raw, :replicas, 1) |> normalize_integer(1)
     unit_template = normalize_unit_template(preferred_template(raw), replicas)
 
     %{
       name: name,
       replicas: replicas,
       unit_template: unit_template,
-      constraints: fetch(raw, :constraints, []) |> normalize_labels(),
+      constraints: NixSwarm.fetch_value(raw, :constraints, []) |> normalize_labels(),
       allowed_nodes:
-        fetch(raw, :allowed_nodes, fetch(raw, :allowedNodes, [])) |> normalize_nodes(),
+        NixSwarm.fetch_value(raw, :allowed_nodes, NixSwarm.fetch_value(raw, :allowedNodes, []))
+        |> normalize_nodes(),
       preferred_nodes:
-        fetch(raw, :preferred_nodes, fetch(raw, :preferredNodes, [])) |> normalize_nodes(),
-      healthcheck: normalize_optional(fetch(raw, :healthcheck)),
-      settings: normalize_settings(fetch(raw, :settings, %{}))
+        NixSwarm.fetch_value(
+          raw,
+          :preferred_nodes,
+          NixSwarm.fetch_value(raw, :preferredNodes, [])
+        )
+        |> normalize_nodes(),
+      healthcheck: normalize_optional(NixSwarm.fetch_value(raw, :healthcheck)),
+      settings: normalize_settings(NixSwarm.fetch_value(raw, :settings, %{}))
     }
   end
 
@@ -42,8 +48,8 @@ defmodule NixSwarm.Service do
   def eligible?(_service, _node_info), do: true
 
   defp preferred_template(raw) do
-    case normalize_optional(fetch(raw, :unit_template)) do
-      nil -> normalize_optional(fetch(raw, :unit))
+    case normalize_optional(NixSwarm.fetch_value(raw, :unit_template)) do
+      nil -> normalize_optional(NixSwarm.fetch_value(raw, :unit))
       value -> value
     end
   end
@@ -108,11 +114,4 @@ defmodule NixSwarm.Service do
 
   defp normalize_node_name(name) when is_atom(name), do: name
   defp normalize_node_name(name), do: NodeName.to_node!(name, label: "preferred node name")
-
-  defp fetch(data, key, default \\ nil)
-
-  defp fetch(data, key, default) when is_map(data),
-    do: Map.get(data, key, Map.get(data, to_string(key), default))
-
-  defp fetch(data, key, default) when is_list(data), do: Keyword.get(data, key, default)
 end

@@ -1,5 +1,9 @@
 defmodule NixSwarm.Executor do
-  @moduledoc false
+  @moduledoc """
+  Executor abstraction for starting/stopping/monitoring systemd units.
+
+  Dispatches to adapter modules (`Systemd` or `Fake`) based on runtime config.
+  """
 
   @type unit_state ::
           :running | :starting | :restarting | :stopping | :stopped | :failed | :unknown
@@ -19,13 +23,28 @@ defmodule NixSwarm.Executor do
   # journalctl) or a path traversal sequence like "..".
   @unit_name_re ~r/\A[A-Za-z0-9_][A-Za-z0-9._@:\-]{0,254}\z/
 
+  @spec start_unit(String.t()) :: :ok | {:error, term()}
   def start_unit(unit), do: dispatch(:start_unit, unit, [unit])
+
+  @spec stop_unit(String.t()) :: :ok | {:error, term()}
   def stop_unit(unit), do: dispatch(:stop_unit, unit, [unit])
+
+  @spec restart_unit(String.t()) :: :ok | {:error, term()}
   def restart_unit(unit), do: dispatch(:restart_unit, unit, [unit])
+
+  @spec unit_status(String.t()) :: {:ok, unit_state()} | {:error, term()}
   def unit_status(unit), do: dispatch(:unit_status, unit, [unit])
+
+  @spec unit_logs(String.t(), pos_integer()) :: {:ok, String.t()} | {:error, term()}
   def unit_logs(unit, lines), do: dispatch(:unit_logs, unit, [unit, lines])
+
+  @spec unit_metrics(String.t()) :: map()
   def unit_metrics(unit), do: dispatch(:unit_metrics, unit, [unit])
+
+  @spec restart_host() :: :ok | {:error, term()}
   def restart_host, do: dispatch_host_action(:restart_host)
+
+  @spec shutdown_host() :: :ok | {:error, term()}
   def shutdown_host, do: dispatch_host_action(:shutdown_host)
 
   @doc """
@@ -33,6 +52,7 @@ defmodule NixSwarm.Executor do
   otherwise. Used to prevent argument injection on `systemctl`/`journalctl` and to block
   path traversal in the file-backed Fake executor.
   """
+  @spec validate_unit_name(term()) :: :ok | {:error, :invalid_unit_name}
   def validate_unit_name(unit) when is_binary(unit) do
     cond do
       not Regex.match?(@unit_name_re, unit) -> {:error, :invalid_unit_name}
@@ -68,7 +88,7 @@ defmodule NixSwarm.Executor do
     %{
       cpu: %{usage_ns: 0},
       memory: %{used: 0},
-      disk: %{counter: 0},
+      disk: %{used: 0},
       network: %{counter: 0},
       started_at_ns: 0
     }

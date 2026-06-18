@@ -134,13 +134,17 @@ defmodule NixSwarm.Executor.Fake do
       started_at_ns: 0
     }
 
-  defp node_root(config) do
-    Path.join(config.root, sanitize(Node.self()))
-  end
-
-  defp sanitize(node) do
+  @doc """
+  Sanitize a node name (atom) into a safe directory name by replacing
+  non-alphanumeric characters with underscores.
+  """
+  def sanitize_node_name(node) do
     node
     |> Atom.to_string()
     |> String.replace(~r/[^a-zA-Z0-9_.-]/, "_")
+  end
+
+  defp node_root(config) do
+    Path.join(config.root, sanitize_node_name(Node.self()))
   end
 end

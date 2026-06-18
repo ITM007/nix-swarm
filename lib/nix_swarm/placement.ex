@@ -1,8 +1,16 @@
 defmodule NixSwarm.Placement do
-  @moduledoc false
+  @moduledoc """
+  Deterministic service-placement engine.
+
+  Ranks eligible nodes per service using a stable hash and cycles
+  service slots across the ranking, spreading replicas when possible.
+  """
 
   alias NixSwarm.Service
 
+  @spec plan(map(), [atom()]) :: %{
+          optional(String.t()) => [%{slot: integer(), owner: atom() | nil, unit: String.t()}]
+        }
   def plan(config \\ NixSwarm.Config.current(), live_nodes \\ NixSwarm.Cluster.live_nodes()) do
     Enum.into(config.services, %{}, fn service ->
       ranked_nodes = ranked_eligible_nodes(service, live_nodes, config.nodes)
@@ -22,6 +30,7 @@ defmodule NixSwarm.Placement do
     end)
   end
 
+  @spec diagnostics(map(), [atom()]) :: [map()]
   def diagnostics(
         config \\ NixSwarm.Config.current(),
         live_nodes \\ NixSwarm.Cluster.live_nodes()
@@ -45,6 +54,7 @@ defmodule NixSwarm.Placement do
     end)
   end
 
+  @spec local_units(atom(), map(), [atom()]) :: [map()]
   def local_units(
         node \\ Node.self(),
         config \\ NixSwarm.Config.current(),
@@ -59,6 +69,7 @@ defmodule NixSwarm.Placement do
     |> Enum.filter(&(&1.owner == node))
   end
 
+  @spec owner_for_slot([atom()], integer()) :: atom() | nil
   def owner_for_slot([], _slot), do: nil
 
   def owner_for_slot(ranked_nodes, slot),

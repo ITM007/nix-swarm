@@ -58,6 +58,18 @@ let
       ]
     '';
 
+  mkIngressEntry = name: siteCfg: ''
+      [
+        {name, ${toErlTerm name}},
+        {domain, ${toErlTerm siteCfg.domain}},
+        {service, ${toErlTerm siteCfg.service}},
+        {ports, ${mkStringList siteCfg.ports}},
+        {base_port, ${toErlTerm siteCfg.basePort}},
+        {scheme, ${toErlTerm siteCfg.scheme}},
+        {default, ${toErlTerm siteCfg.default}}
+      ]
+    '';
+
   effectiveUnitTemplate = name: serviceCfg:
     if serviceCfg.unitTemplate != null then
       serviceCfg.unitTemplate
@@ -120,6 +132,9 @@ let
       {command_timeout_ms, ${toString cfg.runtime.commandTimeoutMs}},
       {generation, ${toErlTerm cfg.runtime.generation}},
       {executor, [{adapter, systemd}]}
+    ]}.
+    {ingress, [
+      ${concatMapStringsSep ",\n      " (entry: entry) (mapAttrsToList mkIngressEntry cfg.ingress.sites)}
     ]}.
   '';
 
@@ -326,6 +341,7 @@ in
           "RELEASE_DISTRIBUTION=${releaseDistribution}"
           "ERL_EPMD_PORT=${toString cfg.epmdPort}"
           ''"ERL_AFLAGS=-kernel inet_dist_listen_min ${toString cfg.distributionPort} inet_dist_listen_max ${toString cfg.distributionPort}"''
+          "NIX_SWARM_DISTRIBUTION_PORT=${toString cfg.distributionPort}"
         ];
         LoadCredential = [ "nix-swarm-cookie:${cfg.cookieFile}" ];
         ExecStart = swarmdStart;

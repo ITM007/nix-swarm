@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-06-18
+
+### Added
+
+- Healthcheck execution: services with a `healthcheck` command now have it run during each reconciliation cycle. Results (healthy/unhealthy with output) appear in `local_status` and cluster status views.
+- Ingress configuration now flows through the NixOS module into the Erlang terms config and is exposed via `NixSwarm.API.ingress_info/0`.
+- `--version` CLI flag prints the release label and exits.
+- `@spec` type annotations on all public functions in `NixSwarm.Executor` and `NixSwarm.Placement`.
+- `@doc` documentation on all 18 public functions in `NixSwarm.API`.
+- New test files: `nix_swarm_api_test.exs` (10 tests), `nix_swarm_reconciler_test.exs` (12 tests), plus 6 additional placement tests (total: 137 tests, up from 109).
+- `VERSION` file as single source of truth for the release version, read by both Nix and Elixir builds.
+- `NixSwarm.rpc_timeout_ms/0` centralizes the RPC timeout (was hardcoded `5_000` in 5 places).
+- `NixSwarm.nix_string_literal/1` and `NixSwarm.fetch_value/3` shared helpers extracted from duplicated private copies.
+- `NixSwarm.Executor.Fake.sanitize_node_name/1` public function (deduplicated from test support).
+- `packages.nix` now accepts `usePrebuiltNifs ? true` for air-gapped/offline NIF builds.
+- `services.nix-swarm.ingress.httpPort` option (default 80) replaces hardcoded port in `ingress.nix`.
+- `distributionPort` now propagates from NixOS module through `NIX_SWARM_DISTRIBUTION_PORT` env var to `Remote` probe.
+
+### Changed
+
+- `Config.load_from_path/1` returns `{:ok, terms}` / `{:error, reason}` instead of raising on parse errors.
+- `Update.wait_for_cluster_state` returns error-tagged map instead of raising on convergence timeout.
+- `API.collect_statuses` returns a safe error map for unreachable nodes instead of raw `{:badrpc, _}` tuples.
+- `default.nix` now accepts `pkgs` as an argument with `<nixpkgs>` fallback for pure evaluation.
+- TUI catch-all `handle_event` now logs unhandled events at debug level.
+
+### Fixed
+
+- Inconsistent `disk` key in `Executor.default_metrics/0` unified to `disk: %{used: 0}` across all three executor modules.
+- `persistent_term.put` in `API.version/0` guarded against table-full errors.
+- Source path validated for shell metacharacters before use in SSH deploy commands.
+- `String.to_atom/1` calls in `NodeName` now prefer `String.to_existing_atom/1` to reduce atom table exhaustion risk.
+
+### Removed
+
+- Dead code: `Remote.with_connection/2` and `Deploy.hosts/1` (never called).
+
 ## [0.3.1] - 2026-05-06
 
 ### Changed

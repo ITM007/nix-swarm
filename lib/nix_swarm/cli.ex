@@ -5,6 +5,7 @@ defmodule NixSwarm.CLI do
 
   @strict_opts [
     help: :boolean,
+    version: :boolean,
     target: :string,
     cookie: :string,
     cookie_file: :string,
@@ -37,6 +38,10 @@ defmodule NixSwarm.CLI do
     maybe_warn_cookie(opts)
 
     cond do
+      Keyword.get(opts, :version, false) ->
+        IO.puts(NixSwarm.release_label())
+        :ok
+
       Keyword.get(opts, :help, false) ->
         print_help()
         :ok

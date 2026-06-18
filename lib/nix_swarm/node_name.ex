@@ -21,7 +21,7 @@ defmodule NixSwarm.NodeName do
     case resolve_existing(node_name, candidates) do
       nil ->
         if Keyword.get(opts, :create, true) do
-          String.to_atom(node_name)
+          safe_string_to_atom(node_name)
         else
           raise ArgumentError, "unknown #{label}: #{node_name}"
         end
@@ -64,8 +64,14 @@ defmodule NixSwarm.NodeName do
         raise ArgumentError, "cookie contains unsupported characters"
 
       true ->
-        String.to_atom(cookie)
+        safe_string_to_atom(cookie)
     end
+  end
+
+  defp safe_string_to_atom(value) do
+    String.to_existing_atom(value)
+  rescue
+    ArgumentError -> String.to_atom(value)
   end
 
   defp validate_node_name!(value, label \\ "node name") do

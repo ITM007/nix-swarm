@@ -32,7 +32,7 @@ defmodule NixSwarm.Reconciler do
     if Process.whereis(__MODULE__) do
       GenServer.call(__MODULE__, :local_status, 30_000)
     else
-      build_local_status(%{})
+      build_local_status(%{}, %{})
     end
   end
 
@@ -51,7 +51,8 @@ defmodule NixSwarm.Reconciler do
         service_modes: %{},
         service_modes_synced?: true,
         monitoring_nodes?: false,
-        previous_owned_units: %{}
+        previous_owned_units: %{},
+        healthcheck_results: %{}
       }
       |> Map.merge(state)
       |> maybe_enable_node_monitoring()
@@ -73,7 +74,7 @@ defmodule NixSwarm.Reconciler do
   @impl true
   def handle_call(:local_status, _from, state) do
     state = maybe_sync_service_modes(state)
-    {:reply, build_local_status(state.service_modes), state}
+    {:reply, build_local_status(state.service_modes, state.healthcheck_results), state}
   end
 
   @impl true
@@ -179,19 +180,21 @@ defmodule NixSwarm.Reconciler do
       reply = %{
         owned_units: MapSet.to_list(desired_units),
         results: results,
-        service_modes: state.service_modes
+        service_modes: state.service_modes,
+        healthcheck: run_healthchecks(config.services, state)
       }
 
       {reply,
        %{
          state
          | previous_owned_units:
-             remember_owned_units(previous_owned_units, config.services, owned)
+             remember_owned_units(previous_owned_units, config.services, owned),
+           healthcheck_results: reply.healthcheck
        }}
     end
   end
 
-  defp build_local_status(service_modes) do
+  defp build_local_status(service_modes, healthcheck_results) do
     config = NixSwarm.Config.current()
     live_nodes = NixSwarm.Cluster.live_nodes()
     placement = Placement.plan(config, live_nodes)
@@ -219,7 +222,8 @@ defmodule NixSwarm.Reconciler do
           slots
           |> Enum.filter(&(&1.owner == Node.self()))
           |> Enum.map(& &1.slot),
-        units: slots
+        units: slots,
+        healthcheck: Map.get(healthcheck_results, service.name)
       }
     end)
   end
@@ -306,7 +310,7 @@ defmodule NixSwarm.Reconciler do
         NixSwarm.Cluster.live_nodes()
         |> Enum.reject(&(&1 == Node.self()))
         |> Enum.reduce(%{}, fn node, acc ->
-          case :rpc.call(node, __MODULE__, :local_service_modes, [], 5_000) do
+          case :rpc.call(node, __MODULE__, :local_service_modes, [], NixSwarm.rpc_timeout_ms()) do
             modes when is_map(modes) -> Map.merge(acc, modes)
             _ -> acc
           end
@@ -386,5 +390,32 @@ defmodule NixSwarm.Reconciler do
     end)
     |> Enum.uniq()
     |> Enum.sort()
+  end
+
+  defp run_healthchecks(services, state) do
+    results = state.healthcheck_results
+
+    Enum.reduce(services, results, fn service, acc ->
+      case service.healthcheck do
+        nil ->
+          acc
+
+        command when is_binary(command) ->
+          result = run_healthcheck_command(command)
+          Map.put(acc, service.name, result)
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  defp run_healthcheck_command(command) do
+    case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
+      {output, 0} -> %{healthy: true, output: String.trim(output)}
+      {output, status} -> %{healthy: false, exit_status: status, output: String.trim(output)}
+    end
+  rescue
+    error -> %{healthy: false, error: inspect(error)}
   end
 end

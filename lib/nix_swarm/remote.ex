@@ -4,18 +4,25 @@ defmodule NixSwarm.Remote do
   alias NixSwarm.NodeName
 
   @epmd_port 4369
-  @default_distribution_port 4370
+  @fallback_distribution_port 4370
   @tcp_connect_timeout_ms 1_000
   @legacy_api_module Swarm.API
 
-  defmodule Error do
-    defexception [:message]
+  defp distribution_port do
+    case Application.get_env(:nix_swarm, :distribution_port) do
+      nil ->
+        case System.get_env("NIX_SWARM_DISTRIBUTION_PORT") do
+          nil -> @fallback_distribution_port
+          value -> String.to_integer(value)
+        end
+
+      value when is_integer(value) ->
+        value
+    end
   end
 
-  def with_connection(opts, callback) when is_list(opts) do
-    target_node = connect!(opts)
-    callback.(target_node)
-    :ok
+  defmodule Error do
+    defexception [:message]
   end
 
   def options!(opts) when is_list(opts) do
@@ -130,7 +137,13 @@ defmodule NixSwarm.Remote do
     module
     |> compatible_modules()
     |> Enum.any?(fn candidate ->
-      case rpc_fun.(node, :erlang, :function_exported, [candidate, function, arity], 5_000) do
+      case rpc_fun.(
+             node,
+             :erlang,
+             :function_exported,
+             [candidate, function, arity],
+             NixSwarm.rpc_timeout_ms()
+           ) do
         true -> true
         _ -> false
       end
@@ -162,7 +175,7 @@ defmodule NixSwarm.Remote do
     []
     |> maybe_add_solution(target_resolution_solution(diagnostic))
     |> maybe_add_solution(port_solution(diagnostic, @epmd_port))
-    |> maybe_add_solution(port_solution(diagnostic, @default_distribution_port))
+    |> maybe_add_solution(port_solution(diagnostic, distribution_port()))
     |> maybe_add_solution(connection_failure_solution(diagnostic))
     |> maybe_add_solution(name_override_solution(diagnostic))
     |> maybe_add_solution(remote_api_solution(diagnostic))
@@ -406,8 +419,8 @@ defmodule NixSwarm.Remote do
       tcp_port_check(address, @epmd_port, "target epmd TCP port #{@epmd_port}"),
       tcp_port_check(
         address,
-        @default_distribution_port,
-        "target Nix-Swarm distribution TCP port #{@default_distribution_port}"
+        distribution_port(),
+        "target Nix-Swarm distribution TCP port #{distribution_port()}"
       )
     ]
   end
@@ -420,7 +433,7 @@ defmodule NixSwarm.Remote do
         detail: "skipped because the target host could not be resolved"
       },
       %{
-        label: "target Nix-Swarm distribution TCP port #{@default_distribution_port}",
+        label: "target Nix-Swarm distribution TCP port #{distribution_port()}",
         status: :info,
         detail: "skipped because the target host could not be resolved"
       }
@@ -469,7 +482,7 @@ defmodule NixSwarm.Remote do
   end
 
   defp rpc_probe(node, module, function, args) do
-    case :rpc.call(node, module, function, args, 5_000) do
+    case :rpc.call(node, module, function, args, NixSwarm.rpc_timeout_ms()) do
       {:badrpc, reason} ->
         %{status: :error, detail: inspect(reason)}
 
@@ -598,8 +611,12 @@ defmodule NixSwarm.Remote do
       %{status: :error} when port == @epmd_port ->
         "Make sure `nix-swarmd` is running on #{diagnostic.target_host} and TCP #{port} is open. If you want Nix-Swarm to manage the firewall, set `services.nix-swarm.openFirewall = true` and optionally scope it with `services.nix-swarm.firewallInterfaces`."
 
-      %{status: :error} when port == @default_distribution_port ->
-        "Make sure the target allows TCP #{port} for distributed Erlang. If you changed `services.nix-swarm.distributionPort`, open that port instead."
+      %{status: :error} = _check ->
+        if port == distribution_port() do
+          "Make sure the target allows TCP #{port} for distributed Erlang. If you changed `services.nix-swarm.distributionPort`, open that port instead."
+        else
+          nil
+        end
 
       _ ->
         nil
@@ -667,7 +684,7 @@ defmodule NixSwarm.Remote do
 
     candidates
     |> Enum.reduce_while(nil, fn candidate, _last_error ->
-      case rpc_fun.(node, candidate, function, args, 5_000) do
+      case rpc_fun.(node, candidate, function, args, NixSwarm.rpc_timeout_ms()) do
         {:badrpc, reason} ->
           if undefined_remote_function?(reason) and candidate != List.last(candidates) do
             {:cont, {:error, candidate, reason}}

@@ -80,7 +80,8 @@ defmodule NixSwarm.TestCluster do
   end
 
   def unit_state(root, node_name, unit) do
-    path = Path.join([root, sanitize(node_name), "#{unit}.state"])
+    path =
+      Path.join([root, NixSwarm.Executor.Fake.sanitize_node_name(node_name), "#{unit}.state"])
 
     case File.read(path) do
       {:ok, content} -> String.trim(content)
@@ -89,7 +90,7 @@ defmodule NixSwarm.TestCluster do
   end
 
   def machine_actions(root, node_name) do
-    path = Path.join([root, sanitize(node_name), "machine.log"])
+    path = Path.join([root, NixSwarm.Executor.Fake.sanitize_node_name(node_name), "machine.log"])
 
     case File.read(path) do
       {:ok, content} ->
@@ -117,11 +118,5 @@ defmodule NixSwarm.TestCluster do
       Process.sleep(100)
       do_wait_until(fun, deadline)
     end
-  end
-
-  defp sanitize(node) do
-    node
-    |> Atom.to_string()
-    |> String.replace(~r/[^a-zA-Z0-9_.-]/, "_")
   end
 end
