@@ -4,7 +4,7 @@ defmodule NixSwarm.NodeName do
   @max_node_name_length 255
   @max_cookie_length 64
   @node_name_regex ~r/^[A-Za-z0-9][A-Za-z0-9_.-]*(?:@[A-Za-z0-9][A-Za-z0-9_.-]*)?$/
-  @cookie_regex ~r/^[A-Za-z0-9_.-]+$/
+  @cookie_regex ~r/^[A-Za-z0-9_.\-\/+=]+$/
 
   def to_node!(value, opts \\ [])
 
