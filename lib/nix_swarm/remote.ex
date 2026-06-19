@@ -286,24 +286,17 @@ defmodule NixSwarm.Remote do
   defp ensure_cli_node(cli_node_name, node_mode) do
     unless Node.alive?() do
       System.cmd("epmd", ["-daemon"])
-      set_cli_distribution_port()
       ensure_net_kernel_started(cli_node_name, node_mode)
     else
       ensure_node_mode!(node_mode)
     end
   end
 
-  defp set_cli_distribution_port do
-    port = distribution_port()
-
-    unless Application.get_env(:kernel, :inet_dist_listen_min) do
-      Application.put_env(:kernel, :inet_dist_listen_min, port)
-      Application.put_env(:kernel, :inet_dist_listen_max, port)
-    end
-  end
-
   defp ensure_net_kernel_started(cli_node_name, node_mode) do
-    case :net_kernel.start([cli_node_name, node_mode]) do
+    dist_port = distribution_port()
+    kernel_opts = [cli_node_name, node_mode, {:inet_dist_listen_min, dist_port}, {:inet_dist_listen_max, dist_port}]
+
+    case :net_kernel.start(kernel_opts) do
       {:ok, _pid} ->
         :ok
 
