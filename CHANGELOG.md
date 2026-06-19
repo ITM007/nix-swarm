@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-06-18
+
+### Fixed
+
+- **Cookie chain**: `swarmdStart` now exports `NIX_SWARM_COOKIE` (instead of `RELEASE_COOKIE`) so the daemon wrapper's `resolve_cookie` function picks it up correctly. Previously the wrapper generated a random fallback cookie, causing "Invalid challenge reply" on every connection attempt.
+- **Operator distribution port**: the `swarm` CLI wrapper now sets `ELIXIR_ERL_OPTIONS` with `-kernel inet_dist_listen_min 4370 -kernel inet_dist_listen_max 4370` so the operator's Erlang node listens on a fixed port that remote peers can connect back to.
+- **Cookie regex**: expanded to accept base64 characters (`+`, `/`, `=`) so `openssl rand -base64` output works directly as a cookie value.
+- **`:net_kernel.start` call**: reverted to the simple `[Name, Mode]` format after several failed attempts to pass distribution port options inline (the Erlang API varies across OTP versions).
+- Cluster config files (`cluster/cluster.nix`, `cluster/services/`) are preserved across source syncs.
+
+### Changed
+
+- Default refresh interval changed from 3s to 30s (user-adjustable via `--refresh-ms`).
+- Auto-refresh no longer shows the "auto-refreshing" throbber in the TUI header.
+- Version (`release_label`) always visible in the TUI status bar.
+- `cookieFile` path accepted in base64-compatible format.
+
 ## [0.4.0] - 2026-06-18
 
 ### Added

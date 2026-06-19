@@ -31,4 +31,20 @@ defmodule NixSwarmNodeNameTest do
       NixSwarm.NodeName.cookie_atom!("")
     end
   end
+
+  test "cookie_atom! accepts base64 characters" do
+    # base64 includes +/= which the regex now allows
+    assert NixSwarm.NodeName.cookie_atom!("abc+def/ghi=") == :"abc+def/ghi="
+    assert NixSwarm.NodeName.cookie_atom!("U5c4brmJdxqk7k6beYXHOcYJLFp05ktKwcWqJm3LlGA=")
+  end
+
+  test "cookie_atom! still rejects spaces and control characters" do
+    assert_raise ArgumentError, ~r/unsupported characters/, fn ->
+      NixSwarm.NodeName.cookie_atom!("bad cookie")
+    end
+
+    assert_raise ArgumentError, ~r/unsupported characters/, fn ->
+      NixSwarm.NodeName.cookie_atom!("bad;cookie")
+    end
+  end
 end
