@@ -292,11 +292,11 @@ defmodule NixSwarm.Remote do
     end
   end
 
-  defp ensure_net_kernel_started(cli_node_name, node_mode) do
+  defp ensure_net_kernel_started(cli_node_name, _node_mode) do
     dist_port = distribution_port()
-    kernel_opts = [cli_node_name, node_mode, {:inet_dist_listen_min, dist_port}, {:inet_dist_listen_max, dist_port}]
+    dist_opts = [{:inet_dist_listen_min, dist_port}, {:inet_dist_listen_max, dist_port}]
 
-    case :net_kernel.start(kernel_opts) do
+    case :net_kernel.start([cli_node_name, dist_opts]) do
       {:ok, _pid} ->
         :ok
 
