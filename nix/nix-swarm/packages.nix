@@ -2,7 +2,7 @@
 
 let
   lib = pkgs.lib;
-  version = lib.trim (builtins.readFile ../../VERSION);
+  version = lib.removeSuffix "\n" (builtins.readFile ../../VERSION);
   nifTarget =
     if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
       "aarch64-unknown-linux-gnu"
