@@ -154,7 +154,7 @@ let
       "sname";
 
   swarmdStart = pkgs.writeShellScript "nix-swarmd-start" ''
-    export RELEASE_COOKIE="$(${pkgs.coreutils}/bin/tr -d '\n' < "$CREDENTIALS_DIRECTORY/nix-swarm-cookie")"
+    export NIX_SWARM_COOKIE="$(${pkgs.coreutils}/bin/tr -d '\n' < "$CREDENTIALS_DIRECTORY/nix-swarm-cookie")"
     exec ${cfg.package}/bin/nix-swarmd start
   '';
 in

@@ -132,6 +132,9 @@ let
     export NIX_SWARM_SOURCE="$config_root"
     resolve_cookie swarm "$@"
 
+    # Fix distribution port so remote peers can connect back to the operator
+    export ELIXIR_ERL_OPTIONS="-kernel inet_dist_listen_min 4370 -kernel inet_dist_listen_max 4370 ''${ELIXIR_ERL_OPTIONS:-}"
+
     exec ${release}/bin/nix_swarm eval 'NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
   '';
 
