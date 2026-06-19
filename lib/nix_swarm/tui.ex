@@ -14,7 +14,7 @@ defmodule NixSwarm.TUI do
   require Logger
 
   @default_lines 50
-  @default_refresh_ms 3_000
+  @default_refresh_ms 30_000
   @views [:dashboard, :map, :machines, :services, :logs]
   @log_filters [:all, :errors, :selected_machine, :selected_service]
   @focusable_containers %{
@@ -1870,7 +1870,7 @@ defmodule NixSwarm.TUI do
 
   defp status_widget(state) do
     throbber =
-      if state.loading do
+      if state.loading and not auto_refresh_busy?(state.busy) do
         %Throbber{
           label: " #{busy_label(state.busy)}",
           step: state.tick_count,
@@ -1883,16 +1883,13 @@ defmodule NixSwarm.TUI do
       end
 
     target_text =
-      "target: #{state.remote.target} | refreshed: #{state.last_refresh_at || "pending"} | data: #{stale_label(state)}"
+      "target: #{state.remote.target} | refreshed: #{state.last_refresh_at || "pending"} | data: #{stale_label(state)} | #{NixSwarm.release_label()}"
 
-    # We return a paragraph but could use a layout. For simplicity, just return the throbber or a paragraph.
-    # Actually, let's put it in a block.
-    if state.loading do
-      %{throbber | block: panel_block(target_text, :dark_gray)}
-    else
-      %{throbber | block: panel_block(target_text, :dark_gray)}
-    end
+    %{throbber | block: panel_block(target_text, :dark_gray)}
   end
+
+  defp auto_refresh_busy?({:refresh, :auto}), do: true
+  defp auto_refresh_busy?(_), do: false
 
   defp cluster_issue_widget(state) do
     %Paragraph{

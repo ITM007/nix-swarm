@@ -205,7 +205,7 @@ defmodule NixSwarm.CLI do
 
     TUI options:
       --lines N                  default log line count (default: 50)
-      --refresh-ms N             auto-refresh interval in milliseconds (default: 3000)
+      --refresh-ms N             auto-refresh interval in milliseconds (default: 30000)
       --source PATH              local Nix-Swarm source root used for file editing/apply/update
       --cluster-file PATH        override the cluster file path
       --machines-dir PATH        override the machines directory
