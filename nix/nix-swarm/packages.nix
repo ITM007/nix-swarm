@@ -2,14 +2,14 @@
 
 let
   lib = pkgs.lib;
-  version = lib.removeSuffix "\n" (builtins.readFile ../../VERSION);
+  version = "0.4.1";
   nifTarget =
     if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
       "aarch64-unknown-linux-gnu"
     else
       "x86_64-unknown-linux-gnu";
 
-  mixDepsHash = lib.fakeHash; # force recalculation on next build
+  mixDepsHash = lib.fakeHash;
 
   src = lib.cleanSourceWith {
     src = ../..;
