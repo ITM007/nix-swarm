@@ -204,16 +204,18 @@ defmodule NixSwarm.CLI do
   end
 
   defp print_help do
-    command = NixSwarm.operator_command()
     launch = NixSwarm.operator_launch()
 
     IO.puts("""
     Nix-Swarm
 
     Launch the operator TUI:
-      #{command}
+      #{NixSwarm.operator_command()}
       #{launch}
       #{launch} --source /path/to/checkout
+
+    Bootstrap cluster nodes from cluster.nix:
+      nix-swarm cluster ensure
 
     Remote target:
       --target NODE              remote Nix-Swarm node to connect to

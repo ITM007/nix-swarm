@@ -12,10 +12,16 @@ defmodule NixSwarm.ConfigFiles do
       source: deploy_defaults.source,
       cluster_file: deploy_defaults.cluster_file,
       machines_dir: deploy_defaults.machines_dir,
-      services_dir: Path.join(deploy_defaults.source, "cluster/services"),
+      services_dir: default_services_dir(deploy_defaults.source),
       remote_path: deploy_defaults.remote_path,
       nixos_dir: deploy_defaults.nixos_dir
     })
+  end
+
+  defp default_services_dir(source) do
+    flat = Path.join(source, "services")
+    legacy = Path.join(source, "cluster/services")
+    if File.dir?(flat), do: flat, else: legacy
   end
 
   def normalize_paths(paths) when is_map(paths) do
@@ -23,7 +29,13 @@ defmodule NixSwarm.ConfigFiles do
     deploy_defaults = NixSwarm.Deploy.defaults(source)
     default_cluster_file = deploy_defaults.cluster_file
     default_machines_dir = deploy_defaults.machines_dir
-    default_services_dir = Path.join(Path.dirname(default_cluster_file), "services")
+
+    default_services_dir =
+      if File.dir?(Path.join(source, "services")) do
+        Path.join(source, "services")
+      else
+        Path.join(source, "cluster/services")
+      end
 
     %{
       source: source,

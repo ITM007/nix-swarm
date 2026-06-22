@@ -125,20 +125,28 @@ defmodule NixSwarm.Deploy do
 
   defp default_cluster_file(source) do
     source = Path.expand(source)
-    top_level = Path.join(source, "cluster/cluster.nix")
+    # Flat layout: cluster.nix at root, otherwise cluster/cluster.nix (legacy)
+    flat = Path.join(source, "cluster.nix")
+    nested = Path.join(source, "cluster/cluster.nix")
     examples = Path.join(source, "examples/config/cluster/cluster.nix")
-    if File.exists?(top_level), do: top_level, else: examples
+
+    cond do
+      File.exists?(flat) -> flat
+      File.exists?(nested) -> nested
+      true -> examples
+    end
   end
 
   defp default_machines_dir(source) do
     source = Path.expand(source)
-    top_level = Path.join(source, "machines")
+    flat = Path.join(source, "machines.nix")
+    nested = Path.join(source, "machines")
     examples = Path.join(source, "examples/config/machines")
 
-    if machine_files_from_dir(top_level) != [] do
-      top_level
-    else
-      examples
+    cond do
+      File.exists?(flat) -> Path.dirname(flat)
+      machine_files_from_dir(nested) != [] -> nested
+      true -> examples
     end
   end
 

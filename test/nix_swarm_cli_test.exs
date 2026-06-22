@@ -10,8 +10,8 @@ defmodule NixSwarmCLITest do
       end)
 
     assert output =~ "Launch the operator TUI"
-    assert output =~ "\n  swarm\n"
-    assert output =~ "swarm --target NODE"
+    assert output =~ "\n  nix-swarm\n"
+    assert output =~ "nix-swarm --target NODE"
     assert output =~ "--cluster-file PATH"
     assert output =~ "--machines-dir PATH"
     assert output =~ "--services-dir PATH"
@@ -51,8 +51,8 @@ defmodule NixSwarmCLITest do
 
     assert message =~ "`status` was removed from the public command surface"
     assert message =~ "Nix-Swarm is TUI-first in #{NixSwarm.release_label()} alpha"
-    assert message =~ "\n  swarm\n"
-    assert message =~ "swarm --target NODE"
+    assert message =~ "\n  nix-swarm\n"
+    assert message =~ "nix-swarm --target NODE"
   end
 
   test "invalid numeric options return actionable errors" do

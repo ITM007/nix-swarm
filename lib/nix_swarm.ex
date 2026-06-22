@@ -3,7 +3,8 @@ defmodule NixSwarm do
   Leaderless Nix-defined service orchestration for small NixOS clusters.
   """
 
-  @operator_command "swarm"
+  # Primary binary name: nix-swarm for new installs; swarm is kept as compat symlink
+  @operator_command "nix-swarm"
 
   @rpc_timeout_ms 5_000
 

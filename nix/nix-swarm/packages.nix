@@ -126,7 +126,7 @@ let
 
     chmod -R u+w "$config_root"
     export NIX_SWARM_SOURCE="$config_root"
-    resolve_cookie swarm "$@"
+    resolve_cookie nix-swarm "$@"
 
     # Fix distribution port so remote peers can connect back to the operator
     export ELIXIR_ERL_OPTIONS="-kernel inet_dist_listen_min 4370 -kernel inet_dist_listen_max 4370 ''${ELIXIR_ERL_OPTIONS:-}"
@@ -162,8 +162,8 @@ let
         chmod -R u+w "$out/share/nix-swarm/template"
         cp -a "$out/share/nix-swarm/template/examples/config/cluster" "$out/share/nix-swarm/template/cluster"
         cp -a "$out/share/nix-swarm/template/examples/config/machines" "$out/share/nix-swarm/template/machines"
-        install -Dm755 ${cliWrapper} "$out/bin/swarm"
-        ln -s swarm "$out/bin/nix-swarm"
+        install -Dm755 ${cliWrapper} "$out/bin/nix-swarm"
+        ln -s nix-swarm "$out/bin/swarm"
       ''}
 
       ${lib.optionalString includeCluster ''
