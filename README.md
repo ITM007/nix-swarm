@@ -15,6 +15,7 @@ Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a contain
 - **Systemd-native runtime** instead of containers
 - **Cluster + per-machine/service metrics**
 - **Built-in config editing** from the TUI, with your system editor and return-to-TUI flow
+- **One-command bootstrap**: add a machine to `cluster.nix`, run `swarm cluster ensure`, and it SSHes in, sets up the flake, syncs source, copies the cookie, and rebuilds
 
 ## Security model
 
@@ -121,6 +122,16 @@ From a local checkout during development:
 mix run -e 'NixSwarm.CLI.main(System.argv())' -- --target nix-swarm@example-node-a.local
 ```
 
+## Bootstrapping remote machines
+
+Add a machine to `~/.config/nix-swarm/cluster/cluster.nix` with a `deployHost`, then run:
+
+```bash
+swarm cluster ensure
+```
+
+This connects to every `deployHost` in the cluster config, checks whether `nix-swarmd` is running, and bootstraps any machine that isn't set up — it creates the NixOS flake skeleton, syncs the swarm source, copies the shared cookie, and rebuilds. Use `--force` to update machines that are already running.
+
 ## Starter configs
 
 The repository keeps tracked starter files under `examples/config/`. The packaged operator mirrors them into `~/.config/nix-swarm/` on first launch, where you edit the live copy.
@@ -218,11 +229,12 @@ That seeded tree also includes `~/.config/nix-swarm/nix/nix-swarm/module.nix` as
 
 ## Troubleshooting
 
-- **Cannot connect to the target:** confirm `nix-swarmd` is running, the cookie matches, and TCP `4369` plus `4370` are reachable from the operator machine.
-- **Longname target cannot reach the operator:** relaunch with `--name nix-swarmctl@LAN_IP` so the target can resolve and connect back to the control node.
+- **Cannot connect to the target:** confirm `nix-swarmd` is running, the cookie matches, and TCP `4369` plus `4370` are reachable from the operator machine. Run `swarm cluster ensure` to bootstrap a machine that is defined in `cluster.nix` but not yet set up.
+- **Longname target cannot reach the operator:** relaunch with `--name nix-swarmctl@LAN_IP` so the target can resolve and connect back to the control node. The operator's distribution port must also be reachable from managed nodes (TCP `4370` by default).
+- **"Invalid challenge reply":** the Erlang cookie does not match between operator and target. Verify the cookie file content is identical on both machines. Use a simple alphanumeric cookie or a base64 value (supported since v0.4.1).
 - **Apply/update hangs on SSH:** pre-populate `known_hosts`, ensure passwordless root or passwordless sudo works, and verify deploy hosts in `~/.config/nix-swarm/cluster/cluster.nix`.
 - **Mixed live versions after an update:** check the **Machines** or **Dashboard** views. Nix-Swarm marks version mismatches as an available update and keeps the rollout pending until the targeted nodes converge to one version.
-- **Cookie errors:** prefer `NIX_SWARM_COOKIE_FILE`; avoid `--cookie` because command-line arguments can be visible in process listings.
+- **Cookie errors:** prefer `NIX_SWARM_COOKIE_FILE`; avoid `--cookie` because command-line arguments can be visible in process listings. Base64 cookies (with `+`, `/`, `=`) are supported since v0.4.1.
 
 ## More Screenshots
 ![Nix-Swarm map view](docs/screenshots/map.png)

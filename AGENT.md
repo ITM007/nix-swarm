@@ -267,6 +267,16 @@ Remote log tail helper used by the TUI logs view.
 
 ASCII art generator for the cluster topology map (used by both TUI and legacy CLI).
 
+### `NixSwarm.Cluster.Ensure`
+
+Declarative cluster bootstrapper.
+
+Responsibilities:
+- reads `cluster.nix` for `nodes.<name>.deployHost` entries
+- SSHes to each deploy host, checks if `nix-swarmd` is running
+- bootstraps fresh machines: creates NixOS flake skeleton, syncs swarm source, generates machine config, copies cookie, rebuilds
+- invoked via `swarm cluster ensure` or programmatically via `NixSwarm.Cluster.Ensure.run/1`
+
 ## Files and directories that matter most
 
 - `mix.exs` - project definition and escript entrypoint; single dep `ex_ratatui` for the TUI
@@ -287,6 +297,7 @@ ASCII art generator for the cluster topology map (used by both TUI and legacy CL
 - `lib/nix_swarm/service.ex` - service-spec normalization
 - `lib/nix_swarm/deploy.ex` - SSH rollout helper
 - `lib/nix_swarm/bootstrap.ex` - machine bootstrap generator
+- `lib/nix_swarm/cluster/ensure.ex` - declarative cluster bootstrapper (`swarm cluster ensure`)
 - `test/integration/three_node_cluster_test.exs` - strongest behavioral regression test
 - `test/support/test_cluster.ex` - peer-cluster test harness
 - `scripts/verify_cluster.exs` - manual end-to-end three-node verification
