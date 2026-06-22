@@ -9,7 +9,11 @@ let
     else
       "x86_64-unknown-linux-gnu";
 
-  mixDepsHash = lib.fakeHash;
+  mixDepsHash =
+    if lib.versionAtLeast pkgs.elixir.version "1.18.0" then
+      "sha256-1COSMxulZKTRsLbYEihvkoC+mtLN8fXPD9ubOZHVmX8="
+    else
+      "sha256-vywmOaqNrGlWeE3itE85MDufVVhITz3xZmWo68rnmj4=";
 
   src = lib.cleanSourceWith {
     src = ../..;
