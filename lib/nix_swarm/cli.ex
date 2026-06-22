@@ -10,6 +10,8 @@ defmodule NixSwarm.CLI do
     cookie: :string,
     cookie_file: :string,
     name: :string,
+    template: :string,
+    force: :boolean,
     lines: :integer,
     refresh_ms: :integer,
     source: :string,
@@ -66,6 +68,51 @@ defmodule NixSwarm.CLI do
         end)
 
         if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
+
+      args == ["cluster", "init"] ->
+        IO.puts("Initializing nix-swarm cluster...\n")
+        IO.puts("This will bootstrap all machines defined in cluster.nix.\n")
+
+        result =
+          NixSwarm.Cluster.Ensure.run(
+            Keyword.take(opts, [:source, :cluster_file, :cookie, :force])
+          )
+
+        Enum.each(result.nodes, fn node ->
+          IO.puts("  #{node.node}: #{node.action} (#{node.message || "ok"})")
+        end)
+
+        IO.puts("\nTip: ensure ports 4369 and 4370 are open on this machine's firewall")
+
+        IO.puts("  On NixOS: add 4369 and 4370 to networking.firewall.allowedTCPPorts")
+
+        IO.puts("  On other: ufw allow 4369/tcp && ufw allow 4370/tcp")
+
+      args == ["service", "create"] ->
+        name = Keyword.fetch!(opts, :name)
+        template = Keyword.get(opts, :template, "web")
+        paths = NixSwarm.ConfigFiles.defaults()
+        services_dir = paths.services_dir
+
+        case NixSwarm.Service.Templates.generate(template, name) do
+          {:ok, tpl} ->
+            output = Path.join(services_dir, tpl.filename)
+            File.mkdir_p!(services_dir)
+            File.write!(output, tpl.content)
+            IO.puts("Created #{output}")
+            IO.puts("Service: #{name}")
+            IO.puts("Template: #{template} — #{tpl.description}")
+            IO.puts("Next: add the service to your cluster.nix file")
+            :ok
+
+          {:error, msg} ->
+            IO.puts(:stderr, msg)
+            {:error, msg}
+        end
+
+      args == ["service", "list"] ->
+        IO.puts("Available service templates:\n#{NixSwarm.Service.Templates.list()}")
+        :ok
 
       args in [[], ["tui"], ["help"]] ->
         if args == ["help"] do

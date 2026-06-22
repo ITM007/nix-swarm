@@ -192,6 +192,12 @@ in
       description = "Fixed TCP port used by distributed Erlang for Nix-Swarm peer and operator connections.";
     };
 
+    enableMDNS = mkOption {
+      type = types.bool;
+      default = false;
+      description = "When enabled, publish each service via mDNS (Avahi) so services are discoverable as {service-name}.local.";
+    };
+
     openFirewall = mkOption {
       type = types.bool;
       default = false;
@@ -325,6 +331,29 @@ in
         });
       })
     ];
+
+    services.avahi = mkIf cfg.enableMDNS {
+      enable = true;
+      nssmdns = true;
+      publish.enable = true;
+      publish.userServices = false;
+      publish.domain = "local";
+      extraServiceFiles =
+        mkMerge (mapAttrsToList (name: serviceCfg:
+          let
+            ports = attrByPath [ "settings" "port" ] (attrByPath [ "settings" "http_port" ] 0 serviceCfg) serviceCfg;
+            port = if builtins.isInt ports then ports else builtins.head ports;
+          in
+          mkIf (port > 0) {
+            "${name}" = {
+              name = name;
+              serviceType = "_http._tcp";
+              port = port;
+              txtRecords = { "path" = "/"; };
+            };
+          }
+        ) cfg.services);
+    };
 
     environment.systemPackages = [ cfg.package ];
 

@@ -14,7 +14,7 @@ defmodule NixSwarm.Cluster.Ensure do
     paths = ConfigFiles.normalize_paths(%{})
     source = Keyword.get(opts, :source, paths.source)
     cluster_file = Keyword.get(opts, :cluster_file, paths.cluster_file)
-    cookie = Keyword.get(opts, :cookie) || read_cookie_from_file(paths)
+    cookie = Keyword.get(opts, :cookie) || ensure_cookie(paths)
     force? = Keyword.get(opts, :force, false)
 
     with {:ok, nodes} <- parse_cluster_nodes(cluster_file) do
@@ -238,13 +238,35 @@ defmodule NixSwarm.Cluster.Ensure do
     end
   end
 
-  defp read_cookie_from_file(paths) do
+  defp ensure_cookie(paths) do
     cookie_file = ConfigFiles.local_cookie_file(paths)
 
-    case cookie_file do
-      nil -> nil
-      path -> path |> File.read!() |> String.trim()
+    if cookie_file && File.exists?(cookie_file) do
+      cookie_file |> File.read!() |> String.trim()
+    else
+      cookie = generate_cookie()
+      save_cookie(paths, cookie)
+      cookie
     end
+  end
+
+  defp generate_cookie do
+    # Simple alphanumeric cookie — no base64 chars to avoid regex issues
+    16
+    |> :crypto.strong_rand_bytes()
+    |> Base.url_encode64(padding: false)
+    |> String.replace(~r/[^A-Za-z0-9]/, "")
+    |> String.slice(0, 16)
+  end
+
+  defp save_cookie(paths, cookie) do
+    secrets_dir = Path.join(paths.source, "secrets")
+    cookie_path = Path.join(secrets_dir, "swarm.cookie")
+    File.mkdir_p!(secrets_dir)
+    File.write!(cookie_path, cookie)
+    IO.puts(:stderr, "  generated new swarm cookie at #{cookie_path}")
+
+    cookie_path
   end
 
   defp shell_escape(value), do: "'" <> String.replace(to_string(value), "'", "'\"'\"'") <> "'"
