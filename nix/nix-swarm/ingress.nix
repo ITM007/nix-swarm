@@ -26,12 +26,13 @@ let
       upstreamEntries =
         lib.concatMapStringsSep "\n" (host:
           lib.concatMapStringsSep "\n" (port:
-            "    server ${host}:${toString port} max_fails=3 fail_timeout=5s;"
+            "    server ${host}:${toString port} max_fails=1 fail_timeout=10s slow_start=5s;"
           ) (portsFor site)
         ) peerHosts;
     in
     ''
       upstream ${upstreamName site} {
+        zone ${upstreamName site} 64k;
 ${upstreamEntries}
         keepalive 32;
       }
@@ -48,6 +49,9 @@ ${upstreamEntries}
       extraConfig = ''
         client_max_body_size ${site.clientMaxBodySize};
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+        proxy_next_upstream_tries 3;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
 ${lib.optionalString (site.extraConfig != "") site.extraConfig}
       '';
     };

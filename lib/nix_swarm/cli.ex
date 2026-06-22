@@ -110,6 +110,39 @@ defmodule NixSwarm.CLI do
             {:error, msg}
         end
 
+      args == ["service", "add"] ->
+        name = Keyword.fetch!(opts, :name)
+        template = Keyword.get(opts, :template, "web")
+        replicas = Keyword.get(opts, :replicas, 1)
+        constraints = Keyword.get(opts, :constraints, [])
+        paths = NixSwarm.ConfigFiles.defaults()
+
+        # First, add the service entry to cluster.nix
+        case NixSwarm.ConfigFiles.add_service(paths, name,
+          replicas: replicas,
+          constraints: constraints
+        ) do
+          {:ok, output} ->
+            # Then overwrite with template content if template exists
+            case NixSwarm.Service.Templates.generate(template, name) do
+              {:ok, tpl} ->
+                File.write!(output, tpl.content)
+                IO.puts("Created #{output}")
+                IO.puts("Service: #{name}")
+                IO.puts("Template: #{template} — #{tpl.description}")
+                IO.puts("Added to #{paths.cluster_file}")
+                :ok
+
+              {:error, msg} ->
+                IO.puts(:stderr, msg)
+                {:error, msg}
+            end
+
+          {:error, msg} ->
+            IO.puts(:stderr, msg)
+            {:error, msg}
+        end
+
       args == ["service", "list"] ->
         IO.puts("Available service templates:\n#{NixSwarm.Service.Templates.list()}")
         :ok
