@@ -164,8 +164,12 @@ let
         mkdir -p "$out/share/nix-swarm"
         cp -a ${src} "$out/share/nix-swarm/template"
         chmod -R u+w "$out/share/nix-swarm/template"
-        cp -a "$out/share/nix-swarm/template/examples/config/cluster" "$out/share/nix-swarm/template/cluster"
+        # Seed flat config structure (cluster.nix at root, services/ at root)
+        rm -rf "$out/share/nix-swarm/template/cluster"
+        cp -a "$out/share/nix-swarm/template/examples/config/cluster/cluster.nix" "$out/share/nix-swarm/template/cluster.nix"
+        cp -a "$out/share/nix-swarm/template/examples/config/cluster/services" "$out/share/nix-swarm/template/services"
         cp -a "$out/share/nix-swarm/template/examples/config/machines" "$out/share/nix-swarm/template/machines"
+        mkdir -p "$out/share/nix-swarm/template/secrets"
         install -Dm755 ${cliWrapper} "$out/bin/nix-swarm"
         ln -s nix-swarm "$out/bin/swarm"
       ''}
