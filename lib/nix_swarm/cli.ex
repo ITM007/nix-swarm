@@ -46,6 +46,27 @@ defmodule NixSwarm.CLI do
         print_help()
         :ok
 
+      args == ["cluster", "ensure"] ->
+        IO.puts("Ensuring cluster nodes are running nix-swarmd...\n")
+
+        result =
+          NixSwarm.Cluster.Ensure.run(
+            Keyword.take(opts, [:source, :cluster_file, :cookie, :force])
+          )
+
+        Enum.each(result.nodes, fn node ->
+          case node.status do
+            :ok ->
+              IO.puts("  #{node.node}: #{node.action} (#{node.message || "ok"})")
+
+            :error ->
+              IO.puts("  #{node.node}: ERROR - #{node.message}")
+              IO.puts(:stderr, "error: #{node.node}: #{node.message}")
+          end
+        end)
+
+        if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
+
       args in [[], ["tui"], ["help"]] ->
         if args == ["help"] do
           print_help()
