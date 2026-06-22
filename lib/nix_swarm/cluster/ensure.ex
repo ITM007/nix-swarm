@@ -241,12 +241,20 @@ defmodule NixSwarm.Cluster.Ensure do
   defp ensure_cookie(paths) do
     cookie_file = ConfigFiles.local_cookie_file(paths)
 
-    if cookie_file && File.exists?(cookie_file) do
-      cookie_file |> File.read!() |> String.trim()
-    else
-      cookie = generate_cookie()
-      save_cookie(paths, cookie)
-      cookie
+    cond do
+      # Try age-encrypted cookie first (GitOps workflow)
+      cookie_file && File.exists?(cookie_file <> ".age") ->
+        NixSwarm.Secrets.decrypt_age(cookie_file <> ".age")
+
+      # Try plaintext cookie
+      cookie_file && File.exists?(cookie_file) ->
+        cookie_file |> File.read!() |> String.trim()
+
+      # Generate a new cookie
+      true ->
+        cookie = generate_cookie()
+        save_cookie(paths, cookie)
+        cookie
     end
   end
 

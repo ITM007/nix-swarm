@@ -35,7 +35,7 @@ defmodule NixSwarm.Cluster do
   @impl true
   def init(state) do
     state =
-      %{failed_peers: %{}, monitoring_nodes?: false}
+      %{failed_peers: %{}, monitoring_nodes?: false, mdns_discovered: %{peers: [], timestamp: 0}}
       |> Map.merge(state)
       |> maybe_enable_node_monitoring()
 
@@ -65,7 +65,13 @@ defmodule NixSwarm.Cluster do
     state = maybe_enable_node_monitoring(state)
 
     if Node.alive?() and not NodeName.control_node?(Node.self()) do
-      Enum.reduce(NixSwarm.Config.peers(), state, fn peer, acc ->
+      discovered = discover_mdns_peers(state)
+
+      all_peers =
+        (NixSwarm.Config.peers() ++ discovered)
+        |> Enum.uniq()
+
+      Enum.reduce(all_peers, state, fn peer, acc ->
         cond do
           peer == Node.self() ->
             acc
@@ -132,5 +138,41 @@ defmodule NixSwarm.Cluster do
 
   defp clear_failed_peer(state, peer) do
     %{state | failed_peers: Map.delete(state.failed_peers, peer)}
+  end
+
+  defp discover_mdns_peers(%{mdns_discovered: %{peers: peers, timestamp: ts}}) do
+    now_ms = System.monotonic_time(:millisecond)
+
+    if ts > now_ms - 30_000 do
+      peers
+    else
+      run_avahi_browse()
+    end
+  end
+
+  defp discover_mdns_peers(state) do
+    case run_avahi_browse() do
+      [] -> state.mdns_discovered.peers
+      new_peers -> new_peers
+    end
+  end
+
+  defp run_avahi_browse do
+    case System.cmd("avahi-browse", ["-t", "_nix-swarm._tcp", "--resolve", "-p"],
+         stderr_to_stdout: true) do
+      {output, 0} ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.filter(&String.starts_with?(&1, "=;"))
+        |> Enum.map(fn line ->
+          parts = String.split(line, ";")
+          ip = Enum.at(parts, 7) || Enum.at(parts, 6)
+          String.to_atom("nix-swarm@#{ip}")
+        end)
+        |> Enum.uniq()
+
+      _ ->
+        []
+    end
   end
 end

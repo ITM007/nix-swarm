@@ -344,7 +344,7 @@ in
             ports = attrByPath [ "settings" "port" ] (attrByPath [ "settings" "http_port" ] 0 serviceCfg) serviceCfg;
             port = if builtins.isInt ports then ports else builtins.head ports;
           in
-          mkIf (port > 0) {
+          mkIf (port > 0 && cfg.enableMDNS) {
             "${name}" = {
               name = name;
               serviceType = "_http._tcp";
@@ -352,7 +352,15 @@ in
               txtRecords = { "path" = "/"; };
             };
           }
-        ) cfg.services);
+        ) cfg.services) // {
+          # Publish the nix-swarm node itself for auto-discovery
+          nix-swarm = {
+            name = "nix-swarm-${cfg.nodeName}";
+            serviceType = "_nix-swarm._tcp";
+            port = cfg.distributionPort;
+            txtRecords = { "node" = cfg.nodeName; };
+          };
+        };
     };
 
     environment.systemPackages = [ cfg.package ];

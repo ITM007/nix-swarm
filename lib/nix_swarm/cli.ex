@@ -119,9 +119,9 @@ defmodule NixSwarm.CLI do
 
         # First, add the service entry to cluster.nix
         case NixSwarm.ConfigFiles.add_service(paths, name,
-          replicas: replicas,
-          constraints: constraints
-        ) do
+               replicas: replicas,
+               constraints: constraints
+             ) do
           {:ok, output} ->
             # Then overwrite with template content if template exists
             case NixSwarm.Service.Templates.generate(template, name) do
@@ -146,6 +146,98 @@ defmodule NixSwarm.CLI do
       args == ["service", "list"] ->
         IO.puts("Available service templates:\n#{NixSwarm.Service.Templates.list()}")
         :ok
+
+      args == ["service", "logs"] ->
+        service_name = Keyword.fetch!(opts, :name)
+        lines = Keyword.get(opts, :lines, 50)
+        remote_opts = Keyword.take(opts, [:target, :cookie, :cookie_file, :name])
+
+        with {:ok, target_node} <- connect_remote(remote_opts),
+             logs <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :logs, [service_name, lines]) do
+          Enum.each(logs, fn {node, entries} ->
+            IO.puts("=== #{node} ===")
+
+            if is_list(entries) do
+              Enum.each(entries, fn
+                %{logs: log_text} -> IO.puts(log_text)
+                other -> IO.inspect(other)
+              end)
+            else
+              IO.puts(inspect(entries))
+            end
+          end)
+
+          :ok
+        else
+          {:error, msg} ->
+            IO.puts(:stderr, "error: #{msg}")
+            {:error, msg}
+        end
+
+      args == ["cluster", "status"] ->
+        remote_opts = Keyword.take(opts, [:target, :cookie, :cookie_file, :name])
+
+        with {:ok, target_node} <- connect_remote(remote_opts),
+             overview <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_overview, []) do
+          members = overview.members
+          status = overview.status
+
+          IO.puts("Cluster status — #{members.queried_node}")
+          IO.puts("")
+
+          IO.puts(
+            "Nodes (#{length(members.live_nodes)} live, #{length(members.configured_nodes)} configured):"
+          )
+
+          Enum.each(members.live_nodes, fn node ->
+            node_status = Enum.find(status.nodes, fn {n, _} -> n == node end)
+            version = if node_status, do: elem(node_status, 1)[:release_version] || "?", else: "?"
+            IO.puts("  #{node}  v#{version}")
+          end)
+
+          IO.puts("")
+          IO.puts("Services:")
+
+          Enum.each(status.placements, fn {svc, slots} ->
+            owners = slots |> Enum.map(& &1.owner) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+            IO.puts(
+              "  #{svc}  #{length(slots)} replicas on #{Enum.map_join(owners, ", ", &Atom.to_string/1)}"
+            )
+          end)
+
+          IO.puts("")
+          diagnostics = Enum.filter(status.placement_diagnostics || [], &(&1.severity != :ok))
+
+          if diagnostics != [] do
+            IO.puts("Warnings/errors:")
+
+            Enum.each(diagnostics, fn d ->
+              IO.puts("  [#{d.severity}] #{d.message}")
+            end)
+          end
+
+          :ok
+        else
+          {:error, msg} ->
+            IO.puts(:stderr, "error: #{msg}")
+            {:error, msg}
+        end
+
+      args == ["cluster", "update"] ->
+        IO.puts("Syncing and rebuilding all cluster nodes...\n")
+
+        result =
+          NixSwarm.Cluster.Ensure.run(
+            Keyword.take(opts, [:source, :cluster_file, :cookie, :force])
+            |> Keyword.put(:force, true)
+          )
+
+        Enum.each(result.nodes, fn node ->
+          IO.puts("  #{node.node}: #{node.action} (#{node.message || "ok"})")
+        end)
+
+        if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
 
       args in [[], ["tui"], ["help"]] ->
         if args == ["help"] do
@@ -260,6 +352,16 @@ defmodule NixSwarm.CLI do
   defp present_env(nil), do: nil
   defp present_env(""), do: nil
   defp present_env(value), do: value
+
+  defp connect_remote(opts) when is_list(opts) do
+    try do
+      target_node = NixSwarm.Remote.connect!(opts)
+      {:ok, target_node}
+    rescue
+      e in [NixSwarm.Remote.Error, ArgumentError, RuntimeError] ->
+        {:error, Exception.message(e)}
+    end
+  end
 
   defp legacy_command_error(args) do
     command = Enum.join(args, " ")
