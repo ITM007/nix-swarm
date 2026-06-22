@@ -1,5 +1,60 @@
 # Nix-Swarm agent handbook
 
+## Outline
+
+1. **Project purpose** — leaderless Elixir/OTP orchestrator for small NixOS clusters
+2. **Model** — Nix defines state, every node runs same runtime, deterministic placement, systemd units only
+3. **Implementation status** — OTP app, TUI, placement, reconciler, systemd/fake executors, CLI, bootstrap, deploy, update, ingress, Nix packages
+4. **Scope boundaries** — v1 stateless only, Nix is truth, leaderless, eventually consistent, no stateful HA
+5. **Architecture: top-level flow** — Nix renders config → OTP app → Cluster connects → Placement computes → Reconciler converges → API exposes → Remote RPC → CLI/TUI
+6. **Architecture: invariants** — only configured peers, deterministic local placement, periodic idempotent reconciliation, executor adapter, replica spreading
+7. `NixSwarm.Application` — supervision tree (Cluster, Reconciler)
+8. `NixSwarm.Config` — runtime config loader, Erlang terms format, normalize into peers/nodes/services/runtime
+9. `NixSwarm.Service` — replica normalization, constraints, unit templates, slot enumeration
+10. `NixSwarm.Cluster` — peer connectivity loop, live peer set, ignore non-cluster nodes
+11. `NixSwarm.Placement` — deterministic ownership, stable hash ranking, slot cycling, replica spreading
+12. `NixSwarm.Reconciler` — periodic convergence, start owned / stop unowned, service modes, healthcheck execution
+13. `NixSwarm.Executor` — adapter abstraction, validate_unit_name, dispatch to Systemd or Fake
+14. `NixSwarm.Executor.Systemd` — systemctl start/stop/restart, journalctl logs, metrics via systemd properties
+15. `NixSwarm.Executor.Fake` — file-backed executor for tests, sanitize_node_name
+16. `NixSwarm.API` — public RPC surface: local_status, cluster_status, cluster_members, cluster_overview, reconcile, service actions, logs, metrics, network_info, ingress_info
+17. `NixSwarm.CLI` — escript entrypoint, --version, --target, --cookie-file, cluster ensure subcommand
+18. `NixSwarm.TUI` — ex_ratatui dashboard (~172KB): Dashboard, Map, Machines, Services, Logs, Rollout, Edit views
+19. `NixSwarm.Remote` — distributed Erlang RPC, connect!/diagnose, port checks, cookie resolution, distribution_port
+20. `NixSwarm.ConfigFiles` — Nix config I/O, add/delete machine/service, cluster topology editing
+21. `NixSwarm.Paths` — operator working tree resolution (~/.config/nix-swarm/)
+22. `NixSwarm.NodeName` — node name validation, cookie_atom!, safe_string_to_atom, control_node?
+23. `NixSwarm.Update` — version-aware rollout, wait_for_cluster_state convergence, rollout_report_ready?
+24. `NixSwarm.ClusterLogs` — remote log tail helper
+25. `NixSwarm.ASCII` — cluster topology ASCII art
+26. `NixSwarm.Bootstrap` — machine module generator, NixOS file generation
+27. `NixSwarm.Deploy` — SSH sync + rebuild, dry-run, shell_escape, validation
+28. `NixSwarm.Cluster.Ensure` — declarative bootstrap: reads cluster.nix, SSHes to deployHosts, checks swarmd, creates flake/config, syncs source, copies cookie, rebuilds
+29. **Files & directories** — mix.exs, lib/, test/, nix/, cluster/, machines/, examples/
+30. **Testing workflow** — mix format, mix test, mix escript.build, mix run scripts/verify_cluster.exs
+31. **Deployment model** — NixOS module, operator/cluster packages, SSH transport, DNS not managed
+32. **Guidance: placement/cluster changes** — re-run tests + verify_cluster
+33. **Guidance: config/Nix changes** — keep Config, module.nix, cluster.nix, services/*.nix, README aligned
+34. **Guidance: adding features** — keep behavior local to owning module
+35. **Guidance: complexity** — keep it simple, leaderless, Nix as truth, no stateful storage creep
+36. **TUI: status bar** — version display, target, refresh time, data freshness, idle/loading throbber
+37. **TUI: auto-refresh** — 30s default (--refresh-ms), silent background refresh (no throbber)
+38. **TUI: mouse scroll** — all containers (tables, summaries, logs, filters)
+39. **TUI: rollout/update** — u key, cluster or selected-machine scope, enter to confirm
+40. **Cookie model** — shared Erlang cookie, NIX_SWARM_COOKIE_FILE env, base64 support since v0.4.1
+41. **Distribution ports** — epmd 4369, dist 4370 (configurable via distributionPort)
+42. **Firewall** — openFirewall option, firewallInterfaces, operator needs 4369+4370 open for bidirectional
+43. **ELIXIR_ERL_OPTIONS** — sets dist port on operator; Nix wrapper in packages.nix
+44. **Ingress** — nginx helper in ingress.nix, httpPort configurable (default 80)
+45. **Healthcheck** — per-service shell command, run during reconciliation, results in local_status
+46. **Version** — VERSION file (single source), Application.spec, @fallback_version, release_label
+47. **RPC timeout** — NixSwarm.rpc_timeout_ms/0 (5000ms default), used in 5 call sites
+48. **Shared helpers** — NixSwarm.nix_string_literal/1, NixSwarm.fetch_value/3, sanitize_node_name/1
+49. **Changelog** — v0.4.1: cookie chain fix, dist port, base64 cookies, cluster ensure; v0.4.0: healthcheck, ingress, hardening
+50. **Notes** — quick observations, gotchas, reminders
+
+---
+
 ## Project purpose
 
 Nix-Swarm is a leaderless Elixir/OTP orchestrator for small NixOS clusters.
@@ -30,6 +85,7 @@ Implemented today:
 - remote RPC layer (`NixSwarm.Remote`) encapsulating all distributed Erlang calls to target nodes
 - machine bootstrap helper (`NixSwarm.Bootstrap`) for generating NixOS host modules and optional deploys
 - deploy helper (`NixSwarm.Deploy`) for validating and syncing declarative cluster changes to hosts over SSH
+- declarative cluster bootstrapper (`NixSwarm.Cluster.Ensure`) — `swarm cluster ensure`
 - update subsystem (`NixSwarm.Update`) for version-aware rollout tracking
 - ASCII cluster topology map (`NixSwarm.ASCII`)
 - user-edited cluster layout under `cluster/` plus machine stubs under `machines/`
@@ -50,11 +106,6 @@ Treat these as hard constraints unless the user explicitly changes them:
 - the cluster is leaderless and eventually consistent
 - temporary duplicate instances during partitions are acceptable in v1
 - stateful HA storage/database orchestration is out of scope
-
-For Gitea specifically:
-
-- Nix-Swarm may orchestrate multiple Gitea app instances
-- Nix-Swarm does **not** solve Gitea shared database/storage in v1
 
 ## Architecture overview
 
@@ -109,6 +160,7 @@ Config format:
   - `nodes`
   - `services`
   - `runtime`
+  - `ingress`
 
 ### `NixSwarm.Service`
 
@@ -120,6 +172,7 @@ Encapsulates:
 - constraint handling
 - unit template rendering
 - slot enumeration
+- healthcheck preservation
 
 ### `NixSwarm.Cluster`
 
@@ -141,8 +194,6 @@ Current strategy:
 - cycle service slots across that ranking
 - if there are more replicas than eligible nodes, ownership wraps around
 
-This is what enforces spreading when there are enough nodes.
-
 ### `NixSwarm.Reconciler`
 
 Periodic local convergence loop.
@@ -153,243 +204,160 @@ Responsibilities:
 - ensure owned units are running
 - ensure unowned units are stopped
 - provide local status and restart helpers
+- run per-service healthchecks during reconciliation
 
 ### `NixSwarm.Executor`
 
-Executor abstraction.
+Executor abstraction with `@spec` on all functions.
 
 Adapters:
 
 - `NixSwarm.Executor.Systemd`
 - `NixSwarm.Executor.Fake`
 
-Use the fake executor for tests and local cluster verification. Use the systemd executor for real hosts.
-
 ### `NixSwarm.API`
 
-Remote node-facing API used by the CLI and tests.
+Remote node-facing API with `@doc` on all 18 public functions.
 
 Current operations:
 
-- cluster status
-- cluster members
-- cluster overview
-- reconcile
-- restart service
-- logs
+- cluster status, members, overview
+- reconcile, restart service, start/stop on node
+- logs, cluster logs, node service logs
+- metrics, network info, ingress info
 
 ### `NixSwarm.CLI`
 
 Human/operator entrypoint.
 
-Important details:
+Commands:
 
-- starts a distributed Erlang node if needed
-- connects to a target peer
-- calls `NixSwarm.API` over RPC
-- is built as an escript via `mix escript.build`
-- also has local-only helper flows such as `add-machine` and `apply`
-
-### `NixSwarm.Bootstrap`
-
-Local NixOS bootstrap helper.
-
-Responsibilities:
-
-- generate a host-local NixOS module file for a new machine
-- keep shared cluster/service definitions under `cluster/`
-- optionally deploy the generated machine config through `NixSwarm.Deploy`
-
-### `NixSwarm.Deploy`
-
-Local rollout helper.
-
-Responsibilities:
-
-- sync the repo to one or more remote NixOS machines over SSH
-- validate machine modules under `machines/` before any remote mutation
-- replace the managed repo path on the target
-- run `nixos-rebuild switch` on each target
-- support a dry-run mode that validates config and prints the exact planned commands
-- keep the operator workflow simple: edit `cluster/` or `machines/`, then run `nix-swarm apply`
+- `swarm` — launches TUI
+- `swarm --version` — prints version
+- `swarm cluster ensure` — bootstraps all machines in cluster.nix
+- `--target`, `--cookie-file`, `--name`, `--refresh-ms`, `--source`, path overrides
 
 ### `NixSwarm.TUI`
 
-Full-screen terminal operator dashboard built with `ex_ratatui` (~172 KB, largest module).
+Full-screen terminal operator dashboard built with `ex_ratatui` (~172 KB).
 
 Tabs/views:
-- Dashboard — cluster overview, version matrix, metrics
-- Map — ASCII topology map of nodes and service placements
+
+- Dashboard — cluster overview, version matrix, metrics, health
+- Map — ASCII topology map
 - Machines — per-machine status, restart, logs
 - Services — per-service status, placement diagnostics
-- Logs — live log tail from remote nodes
-- Rollout — dry-run and apply workflows
-- Edit — opens `$EDITOR` on cluster/machine/service Nix files, then returns to the TUI
-
-The TUI is the primary operator interface. `NixSwarm.CLI` launches it by default.
+- Logs — live log tail
+- Rollout — dry-run/apply/update workflows
+- Edit — config editing via $EDITOR
 
 ### `NixSwarm.Remote`
 
-All distributed Erlang RPC calls to target nodes.
+Distributed Erlang RPC layer.
 
 Encapsulates:
-- node connection/discovery
-- forwarding API calls (`status`, `reconcile`, `restart`, `logs`, `metrics`, etc.)
-- error normalization (`NixSwarm.Remote.Error`)
+
+- node connection/discovery, doctor diagnostics
+- cookie resolution, port checks, distribution_port
+- legacy Swarm.API fallback for old releases
 
 ### `NixSwarm.ConfigFiles`
 
-Declarative Nix config reader/writer/validator used by the TUI and deploy flow.
-
-Responsibilities:
-- read `cluster/cluster.nix`, `cluster/services/*.nix`, `machines/*.nix`
-- parse Nix attrsets into internal maps (peers, nodes, services, ingress)
-- write back validated config changes
-- detect parse failures and surface line-level errors
+Declarative Nix config reader/writer/validator.
 
 ### `NixSwarm.Paths`
 
-Central path resolution for the operator working tree (`~/.config/nix-swarm/`).
+Central path resolution (`~/.config/nix-swarm/`).
 
 ### `NixSwarm.NodeName`
 
-Longname/shortname detection and resolution for distributed Erlang node naming.
+Node name validation, cookie_atom! with base64 support, safe_string_to_atom.
 
 ### `NixSwarm.Update`
 
-Version-aware rollout tracking. Compares running versions across peers and surfaces mismatches in the TUI.
+Version-aware rollout tracking with convergence timeout handling.
 
 ### `NixSwarm.ClusterLogs`
 
-Remote log tail helper used by the TUI logs view.
+Remote log tail helper.
 
 ### `NixSwarm.ASCII`
 
-ASCII art generator for the cluster topology map (used by both TUI and legacy CLI).
+ASCII cluster topology map.
+
+### `NixSwarm.Bootstrap`
+
+Machine module generator for NixOS host files.
+
+### `NixSwarm.Deploy`
+
+SSH sync + rebuild with validation, dry-run, shell escaping.
 
 ### `NixSwarm.Cluster.Ensure`
 
-Declarative cluster bootstrapper.
+Declarative bootstrap: `swarm cluster ensure` reads cluster.nix, SSHes to each deployHost, checks swarmd, bootstraps if needed.
 
-Responsibilities:
-- reads `cluster.nix` for `nodes.<name>.deployHost` entries
-- SSHes to each deploy host, checks if `nix-swarmd` is running
-- bootstraps fresh machines: creates NixOS flake skeleton, syncs swarm source, generates machine config, copies cookie, rebuilds
-- invoked via `swarm cluster ensure` or programmatically via `NixSwarm.Cluster.Ensure.run/1`
+## Files and directories
 
-## Files and directories that matter most
+- `mix.exs` — project definition, escript entrypoint, ex_ratatui dep
+- `VERSION` — single source of truth for release version
+- `default.nix` / `flake.nix` / `nix/nix-swarm/packages.nix` — Nix packaging
+- `lib/nix_swarm.ex` — root module, helpers (nix_string_literal, fetch_value, rpc_timeout_ms)
+- `lib/nix_swarm/application.ex` — OTP supervision tree
+- `lib/nix_swarm/tui.ex` — terminal dashboard (~172 KB)
+- `lib/nix_swarm/cluster/ensure.ex` — declarative cluster bootstrapper
+- `lib/nix_swarm/api.ex` — node-facing API (18 public functions)
+- `lib/nix_swarm/remote.ex` — distributed Erlang RPC
+- `lib/nix_swarm/placement.ex` — deterministic ownership
+- `lib/nix_swarm/reconciler.ex` — convergence loop + healthcheck
+- `lib/nix_swarm/deploy.ex` — SSH rollout
+- `lib/nix_swarm/config_files.ex` — Nix config I/O
+- `lib/nix_swarm/executor/` — systemd and fake adapters
+- `lib/nix_swarm/node_name.ex` — node naming + cookie validation
+- `test/` — 139 tests (API, Placement, Reconciler, Executor, CLI, Remote, NodeName)
+- `scripts/verify_cluster.exs` — three-node manual verification
+- `cluster/` — user-edited cluster topology
+- `nix/nix-swarm/module.nix` — NixOS integration module
+- `nix/nix-swarm/ingress.nix` — nginx ingress helper
 
-- `mix.exs` - project definition and escript entrypoint; single dep `ex_ratatui` for the TUI
-- `default.nix` / `flake.nix` / `nix/nix-swarm/package.nix` - package entrypoints
-- `lib/nix_swarm.ex` - root module, version/operator helpers
-- `lib/nix_swarm/application.ex` - OTP application and supervision tree
-- `lib/nix_swarm/tui.ex` - full terminal dashboard (~172 KB, largest module)
-- `lib/nix_swarm/config_files.ex` - Nix config I/O and validation
-- `lib/nix_swarm/remote.ex` - distributed Erlang RPC layer
-- `lib/nix_swarm/placement.ex` - deterministic slot ownership
-- `lib/nix_swarm/reconciler.ex` - periodic local convergence loop
-- `lib/nix_swarm/executor/systemd.ex` - systemd executor for real hosts
-- `lib/nix_swarm/executor/fake.ex` - fake executor for tests
-- `lib/nix_swarm/cli.ex` - escript entrypoint
-- `lib/nix_swarm/api.ex` - node-facing API (status, restart, logs, metrics)
-- `lib/nix_swarm/cluster.ex` - peer connectivity
-- `lib/nix_swarm/config.ex` - runtime config loader
-- `lib/nix_swarm/service.ex` - service-spec normalization
-- `lib/nix_swarm/deploy.ex` - SSH rollout helper
-- `lib/nix_swarm/bootstrap.ex` - machine bootstrap generator
-- `lib/nix_swarm/cluster/ensure.ex` - declarative cluster bootstrapper (`swarm cluster ensure`)
-- `test/integration/three_node_cluster_test.exs` - strongest behavioral regression test
-- `test/support/test_cluster.ex` - peer-cluster test harness
-- `scripts/verify_cluster.exs` - manual end-to-end three-node verification
-- `cluster/cluster.nix` - user-edited cluster topology and service imports
-- `cluster/services/*.nix` - one file per user-edited service
-- `machines/*.nix` - one bootstrap file per host
-- `nix/nix-swarm/module.nix` - internal NixOS integration module
-- `nix/nix-swarm/ingress.nix` - nginx/front-door helper for slot-based services
-- `examples/config/` - starter configs seeded into `~/.config/nix-swarm/` on first launch
-
-## Testing and verification workflow
-
-Always prefer these commands before concluding a change is done:
+## Testing and verification
 
 ```bash
 mix format --check-formatted
-mix test
+mix test                          # 139 tests
 mix escript.build
 mix run scripts/verify_cluster.exs
 ```
 
-What they cover:
-
-- formatting
-- unit tests
-- three-node integration test
-- CLI build
-- live three-node verification with restart/log/failover checks
-
 ## Deployment model
 
-The current NixOS module expects a package exposing `bin/nix-swarm` (for a release) and renders `NIX_SWARM_CONFIG_PATH` for the node.
-
-Simple deployment expectations:
-
-- package the app as a Nix package for production
-- keep user-edited topology under `cluster/` and host stubs under `machines/`
-- import `nix/nix-swarm/module.nix` in host configs
-- set `services.nix-swarm.package` to the built package
-- deploy with `nix-swarm apply --dry-run --hosts ...` followed by `nix-swarm apply --hosts ...`, or use `nixos-rebuild` over SSH for a small fleet
-
-SSH is the simplest deployment transport and is good enough for small clusters. For larger or more repeatable multi-machine deployments, prefer `deploy-rs` or `colmena` instead of ad hoc shell scripts.
-
-DNS is **not** managed by Nix-Swarm itself. If a user expects `http://gitea.home` to reach the cluster, DNS must point to an ingress/front-door layer such as one or more Nix-Swarm-managed reverse proxy nodes or a VIP/load balancer. Nix-Swarm handles placement; it does not publish DNS records.
-
-The new ingress helper only reduces nginx/front-door boilerplate. It does not solve DNS publishing or HA DNS by itself.
+- NixOS module at `nix/nix-swarm/module.nix`
+- Operator package: `swarm` CLI + TUI
+- Cluster package: `nix-swarmd` runtime
+- Bootstrap: `swarm cluster ensure` reads cluster.nix, SSHes, sets up, rebuilds
+- Cookie: shared via `NIX_SWARM_COOKIE_FILE`, base64 supported (v0.4.1+)
+- Distribution port: 4370 fixed via ELIXIR_ERL_OPTIONS or ERL_AFLAGS
+- Firewall: epmd 4369 + dist 4370 on both operator and managed nodes
 
 ## Guidance for future agents
 
 ### When editing placement or cluster behavior
 
-You must re-run:
-
-- `mix test`
-- `mix run scripts/verify_cluster.exs`
-
-because the three-node behavior is the real contract.
+Re-run `mix test` and `mix run scripts/verify_cluster.exs`.
 
 ### When editing config or Nix integration
 
-Keep these aligned:
-
-- `NixSwarm.Config`
-- `nix/nix-swarm/module.nix`
-- `cluster/cluster.nix`
-- `cluster/services/*.nix`
-- `README.md`
+Keep aligned: Config, module.nix, cluster.nix, services/*.nix, README.md.
 
 ### When adding features
 
-Prefer keeping behavior local to the module that owns it:
-
-- config parsing in `NixSwarm.Config`
-- slot ownership in `NixSwarm.Placement`
-- execution in the executor modules
-- cluster-facing operations in `NixSwarm.API`
-- remote calls in `NixSwarm.Remote`
-- TUI rendering in `NixSwarm.TUI`
-- config I/O in `NixSwarm.ConfigFiles`
-
-Avoid smearing service orchestration logic across unrelated modules.
+Keep behavior local: config→Config, placement→Placement, execution→Executor, API→API, RPC→Remote, TUI→TUI, config I/O→ConfigFiles, bootstrap→Cluster.Ensure.
 
 ### When tempted to add complexity
 
-Remember the project goals:
-
-- keep it simple
-- keep it leaderless
-- keep Nix as the source of truth
-- do not quietly expand into stateful-storage orchestration
-
-If a change pushes the project toward consensus, state replication, or mutable control-plane state, call that out explicitly.
+- keep it simple, leaderless, Nix as truth
+- do not expand into stateful storage orchestration
+- call out changes toward consensus or mutable control-plane state
 
 ## Notes
 
