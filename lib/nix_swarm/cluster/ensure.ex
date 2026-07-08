@@ -216,10 +216,7 @@ defmodule NixSwarm.Cluster.Ensure do
   end
 
   defp rebuild_remote(host) do
-    # Force Nix to re-evaluate the path: input by updating the flake lock,
-    # otherwise cached store paths may not reflect files we just created.
-    with {:ok, _} <- ssh(host, "cd #{@default_nixos_dir} && nix flake lock --update-input nix-swarm --extra-experimental-features 'nix-command flakes' 2>&1") |> map_ssh_result("update flake lock"),
-         :ok <- ssh(host, "nixos-rebuild switch --flake #{@default_nixos_dir}#default 2>&1") |> map_ssh_result("rebuild"),
+    with :ok <- ssh(host, "nixos-rebuild switch --flake #{@default_nixos_dir}#default 2>&1") |> map_ssh_result("rebuild"),
          :ok <- restart_nix_swarmd(host) do
       :ok
     end
@@ -252,8 +249,6 @@ defmodule NixSwarm.Cluster.Ensure do
       "ConnectTimeout=10",
       "-o",
       "StrictHostKeyChecking=accept-new",
-      
-      "UserKnownHostsFile=/dev/null",
       
       "-o",
       "UserKnownHostsFile=/dev/null"
