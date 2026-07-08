@@ -198,6 +198,18 @@ in
       description = "When enabled, publish each service via mDNS (Avahi) so services are discoverable as {service-name}.local.";
     };
 
+    enableWatcher = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Enable the auto-deploy file watcher as a systemd user service. Watches watchSource for changes and deploys automatically.";
+    };
+
+    watchSource = mkOption {
+      type = types.str;
+      default = "%h/.config/nix-swarm";
+      description = "Directory to watch for config changes when enableWatcher is true. %h expands to the home directory.";
+    };
+
     openFirewall = mkOption {
       type = types.bool;
       default = false;
@@ -396,6 +408,22 @@ in
         LockPersonality = true;
         RestrictNamespaces = true;
         RestrictSUIDSGID = true;
+      };
+    };
+
+    systemd.services.nix-swarm-watcher = mkIf cfg.enableWatcher {
+      description = "Nix-Swarm auto-deploy file watcher";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+
+      serviceConfig = {
+        Type = "simple";
+        ExecStart = "${cfg.package}/bin/nix-swarm watch --source %h/.config/nix-swarm";
+        Restart = "always";
+        RestartSec = 5;
+        NoNewPrivileges = true;
+        PrivateTmp = true;
       };
     };
   };
