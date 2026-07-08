@@ -201,7 +201,13 @@ in
     enableWatcher = mkOption {
       type = types.bool;
       default = false;
-      description = "Enable the auto-deploy file watcher as a systemd user service. Watches watchSource for changes and deploys automatically.";
+      description = "Enable the auto-deploy file watcher as a systemd service. Watches watchSource for changes and deploys automatically.";
+    };
+
+    enableDaemon = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Enable the nix-swarmd node runtime daemon. Set to false on operator-only machines that only run the watcher.";
     };
 
     watchSource = mkOption {
@@ -364,7 +370,7 @@ in
 
     environment.systemPackages = [ cfg.package ];
 
-    systemd.services.nix-swarmd = {
+    systemd.services.nix-swarmd = mkIf cfg.enableDaemon {
       description = "Nix-Swarm leaderless node runtime";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
