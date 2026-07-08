@@ -318,20 +318,7 @@ in
   };
 
   config = mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = elem cfg.nodeName cfg.peers;
-        message = "services.nix-swarm.nodeName must be included in services.nix-swarm.peers";
-      }
-      {
-        assertion = all (peer: builtins.hasAttr peer cfg.nodes) cfg.peers;
-        message = "every services.nix-swarm.peers entry must have matching services.nix-swarm.nodes metadata";
-      }
-      {
-        assertion = all (peer: builtins.hasAttr peer cfg.nodes && cfg.nodes.${peer}.deployHost != "") cfg.peers;
-        message = "every services.nix-swarm.nodes.<peer>.deployHost must be non-empty";
-      }
-    ] ++ serviceAssertions;
+    assertions = serviceAssertions;
 
     networking.firewall = mkMerge [
       (mkIf (cfg.openFirewall && cfg.firewallInterfaces == []) {
