@@ -2,7 +2,7 @@
 
 let
   cfg = config.services.nix-swarm;
-  inherit (lib) all concatMapStringsSep elem genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
+  inherit (lib) all attrByPath concatMapStringsSep elem genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
 
   escapeErlString = value:
     builtins.replaceStrings
