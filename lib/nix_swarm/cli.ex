@@ -50,20 +50,28 @@ defmodule NixSwarm.CLI do
 
       args == ["cluster", "ensure"] ->
         IO.puts("Ensuring cluster nodes are running nix-swarmd...\n")
-
+        IO.puts("After bootstrap, the TUI auto-deploys on file save — no manual apply needed.\n")
         result =
           NixSwarm.Cluster.Ensure.run(
             Keyword.take(opts, [:source, :cluster_file, :cookie, :force])
           )
 
         Enum.each(result.nodes, fn node ->
-          case node.status do
-            :ok ->
-              IO.puts("  #{node.node}: #{node.action} (#{node.message || "ok"})")
+          case {node.status, node[:result]} do
+            {:ok, :ok} ->
+              IO.puts("  #{node.node}: #{node.action} (ok)")
 
-            :error ->
-              IO.puts("  #{node.node}: ERROR - #{node.message}")
-              IO.puts(:stderr, "error: #{node.node}: #{node.message}")
+            {:ok, {:error, reason}} ->
+              IO.puts("  #{node.node}: ERROR - #{reason}")
+              IO.puts(:stderr, "error: #{node.node}: #{reason}")
+
+            {:ok, _result} ->
+              IO.puts("  #{node.node}: #{node.action} (#{node[:message] || "ok"})")
+
+            {:error, _} ->
+              msg = node[:message] || "unknown error"
+              IO.puts("  #{node.node}: ERROR - #{msg}")
+              IO.puts(:stderr, "error: #{node.node}: #{msg}")
           end
         end)
 
@@ -79,7 +87,22 @@ defmodule NixSwarm.CLI do
           )
 
         Enum.each(result.nodes, fn node ->
-          IO.puts("  #{node.node}: #{node.action} (#{node.message || "ok"})")
+          case {node.status, node[:result]} do
+            {:ok, :ok} ->
+              IO.puts("  #{node.node}: #{node.action} (ok)")
+
+            {:ok, {:error, reason}} ->
+              IO.puts("  #{node.node}: ERROR - #{reason}")
+              IO.puts(:stderr, "error: #{node.node}: #{reason}")
+
+            {:ok, _result} ->
+              IO.puts("  #{node.node}: #{node.action} (#{node[:message] || "ok"})")
+
+            {:error, _} ->
+              msg = node[:message] || "unknown error"
+              IO.puts("  #{node.node}: ERROR - #{msg}")
+              IO.puts(:stderr, "error: #{node.node}: #{msg}")
+          end
         end)
 
         IO.puts("\nTip: ensure ports 4369 and 4370 are open on this machine's firewall")
@@ -224,20 +247,33 @@ defmodule NixSwarm.CLI do
             {:error, msg}
         end
 
-      args == ["cluster", "update"] ->
-        IO.puts("Syncing and rebuilding all cluster nodes...\n")
+      args == ["watch"] ->
+        source = Keyword.get(opts, :source, ConfigFiles.defaults().source)
+        IO.puts("nix-swarm watch — auto-deploy on file change")
+        IO.puts("  watching: #{source}")
+        IO.puts("  deploy: #{Keyword.get(opts, :deploy_fun, "Deploy.run/1")}")
+        IO.puts("")
 
-        result =
-          NixSwarm.Cluster.Ensure.run(
-            Keyword.take(opts, [:source, :cluster_file, :cookie, :force])
-            |> Keyword.put(:force, true)
-          )
+        {:ok, _watcher} = NixSwarm.Watcher.start_link(
+          source: source,
+          deploy_fun: fn opts -> NixSwarm.Deploy.run(Keyword.put(opts, :flake, "/etc/nixos#default")) end
+        )
 
-        Enum.each(result.nodes, fn node ->
-          IO.puts("  #{node.node}: #{node.action} (#{node.message || "ok"})")
-        end)
+        # Block until interrupted
+        IO.puts("Watcher started. Press Ctrl+C to stop.")
+        Process.sleep(:infinity)
 
-        if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
+
+      args == ["debug", "state"] ->
+        remote_opts = Keyword.take(opts, [:target, :cookie, :cookie_file, :name])
+        with {:ok, target_node} <- connect_remote(remote_opts) do
+          pid = NixSwarm.Remote.rpc!(target_node, Process, :whereis, [NixSwarm.Reconciler])
+          state = NixSwarm.Remote.rpc!(target_node, :sys, :get_state, [pid])
+          IO.inspect(state, label: "Reconciler state", pretty: true, width: 120)
+          :ok
+        else
+          {:error, msg} -> {:error, msg}
+        end
 
       args in [[], ["tui"], ["help"]] ->
         if args == ["help"] do
@@ -377,10 +413,9 @@ defmodule NixSwarm.CLI do
 
     Inside the TUI you can:
       - inspect dashboard, map, machines, and services
-      - restart services and reconcile the cluster
-      - dry-run or apply config changes
+      - start, stop, restart services on any node
+      - config changes auto-deploy on file save
       - add, edit, and delete machine/service files
-      - roll out updates to running nodes
     """
     |> String.trim()
   end
@@ -395,6 +430,10 @@ defmodule NixSwarm.CLI do
       #{NixSwarm.operator_command()}
       #{launch}
       #{launch} --source /path/to/checkout
+
+
+    Run auto-deploy watcher (for systemd service):
+      nix-swarm watch --source /path/to/config
 
     Bootstrap cluster nodes from cluster.nix:
       nix-swarm cluster ensure
@@ -411,7 +450,7 @@ defmodule NixSwarm.CLI do
     TUI options:
       --lines N                  default log line count (default: 50)
       --refresh-ms N             auto-refresh interval in milliseconds (default: 30000)
-      --source PATH              local Nix-Swarm source root used for file editing/apply/update
+      --source PATH              local Nix-Swarm source root used for config file editing
       --cluster-file PATH        override the cluster file path
       --machines-dir PATH        override the machines directory
       --services-dir PATH        override the services directory

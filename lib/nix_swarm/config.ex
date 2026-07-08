@@ -13,6 +13,22 @@ defmodule NixSwarm.Config do
   }
 
   def current do
+    case :persistent_term.get({__MODULE__, :config}, nil) do
+      nil ->
+        config = load_current()
+        :persistent_term.put({__MODULE__, :config}, config)
+        config
+      config ->
+        config
+    end
+  end
+
+  def invalidate_cache do
+    :persistent_term.erase({__MODULE__, :config})
+    :persistent_term.erase({__MODULE__, :peers})
+  end
+
+  defp load_current do
     raw =
       Application.get_env(:nix_swarm, :cluster_config) ||
         load_config_for_current() ||

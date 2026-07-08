@@ -11,8 +11,9 @@ defmodule NixSwarm.Cluster.Ensure do
   @default_swarm_path "/etc/nixos/nix-swarm"
 
   def run(opts \\ []) do
-    paths = ConfigFiles.normalize_paths(%{})
-    source = Keyword.get(opts, :source, paths.source)
+    source = Keyword.get(opts, :source)
+    paths = if source, do: ConfigFiles.defaults(source), else: ConfigFiles.normalize_paths(%{})
+    source = paths.source
     cluster_file = Keyword.get(opts, :cluster_file, paths.cluster_file)
     cookie = Keyword.get(opts, :cookie) || ensure_cookie(paths)
     force? = Keyword.get(opts, :force, false)
@@ -61,7 +62,7 @@ defmodule NixSwarm.Cluster.Ensure do
           host: host,
           status: :ok,
           action: :update,
-          result: update_remote(source, host)
+          result: update_remote(source, host, node_name)
         }
 
       {:ok, :not_running} ->
@@ -101,8 +102,10 @@ defmodule NixSwarm.Cluster.Ensure do
     end
   end
 
-  defp update_remote(source, host) do
+  defp update_remote(source, host, node_name) do
     with :ok <- sync_source(source, host),
+         :ok <- maybe_create_flake(host),
+         :ok <- create_machine_config(host, node_name),
          :ok <- rebuild_remote(host) do
       :ok
     else
@@ -123,7 +126,9 @@ defmodule NixSwarm.Cluster.Ensure do
       |> Enum.map_join(" ", fn e -> "--exclude=#{shell_escape(e)}" end)
       |> then(&"tar #{&1} -czf - -C #{shell_escape(source)} .")
 
-    remote_extract = "mkdir -p #{@default_swarm_path} && tar -xzf - -C #{@default_swarm_path}"
+    # Clean up stale nested layout from previous deployments before extracting
+    cleanup = "rm -rf #{@default_swarm_path}/cluster 2>/dev/null; "
+    remote_extract = "mkdir -p #{@default_swarm_path} && #{cleanup}tar -xzf - -C #{@default_swarm_path}"
 
     cmd = "#{tar_args} | #{ssh_command(host, remote_extract)}"
 
@@ -151,12 +156,14 @@ defmodule NixSwarm.Cluster.Ensure do
   end
 
   defp create_machine_config(host, node_name) do
+    hostname = extract_hostname(host)
+
     machine_content = """
     { inputs, ... }:
     {
       imports = [
         inputs.nix-swarm.nixosModules.default
-        inputs.nix-swarm + "/cluster/cluster.nix"
+        inputs.nix-swarm + "/cluster.nix"
       ];
 
       services.nix-swarm = {
@@ -170,6 +177,19 @@ defmodule NixSwarm.Cluster.Ensure do
 
     ssh_cmd = "cat > #{@default_nixos_dir}/machine.nix << 'NIXEOF'\n#{machine_content}\nNIXEOF\n"
 
+    # Also create the machine file inside the swarmed source so that
+    # any existing configuration.nix import of ./nix-swarm/machines/<host>.nix
+    # resolves correctly after sync.
+    #
+    # The seed .gitignore ships with /machines/ excluded, which causes
+    # Nix's path: flake input to drop the directory entirely.  Remove
+    # the file so Nix copies everything without filtering.
+    fix_gitignore_cmd =
+      "rm -f #{@default_swarm_path}/.gitignore"
+
+    machine_in_source_cmd =
+      "mkdir -p #{@default_swarm_path}/machines && cat > #{@default_swarm_path}/machines/#{hostname}.nix << 'NIXEOF'\n#{machine_content}\nNIXEOF\n"
+
     # Also ensure configuration.nix imports machine.nix
     ensure_import_cmd = """
     if [ -f #{@default_nixos_dir}/configuration.nix ]; then
@@ -181,6 +201,8 @@ defmodule NixSwarm.Cluster.Ensure do
     """
 
     with {:ok, _} <- ssh(host, ssh_cmd) |> map_ssh_result("create machine.nix"),
+         {:ok, _} <- ssh(host, fix_gitignore_cmd) |> map_ssh_result("fix .gitignore"),
+         {:ok, _} <- ssh(host, machine_in_source_cmd) |> map_ssh_result("create machine file in source"),
          {:ok, _} <- ssh(host, ensure_import_cmd) |> map_ssh_result("update configuration.nix") do
       :ok
     end
@@ -194,8 +216,18 @@ defmodule NixSwarm.Cluster.Ensure do
   end
 
   defp rebuild_remote(host) do
-    ssh(host, "nixos-rebuild switch --flake #{@default_nixos_dir} 2>&1")
-    |> map_ssh_result("rebuild")
+    # Force Nix to re-evaluate the path: input by updating the flake lock,
+    # otherwise cached store paths may not reflect files we just created.
+    with {:ok, _} <- ssh(host, "cd #{@default_nixos_dir} && nix flake lock --update-input nix-swarm --extra-experimental-features 'nix-command flakes' 2>&1") |> map_ssh_result("update flake lock"),
+         :ok <- ssh(host, "nixos-rebuild switch --flake #{@default_nixos_dir}#default 2>&1") |> map_ssh_result("rebuild"),
+         :ok <- restart_nix_swarmd(host) do
+      :ok
+    end
+  end
+
+  defp restart_nix_swarmd(host) do
+    ssh(host, "systemctl restart nix-swarmd 2>&1")
+    |> map_ssh_result("restart nix-swarmd")
   end
 
   defp ssh(host, command) do
@@ -208,6 +240,8 @@ defmodule NixSwarm.Cluster.Ensure do
   end
 
   defp ssh_command(host, remote_command) do
+    {ssh_host, port_opts} = extract_ssh_port(host)
+
     [
       "ssh",
       "-F",
@@ -218,11 +252,30 @@ defmodule NixSwarm.Cluster.Ensure do
       "ConnectTimeout=10",
       "-o",
       "StrictHostKeyChecking=accept-new",
+      
+      "UserKnownHostsFile=/dev/null",
+      
+      "-o",
+      "UserKnownHostsFile=/dev/null"
+    ] ++ port_opts ++ [
       "--",
-      host,
+      ssh_host,
       remote_command
     ]
     |> Enum.map_join(" ", &shell_escape/1)
+  end
+
+  defp extract_ssh_port(host) do
+    # host:port notation (e.g. root@overlord:31300)
+    case Regex.run(~r/^(.+):(\d+)$/, host, capture: :all_but_first) do
+      [host_without_port, port_str] ->
+        {host_without_port, ["-p", port_str]}
+      nil ->
+        case System.get_env("NIX_SWARM_SSH_PORT") do
+          nil -> {host, []}
+          port -> {host, ["-p", port]}
+        end
+    end
   end
 
   defp map_ssh_result({:ok, _output}, _label), do: :ok
@@ -236,6 +289,14 @@ defmodule NixSwarm.Cluster.Ensure do
     else
       "root@#{deploy_host}"
     end
+  end
+
+  defp extract_hostname(ssh_host) do
+    # "root@overlord", "root@overlord:31300", or "overlord" → "overlord"
+    ssh_host
+    |> String.replace(~r/:\d+$/, "")
+    |> String.split("@")
+    |> List.last()
   end
 
   defp ensure_cookie(paths) do

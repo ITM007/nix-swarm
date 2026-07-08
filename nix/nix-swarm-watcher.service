@@ -1,0 +1,25 @@
+[Unit]
+Description=Nix-Swarm auto-deploy file watcher
+Documentation=https://github.com/your-org/nix-swarm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.nix-profile/bin/nix-swarm watch --source %h/.config/nix-swarm
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/nix-swarm
+ReadOnlyPaths=%h/.ssh
+
+# Environment
+Environment=NIX_SWARM_SSH_PORT=31300
+
+[Install]
+WantedBy=default.target

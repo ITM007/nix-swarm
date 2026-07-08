@@ -161,21 +161,36 @@ defmodule NixSwarm.Reconciler do
       known_zero_replica_units = zero_replica_units(config.services, previous_owned_units)
       all_units = current_units(config.services) ++ known_zero_replica_units
 
+      # Batch-fetch all unit statuses in one systemctl call
+      current_statuses =
+        if all_units == [] do
+          %{}
+        else
+          Executor.batch_unit_status(all_units)
+        end
+
       results =
-        Enum.map(all_units, fn unit ->
-          status = Executor.unit_status(unit)
+        all_units
+        |> Task.async_stream(
+          fn unit ->
+            status = Map.get(current_statuses, unit, :unknown)
 
-          cond do
-            MapSet.member?(desired_units, unit) and restartable_status?(status) ->
-              {unit, Executor.start_unit(unit)}
+            cond do
+              MapSet.member?(desired_units, unit) and restartable_status?(status) ->
+                {unit, Executor.start_unit(unit)}
 
-            not MapSet.member?(desired_units, unit) and stoppable_status?(status) ->
-              {unit, Executor.stop_unit(unit)}
+              not MapSet.member?(desired_units, unit) and stoppable_status?(status) ->
+                {unit, Executor.stop_unit(unit)}
 
-            true ->
-              {unit, :ok}
-          end
-        end)
+              true ->
+                {unit, :ok}
+            end
+          end,
+          max_concurrency: 8,
+          timeout: 15_000,
+          on_timeout: :kill_task
+        )
+        |> Enum.map(fn {:ok, result} -> result end)
 
       reply = %{
         owned_units: MapSet.to_list(desired_units),
@@ -306,15 +321,30 @@ defmodule NixSwarm.Reconciler do
     if control_node?() do
       state
     else
-      synced_modes =
+      peer_nodes =
         NixSwarm.Cluster.live_nodes()
         |> Enum.reject(&(&1 == Node.self()))
-        |> Enum.reduce(%{}, fn node, acc ->
-          case :rpc.call(node, __MODULE__, :local_service_modes, [], NixSwarm.rpc_timeout_ms()) do
-            modes when is_map(modes) -> Map.merge(acc, modes)
-            _ -> acc
-          end
-        end)
+
+      synced_modes =
+        if peer_nodes == [] do
+          %{}
+        else
+          peer_nodes
+          |> Task.async_stream(
+            fn node ->
+              case :rpc.call(node, __MODULE__, :local_service_modes, [], NixSwarm.rpc_timeout_ms()) do
+                modes when is_map(modes) -> modes
+                _ -> %{}
+              end
+            end,
+            max_concurrency: length(peer_nodes),
+            timeout: NixSwarm.rpc_timeout_ms() + 1_000
+          )
+          |> Enum.reduce(%{}, fn
+            {:ok, modes}, acc -> Map.merge(acc, modes)
+            _, acc -> acc
+          end)
+        end
 
       %{
         state

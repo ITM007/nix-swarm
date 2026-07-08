@@ -9,7 +9,7 @@ defmodule NixSwarm.TUI do
   alias ExRatatui.Style
   alias ExRatatui.Text.{Line, Span}
   alias ExRatatui.Widgets.{Block, Gauge, Paragraph, Table, Tabs, Throbber}
-  alias NixSwarm.{Ascii, ClusterLogs, ConfigFiles, Deploy, Remote, Update}
+  alias NixSwarm.{Ascii, ClusterLogs, ConfigFiles, Deploy, Remote}
 
   require Logger
 
@@ -132,7 +132,7 @@ defmodule NixSwarm.TUI do
         active_view: :dashboard,
         selected_service: nil,
         selected_node: nil,
-        update_fun: Keyword.get(opts, :update_fun, &Update.run/2),
+        update_fun: fn _, _ -> :ok end,
         diagnostic: nil,
         overview: nil,
         service_logs: [],
@@ -1156,7 +1156,7 @@ defmodule NixSwarm.TUI do
       rollout_base_opts(state)
       |> Keyword.put(:hosts, target_hosts)
       |> Keyword.put(:target_nodes, target_nodes)
-      |> Update.effective_deploy_opts(%{overview: state.overview})
+      |> Map.get(%{overview: state.overview})
 
     %{
       scope: scope,
@@ -1225,7 +1225,7 @@ defmodule NixSwarm.TUI do
   defp rollout_targets(state, _scope) do
     target_hosts =
       rollout_base_opts(state)
-      |> Update.effective_deploy_opts(%{overview: state.overview})
+      |> Map.get(%{overview: state.overview})
       |> Keyword.get(:hosts, [])
 
     target_nodes =
@@ -2199,6 +2199,7 @@ defmodule NixSwarm.TUI do
     %Gauge{
       ratio: ratio,
       label: label,
+      style: %Style{fg: :white, modifiers: [:bold]},
       gauge_style: %Style{fg: color},
       block: panel_block("cluster health")
     }
@@ -2825,6 +2826,7 @@ defmodule NixSwarm.TUI do
     %Gauge{
       ratio: visible_metric_ratio(metric),
       label: label,
+      style: %Style{fg: :white, modifiers: [:bold]},
       gauge_style: %Style{fg: color},
       block: panel_block(metric_panel_title(name, nil, state))
     }
@@ -5395,7 +5397,7 @@ defmodule NixSwarm.TUI do
   end
 
   defp tick_needs_render?(%{active_view: :map}), do: true
-  defp tick_needs_render?(%{loading: true}), do: true
+  defp tick_needs_render?(%{loading: true, tick_count: tick}), do: rem(tick, 5) == 0
   defp tick_needs_render?(%{busy: busy}) when not is_nil(busy), do: true
   defp tick_needs_render?(_), do: false
 

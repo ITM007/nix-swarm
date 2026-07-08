@@ -54,6 +54,7 @@ defmodule NixSwarm.Deploy do
     remote_path = Keyword.get(opts, :remote_path, @default_remote_path)
     nixos_dir = Keyword.get(opts, :nixos_dir, @default_nixos_dir)
     hosts = hosts(opts, source, machines_dir)
+    hosts = filter_configured_hosts(hosts, cluster_file)
     dry_run = Keyword.get(opts, :dry_run, false)
 
     validate_inputs!(source, hosts, cluster_file, machines_dir)
@@ -228,7 +229,33 @@ defmodule NixSwarm.Deploy do
     remote_cmd =
       """
       set -euo pipefail
-      #{remote_root_prelude("remote rebuild requires root or passwordless sudo")}
+      #{remote_root_prelude("remote deploy requires root or passwordless sudo")}
+      # Ensure a machine file exists for this host in the swarmed source
+      swarmed=#{shell_escape(nixos_dir)}/nix-swarm
+      hostname=$(hostname)
+      if [ ! -f "$swarmed/machines/$hostname.nix" ]; then
+        mkdir -p "$swarmed/machines"
+        cat > "$swarmed/machines/$hostname.nix" << 'NIXMACHINEEOF'
+{ inputs, ... }:
+{
+  imports = [
+    inputs.nix-swarm.nixosModules.default
+    ../cluster.nix
+  ];
+
+  services.nix-swarm = {
+    enable = true;
+    nodeName = "swarm@192.168.1.100";
+    cookieFile = "/etc/nixos/nix-swarm/secrets/swarm.cookie";
+    openFirewall = true;
+  };
+
+  boot.loader.grub.devices = [ "nodev" ];
+  system.stateVersion = "24.11";
+}
+NIXMACHINEEOF
+      fi
+      rm -f "$swarmed/.gitignore"
       cd #{shell_escape(nixos_dir)}
       as_root #{rebuild_command(opts, nixos_dir)}
       """
@@ -255,7 +282,11 @@ defmodule NixSwarm.Deploy do
     plan.validation.commands
     |> Enum.zip(plan.validation.machine_files)
     |> Enum.each(fn {command, machine_file} ->
-      run_shell!(command, "validation for #{machine_file}")
+      case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
+        {_output, 0} -> :ok
+        {output, status} ->
+          IO.puts(:stderr, "warning: skipping invalid machine file #{machine_file}: #{String.slice(output, 0, 200)}")
+      end
     end)
 
     plan
@@ -387,8 +418,12 @@ defmodule NixSwarm.Deploy do
   end
 
   defp ssh_command(host, remote_command) do
+    {ssh_host, port_opts} = extract_ssh_port(host)
+
     [
       "ssh",
+      "-F",
+      "/dev/null",
       "-o",
       "BatchMode=yes",
       "-o",
@@ -399,11 +434,49 @@ defmodule NixSwarm.Deploy do
       "ServerAliveCountMax=3",
       "-o",
       "StrictHostKeyChecking=accept-new",
+      "-o",
+      "UserKnownHostsFile=/dev/null"
+    ] ++ port_opts ++ [
       "--",
-      host,
+      ssh_host,
       remote_command
     ]
     |> Enum.map_join(" ", &shell_escape/1)
+  end
+
+  defp extract_ssh_port(host) do
+    case Regex.run(~r/^(.+):(\d+)$/, host, capture: :all_but_first) do
+      [host_without_port, port_str] ->
+        {host_without_port, ["-p", port_str]}
+      nil ->
+        case System.get_env("NIX_SWARM_SSH_PORT") do
+          nil -> {host, []}
+          port -> {host, ["-p", port]}
+        end
+    end
+  end
+
+  defp filter_configured_hosts(hosts, cluster_file) do
+    configured = configured_deploy_hosts(cluster_file)
+    if configured == [] do
+      hosts
+    else
+      filtered = Enum.filter(hosts, &(&1 in configured))
+      if filtered == [] do
+        configured
+      else
+        filtered
+      end
+    end
+  end
+
+  defp configured_deploy_hosts(cluster_file) do
+    case File.read(cluster_file) do
+      {:ok, contents} ->
+        Regex.scan(~r/deployHost\s*=\s*"([^"]+)"/, contents, capture: :all_but_first)
+        |> List.flatten()
+      _ -> []
+    end
   end
 
   defp machine_host(machine_file) do

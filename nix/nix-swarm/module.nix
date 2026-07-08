@@ -372,6 +372,8 @@ in
       wants = [ "network-online.target" ];
 
       serviceConfig = {
+        Type = "notify";
+        WatchdogSec = 30;
         Environment = [
           "NIX_SWARM_CONFIG_PATH=${renderedConfig}"
           "RELEASE_NODE=${cfg.nodeName}"

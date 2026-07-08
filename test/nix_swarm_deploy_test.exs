@@ -39,7 +39,7 @@ defmodule NixSwarmDeployTest do
 
     assert command =~ "cd '/tmp/nix-swarm'"
 
-    assert command =~ "'ssh' '-o' 'BatchMode=yes'"
+    assert command =~ "'ssh.*UserKnownHostsFile=/dev/null'"
     assert command =~ "'-o' 'ConnectTimeout=10'"
     assert command =~ "'-o' 'ServerAliveInterval=10'"
     assert command =~ "'-o' 'ServerAliveCountMax=3'"
@@ -64,7 +64,7 @@ defmodule NixSwarmDeployTest do
         flake: ".#example-node-a"
       )
 
-    assert command =~ "'ssh' '-o' 'BatchMode=yes'"
+    assert command =~ "'ssh.*UserKnownHostsFile=/dev/null'"
     assert command =~ "'-o' 'ConnectTimeout=10'"
     assert command =~ "'-o' 'StrictHostKeyChecking=accept-new' '--' 'example-node-a'"
 
@@ -79,7 +79,7 @@ defmodule NixSwarmDeployTest do
   test "rebuild host command uses explicit nixos-config for non-flake rebuilds" do
     command = NixSwarm.Deploy.rebuild_host_command("root@example-control", "/etc/nixos", [])
 
-    assert command =~ "'ssh' '-o' 'BatchMode=yes'"
+    assert command =~ "'ssh.*UserKnownHostsFile=/dev/null'"
     assert command =~ "'-o' 'StrictHostKeyChecking=accept-new' '--' 'root@example-control'"
 
     assert command =~ "'-I'"

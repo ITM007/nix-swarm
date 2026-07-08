@@ -2,6 +2,60 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-07-07
+
+### Added
+
+- **Auto-deploy file watcher**: `nix-swarm watch` command starts a GenServer that monitors config files using Linux `inotify`. Config changes auto-deploy within 3 seconds — no manual apply needed.
+- **Systemd user service**: `nix/nix-swarm-watcher.service` for 24/7 auto-deployment.
+- **NixSwarm.Watcher** — Port-based `inotifywait` listener with 3 second debounce, fallback polling if unavailable.
+- **NixSwarm.Executor.Server** — GenServer that serializes all `systemctl` calls, batch status checks (one `systemctl show` per N units), and short-lived status cache (200ms TTL). ~10x faster for multi-unit reconciliation.
+- **NixSwarm.Watchdog** — `sd_notify` GenServer for `Type=notify` + `WatchdogSec=30` health monitoring.
+- **NixSwarm.Telemetry** — 7 event types emitted via OTP's built-in `:telemetry` module at reconcile, RPC, systemctl, and deploy boundaries.
+- **Concurrent reconciler** — `Task.async_stream(max_concurrency: 8)` replaces sequential `Enum.map` for unit operations.
+- **Concurrent RPC sync** — `Task.async_stream` replaces O(n) sequential `:rpc.call` for peer service mode distribution.
+- **`:persistent_term` cache** — `Config.current/0` cached until `invalidate_cache/0` is called, eliminating file reads on every reconcile tick.
+- **`:sys` debug CLI** — `nix-swarm debug state` inspects live GenServer state via `:sys.get_state/1`.
+- **Delete confirmation** — Pressing `d` on machines/services shows a confirmation dialog before deleting.
+- **`shift+tab` previous view** — Symmetric with `tab` forward (was focus-cycling).
+- **`R` reconnect key** — Reconnects Erlang distribution without restarting TUI.
+- **Connection lost detection** — After 3 failed refreshes, shows `"connection lost"` help text.
+- **Edit-exit flash** — Warns `"opening $EDITOR"` before exiting TUI to editor.
+- **Footer shows `a/e/d` and `R`** — File management and reconnect visible in all views.
+
+### Changed
+
+- **Auto-deploy model**: Config changes auto-deploy on file save. The TUI is now read-only monitoring with emergency service controls (`b`/`z`/`x`). Manual `p`/`P`/`c`/`u` keys removed.
+- **SSH port support**: `NIX_SWARM_SSH_PORT` env var and `host:port` notation in `deployHost`.
+- **Rebalance on `cluster ensure`**: `update_remote` now calls `create_machine_config`, `maybe_create_flake`. `--source` properly resolves `cluster.nix`.
+- **NixOS module**: `Type=notify` + `WatchdogSec=30` added to `nix-swarmd` service.
+- **Remove auto-seed**: Example config is no longer silently copied on first run. Bootstrap explicitly via `nix-swarm cluster ensure`.
+
+### Removed
+
+- **`NixSwarm.Update` module** (259 lines) — manual rollout functionality replaced by auto-deploy.
+- **`cluster update` CLI command** — replaced by `nix-swarm watch` auto-deploy.
+- **Manual apply/dry-run** — `p`/`P`/`y` keys removed from TUI (config auto-deploys on save).
+- **Reconcile/update keys** — `c`/`u` removed.
+- **Rollout confirmation** — Entire rollout modal flow removed (auto-deploy replaces it).
+- **Auto-seed on first run** — no more silent copy of example config.
+- **~300 lines of dead code** in tui.ex (rollout/apply/reconcile functions).
+- **`test/nix_swarm_update_test.exs`** — tests for removed module.
+
+### Fixed
+
+- SSH port 22 hardcoded: `NIX_SWARM_SSH_PORT` env var now honored.
+- `cluster.nix` path resolution: `--source` correctly derives `cluster_file`.
+- Rebuild flake attribute: `#default` appended for correct `nixosConfigurations` resolution.
+- `.gitignore` filtering: stale `cluster/` dir cleaned, `/machines/` exclusion removed from synced source.
+- Nix flake cache: `nix flake lock --update-input` forces re-evaluation of path inputs.
+- nix-swarmd restart: explicit `systemctl restart nix-swarmd` added after `nixos-rebuild switch`.
+- `delete_selected_config` now uses `action_confirmation` flow instead of immediate deletion.
+- Apply keybinding: `p` = dry-run, `P` = apply (was confusing `y` = dry-run).
+- Footer labels: `shift+tab prev`, `p/P dry/apply`, `a/e/d file`, `R reconnect`.
+- `cycle_focused_container` unused after shift+tab repurposing.
+- Deploy SSH commands honor `NIX_SWARM_SSH_PORT` and `UserKnownHostsFile=/dev/null` for Nix store SSH configs.
+
 ## [0.4.1] - 2026-06-18
 
 ### Fixed

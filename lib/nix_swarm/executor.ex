@@ -1,106 +1,44 @@
 defmodule NixSwarm.Executor do
   @moduledoc """
-  Executor abstraction for starting/stopping/monitoring systemd units.
+  Delegates systemctl operations to the Executor.Server GenServer.
 
-  Dispatches to adapter modules (`Systemd` or `Fake`) based on runtime config.
+  Falls back to Executor.Systemd for out-of-band calls (tests, bootstrap).
   """
 
-  @type unit_state ::
-          :running | :starting | :restarting | :stopping | :stopped | :failed | :unknown
+  def start_unit(unit, _config \\ nil),
+    do: delegate(:start_unit, [unit])
 
-  @callback start_unit(String.t(), map()) :: :ok | {:error, term()}
-  @callback stop_unit(String.t(), map()) :: :ok | {:error, term()}
-  @callback restart_unit(String.t(), map()) :: :ok | {:error, term()}
-  @callback unit_status(String.t(), map()) :: {:ok, unit_state()} | {:error, term()}
-  @callback unit_logs(String.t(), pos_integer(), map()) :: {:ok, String.t()} | {:error, term()}
-  @callback unit_metrics(String.t(), map()) :: map()
-  @callback restart_host(map()) :: :ok | {:error, term()}
-  @callback shutdown_host(map()) :: :ok | {:error, term()}
+  def stop_unit(unit, _config \\ nil),
+    do: delegate(:stop_unit, [unit])
 
-  # systemd unit names: alphanumerics, dot, dash, underscore, @, colon (for templated units),
-  # plus a required ".service" suffix in practice. We accept a permissive but strictly safe set
-  # and explicitly reject any leading dash (which would be parsed as a CLI flag by systemctl /
-  # journalctl) or a path traversal sequence like "..".
-  @unit_name_re ~r/\A[A-Za-z0-9_][A-Za-z0-9._@:\-]{0,254}\z/
+  def restart_unit(unit, _config \\ nil),
+    do: delegate(:restart_unit, [unit])
 
-  @spec start_unit(String.t()) :: :ok | {:error, term()}
-  def start_unit(unit), do: dispatch(:start_unit, unit, [unit])
+  def unit_status(unit, _config \\ nil),
+    do: delegate(:unit_status, [unit])
 
-  @spec stop_unit(String.t()) :: :ok | {:error, term()}
-  def stop_unit(unit), do: dispatch(:stop_unit, unit, [unit])
+  def batch_unit_status(units),
+    do: delegate(:batch_unit_status, [units])
 
-  @spec restart_unit(String.t()) :: :ok | {:error, term()}
-  def restart_unit(unit), do: dispatch(:restart_unit, unit, [unit])
+  def unit_logs(unit, lines, _config \\ nil),
+    do: delegate(:unit_logs, [unit, lines])
 
-  @spec unit_status(String.t()) :: {:ok, unit_state()} | {:error, term()}
-  def unit_status(unit), do: dispatch(:unit_status, unit, [unit])
+  def unit_metrics(unit, _config \\ nil),
+    do: delegate(:unit_metrics, [unit])
 
-  @spec unit_logs(String.t(), pos_integer()) :: {:ok, String.t()} | {:error, term()}
-  def unit_logs(unit, lines), do: dispatch(:unit_logs, unit, [unit, lines])
+  def restart_host(_config \\ nil),
+    do: delegate(:restart_host, [])
 
-  @spec unit_metrics(String.t()) :: map()
-  def unit_metrics(unit), do: dispatch(:unit_metrics, unit, [unit])
+  def shutdown_host(_config \\ nil),
+    do: delegate(:shutdown_host, [])
 
-  @spec restart_host() :: :ok | {:error, term()}
-  def restart_host, do: dispatch_host_action(:restart_host)
+  defp delegate(fun, args) do
+    case Process.whereis(NixSwarm.Executor.Server) do
+      nil ->
+        apply(NixSwarm.Executor.Systemd, fun, args ++ [%{}])
 
-  @spec shutdown_host() :: :ok | {:error, term()}
-  def shutdown_host, do: dispatch_host_action(:shutdown_host)
-
-  @doc """
-  Returns `:ok` when `unit` is a safe systemd unit name and `{:error, :invalid_unit_name}`
-  otherwise. Used to prevent argument injection on `systemctl`/`journalctl` and to block
-  path traversal in the file-backed Fake executor.
-  """
-  @spec validate_unit_name(term()) :: :ok | {:error, :invalid_unit_name}
-  def validate_unit_name(unit) when is_binary(unit) do
-    cond do
-      not Regex.match?(@unit_name_re, unit) -> {:error, :invalid_unit_name}
-      String.contains?(unit, "..") -> {:error, :invalid_unit_name}
-      true -> :ok
-    end
-  end
-
-  def validate_unit_name(_), do: {:error, :invalid_unit_name}
-
-  defp dispatch(function, unit, args) do
-    case validate_unit_name(unit) do
-      :ok ->
-        {module, config} = adapter()
-        apply(module, function, args ++ [config])
-
-      {:error, _} = err ->
-        case function do
-          :unit_metrics -> default_metrics()
-          :unit_status -> {:ok, :unknown}
-          :unit_logs -> {:error, :invalid_unit_name}
-          _ -> err
-        end
-    end
-  end
-
-  defp dispatch_host_action(function) do
-    {module, config} = adapter()
-    apply(module, function, [config])
-  end
-
-  defp default_metrics do
-    %{
-      cpu: %{usage_ns: 0},
-      memory: %{used: 0},
-      disk: %{used: 0},
-      network: %{counter: 0},
-      started_at_ns: 0
-    }
-  end
-
-  defp adapter do
-    runtime = NixSwarm.Config.runtime()
-    executor_config = Map.put(runtime.executor, :command_timeout_ms, runtime.command_timeout_ms)
-
-    case executor_config.adapter do
-      :systemd -> {NixSwarm.Executor.Systemd, executor_config}
-      _ -> {NixSwarm.Executor.Fake, executor_config}
+      _pid ->
+        apply(NixSwarm.Executor.Server, fun, args)
     end
   end
 end
