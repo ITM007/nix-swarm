@@ -201,19 +201,9 @@ defmodule NixSwarm.Executor.Server do
       {output, 0} ->
         output
         |> String.split("\n\n", trim: true)
-        |> Enum.reduce(%{}, fn block, acc ->
-          lines = String.split(block, "\n", trim: true)
-          unit = Enum.find_value(lines, fn line ->
-            case Regex.run(~r/^Id=(.+)$/, line) do
-              [_, name] -> name
-              _ -> nil
-            end
-          end)
-          if unit do
-            Map.put(acc, unit, block |> parse_properties() |> map_unit_status())
-          else
-            acc
-          end
+        |> Enum.zip(units)
+        |> Enum.reduce(%{}, fn {block, unit}, acc ->
+          Map.put(acc, unit, block |> parse_properties() |> map_unit_status())
         end)
       _ ->
         Map.new(units, &{&1, :unknown})
