@@ -379,6 +379,7 @@ in
       serviceConfig = {
         Type = "notify";
         WatchdogSec = 30;
+        TimeoutStartSec = 180;
         Environment = [
           "NIX_SWARM_CONFIG_PATH=${renderedConfig}"
           "RELEASE_NODE=${cfg.nodeName}"
