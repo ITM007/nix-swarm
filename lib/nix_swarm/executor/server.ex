@@ -203,10 +203,10 @@ defmodule NixSwarm.Executor.Server do
         |> String.split("\n\n", trim: true)
         |> Enum.zip(units)
         |> Enum.reduce(%{}, fn {block, unit}, acc ->
-          Map.put(acc, unit, block |> parse_properties() |> map_unit_status())
+          Map.put(acc, unit, {:ok, block |> parse_properties() |> map_unit_status()})
         end)
       _ ->
-        Map.new(units, &{&1, :unknown})
+        Map.new(units, &{&1, {:ok, :unknown}})
     end
   end
 
