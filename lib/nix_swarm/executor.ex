@@ -35,7 +35,17 @@ defmodule NixSwarm.Executor do
   defp delegate(fun, args) do
     case Process.whereis(NixSwarm.Executor.Server) do
       nil ->
-        apply(NixSwarm.Executor.Systemd, fun, args ++ [%{}])
+        try do
+          apply(NixSwarm.Executor.Systemd, fun, args ++ [%{}])
+        rescue
+          _ ->
+            if fun == :batch_unit_status do
+              # Fallback: individual status calls
+              Map.new(args |> hd(), &{&1, apply(NixSwarm.Executor.Systemd, :unit_status, [&1, %{}]) |> elem(1)})
+            else
+              reraise __MODULE__, [], __STACKTRACE__
+            end
+        end
 
       _pid ->
         apply(NixSwarm.Executor.Server, fun, args)
