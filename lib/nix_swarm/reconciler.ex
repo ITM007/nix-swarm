@@ -166,7 +166,11 @@ defmodule NixSwarm.Reconciler do
         if all_units == [] do
           %{}
         else
-          Executor.batch_unit_status(all_units)
+          case Executor.batch_unit_status(all_units) do
+            statuses when is_map(statuses) -> statuses
+            {:ok, statuses} when is_map(statuses) -> statuses
+            _ -> %{}
+          end
         end
 
       results =
