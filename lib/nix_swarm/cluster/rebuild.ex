@@ -4,7 +4,7 @@ defmodule NixSwarm.Cluster.Rebuild do
 
   For each deployHost in cluster.nix, SSHs in and runs:
       1. nix flake lock --update-input nix-swarm
-      2. nixos-rebuild switch --impure --flake .#<hostname>
+      2. nixos-rebuild boot --impure --flake .#<hostname>
 
   Works across any NixOS system — uses $HOME/NixFiles by default.
   Customize the flake directory with --nixfiles.
@@ -52,7 +52,7 @@ defmodule NixSwarm.Cluster.Rebuild do
     IO.puts("  #{hostname}: updating flake lock via #{target}...")
 
     # Step 1: Update flake lock to get latest nix-swarm
-    update_cmd = "cd ~/NixFiles && nix flake update nix-swarm --extra-experimental-features 'nix-command flakes' 2>&1"
+    update_cmd = "cd /home/itm/NixFiles && nix flake update nix-swarm --extra-experimental-features 'nix-command flakes' 2>&1"
     update_args = ssh_command(target, update_cmd)
 
     case System.cmd("sh", ["-c", update_args], stderr_to_stdout: true) do
@@ -67,7 +67,7 @@ defmodule NixSwarm.Cluster.Rebuild do
 
     # Step 2: Rebuild
     IO.puts("    rebuilding...")
-    rebuild_cmd = "cd ~/NixFiles && nixos-rebuild switch --impure --flake .##{hostname} --accept-flake-config 2>&1"
+    rebuild_cmd = "cd /home/itm/NixFiles && nixos-rebuild boot --impure --flake .##{hostname} --accept-flake-config 2>&1"
     rebuild_args = ssh_command(target, rebuild_cmd)
 
     case System.cmd("sh", ["-c", rebuild_args], stderr_to_stdout: true) do
