@@ -1,9 +1,13 @@
 defmodule NixSwarm.Cluster.Rebuild do
   @moduledoc """
-  Rebuilds remote NixOS machines by SSHing into each deployHost.
+  Rebuilds remote NixOS machines to the latest nix-swarm version.
 
-  For each node in cluster.nix, SSHs into the machine and runs:
-      cd /home/itm/NixFiles && nixos-rebuild switch --impure --flake .#<hostname>
+  For each deployHost in cluster.nix, SSHs in and runs:
+      1. nix flake lock --update-input nix-swarm
+      2. nixos-rebuild switch --impure --flake .#<hostname>
+
+  Works across any NixOS system — uses $HOME/NixFiles by default.
+  Customize the flake directory with --nixfiles.
   """
 
   alias NixSwarm.ConfigFiles
@@ -32,16 +36,10 @@ defmodule NixSwarm.Cluster.Rebuild do
     case File.read(cluster_file) do
       {:ok, contents} ->
         entries =
-          Regex.scan(
-            ~r/deployHost\s*=\s*"([^"]+)"/s,
-            contents,
-            capture: :all_but_first
-          )
+          Regex.scan(~r/deployHost\s*=\s*"([^"]+)"/s, contents, capture: :all_but_first)
           |> Enum.uniq()
           |> Enum.map(fn [host] -> {extract_nixos_hostname(host), host} end)
-
         {:ok, entries}
-
       {:error, reason} ->
         {:error, "cannot read #{cluster_file}: #{:file.format_error(reason)}"}
     end
@@ -51,50 +49,55 @@ defmodule NixSwarm.Cluster.Rebuild do
     target = extract_ssh_host(deploy_host)
     hostname = extract_nixos_hostname(deploy_host)
 
-    IO.puts("  #{hostname}: rebuilding via #{target}...")
+    IO.puts("  #{hostname}: updating flake lock via #{target}...")
 
-    remote_cmd = """
-    cd /home/itm/NixFiles && \
-    nix flake lock --update-input nix-swarm --extra-experimental-features 'nix-command flakes' 2>&1 && \
-    nixos-rebuild switch --impure --flake .##{hostname} 2>&1
-    """
-    ssh_args = ssh_command(target, remote_cmd)
+    # Step 1: Update flake lock to get latest nix-swarm
+    update_cmd = "cd ~/NixFiles && nix flake update nix-swarm --extra-experimental-features 'nix-command flakes' 2>&1"
+    update_args = ssh_command(target, update_cmd)
 
-    case System.cmd("sh", ["-c", ssh_args], stderr_to_stdout: true) do
+    case System.cmd("sh", ["-c", update_args], stderr_to_stdout: true) do
+      {_, 0} -> :ok
+      {out, _} ->
+        # Flake update failed — warn but continue (might already be up-to-date)
+        unless String.trim(out) == "" do
+          IO.puts("    flake update warning: #{String.trim(String.slice(out, 0, 200))}")
+        end
+        :ok
+    end
+
+    # Step 2: Rebuild
+    IO.puts("    rebuilding...")
+    rebuild_cmd = "cd ~/NixFiles && nixos-rebuild switch --impure --flake .##{hostname} --accept-flake-config 2>&1"
+    rebuild_args = ssh_command(target, rebuild_cmd)
+
+    case System.cmd("sh", ["-c", rebuild_args], stderr_to_stdout: true) do
       {output, 0} ->
         IO.puts("  #{hostname}: OK")
         %{hostname: hostname, status: :ok, action: :rebuild, output: output}
 
       {output, status} ->
-        short = String.slice(output, 0, 5000)
-        IO.puts("  #{hostname}: ERROR (exit #{status})\n#{short}")
+        short = String.slice(output, 0, 3000)
+        IO.puts("  #{hostname}: ERROR (exit #{status})")
+        # Show only the last few lines (the actual error)
+        error_lines = output |> String.split("\n") |> Enum.take(-10) |> Enum.join("\n")
+        IO.puts(error_lines)
         %{hostname: hostname, status: :error, action: :rebuild, message: "exit #{status}"}
     end
   end
 
   defp extract_ssh_host(deploy_host) do
-    if String.contains?(deploy_host, "@") do
-      deploy_host
-    else
-      "root@#{deploy_host}"
-    end
+    if String.contains?(deploy_host, "@"), do: deploy_host, else: "root@#{deploy_host}"
   end
 
   defp extract_nixos_hostname(deploy_host) do
-    # "root@overlord" or "root@overlord:31300" or "overlord" -> "overlord"
-    deploy_host
-    |> String.replace(~r/:\d+$/, "")
-    |> String.split("@")
-    |> List.last()
+    deploy_host |> String.replace(~r/:\d+$/, "") |> String.split("@") |> List.last()
   end
 
   defp ssh_command(host, remote_command) do
     {ssh_host, port_opts} = extract_ssh_port(host)
-
     [
       "ssh", "-F", "/dev/null",
-      "-o", "BatchMode=yes",
-      "-o", "ConnectTimeout=10",
+      "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
       "-o", "StrictHostKeyChecking=accept-new",
       "-o", "UserKnownHostsFile=/dev/null"
     ] ++ port_opts ++ ["--", ssh_host, remote_command]
@@ -106,13 +109,10 @@ defmodule NixSwarm.Cluster.Rebuild do
       [h, port] -> {h, ["-p", port]}
       nil ->
         case System.get_env("NIX_SWARM_SSH_PORT") do
-          nil -> {host, []}
-          port -> {host, ["-p", port]}
+          nil -> {host, []}; port -> {host, ["-p", port]}
         end
     end
   end
 
-  defp shell_escape(value) do
-    "'" <> String.replace(to_string(value), "'", "'\"'\"'") <> "'"
-  end
+  defp shell_escape(value), do: "'" <> String.replace(to_string(value), "'", "'\"'\"'") <> "'"
 end

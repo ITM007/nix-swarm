@@ -18,7 +18,7 @@ defmodule NixSwarm.CLI do
     cluster_file: :string,
     machines_dir: :string,
     services_dir: :string,
-    remote_path: :string,
+    flake: :string,
     nixos_dir: :string
   ]
 
@@ -274,6 +274,14 @@ defmodule NixSwarm.CLI do
         else
           {:error, msg} -> {:error, msg}
         end
+
+      args == ["cluster", "rebuild"] ->
+        result =
+          NixSwarm.Cluster.Rebuild.run(
+            Keyword.take(opts, [:source, :cluster_file, :flake])
+          )
+
+        if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
 
       args in [[], ["tui"], ["help"]] ->
         if args == ["help"] do
