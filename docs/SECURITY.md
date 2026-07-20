@@ -1,55 +1,58 @@
 # Security model
 
-Nix-Swarm uses distributed Erlang for node-to-node and operator-to-node RPC. Authentication is based on a shared Erlang cookie. Nix-Swarm does not add TLS around distributed Erlang.
+## Trust boundaries
 
-Use Nix-Swarm only on trusted networks or over your own private overlay/VPN.
+- Nix code is trusted desired state.
+- Agents are trusted cluster members and share one BEAM cookie.
+- Operators are less trusted: they use SSH plus a local Unix socket that allows only overview, membership, and bounded log queries.
+- Workload logs are untrusted and have terminal control sequences removed before display or export.
 
-## Cookie handling
+The operator does not join distributed Erlang, receive the cookie, or expose arbitrary RPC. `nix-swarmd` runs as the `nix-swarm` system user. A generated polkit rule allows it to start, stop, restart, or reset only the exact units rendered from Nix.
 
-Generate a strong cookie once and install it outside the Nix store:
+## Agent network
 
-```bash
-tr -dc 'A-Za-z0-9_.-' </dev/urandom | head -c 48 > nix-swarm.cookie
-install -m 600 -o root -g root nix-swarm.cookie /etc/nixos/nix-swarm/secrets/nix-swarm.cookie
-```
-
-Prefer a local cookie file under `~/.config/nix-swarm/secrets/` or `NIX_SWARM_COOKIE_FILE` for operator launches:
-
-```bash
-install -Dm600 /path/to/nix-swarm.cookie ~/.config/nix-swarm/secrets/swarm.cookie
-swarm
-```
-
-Avoid `--cookie` except for temporary local testing because command-line arguments can be visible in process listings.
-
-If the packaged `swarm` wrapper cannot find a real cookie, it exports a local placeholder so the release runtime can still start far enough to print help text and higher-level errors. That placeholder is **not** a valid cluster secret and will not let the operator authenticate to real nodes.
-
-## Firewalling
-
-Restrict EPMD and distributed Erlang to cluster/operator networks:
+Distributed Erlang is authenticated by the cookie but is not encrypted in the default configuration. Bind and firewall ports `4369/tcp` and `4370/tcp` to a trusted encrypted WireGuard/Tailscale interface. Never expose them to the Internet or an untrusted LAN.
 
 ```nix
 services.nix-swarm = {
   openFirewall = true;
-  firewallInterfaces = [ "eth0" ];
+  firewallInterfaces = [ "wg0" ];
 };
 ```
 
-If `firewallInterfaces = []`, the module opens the ports on all interfaces. That is convenient for testing but not recommended for exposed hosts.
+The module rejects an unscoped firewall opening. A single-node cluster should leave `openFirewall = false`.
 
-## SSH host key trust during deploy/apply
+## Credentials
 
-Built-in apply and update workflows use `StrictHostKeyChecking=accept-new` for first contact with a deploy host. That avoids interactive SSH prompts during unattended runs, but it means the first connection still depends on the network path being trustworthy.
+The source cookie must be an absolute path outside `/nix/store`. At startup, systemd copies it through `LoadCredential`; the launcher validates its length, installs it as private `HOME/.erlang.cookie`, clears related environment variables, and never places it in process arguments.
 
-For production clusters, pre-populate `known_hosts` (or otherwise distribute trusted host keys) before using automated deploy/apply workflows across new machines.
+Recommended target mode is root-owned `0400`. Generate and install it with:
 
-## Compromise model
+```bash
+nix-swarm cluster credentials --source . --yes
+```
 
-Any actor with the Erlang cookie and network access to the distribution port can perform remote Erlang operations. Treat the cookie like a root-equivalent cluster secret.
+`secrets/*.cookie` and `secrets/*.key` are ignored by Git and excluded from package sources. For established environments, prefer sops-nix/agenix or systemd encrypted credentials.
 
-If the cookie leaks:
+Never put secrets in `services.nix-swarm.services.<name>.settings`; that data is copied into the world-readable Nix store.
 
-1. Block EPMD/distribution ports at the firewall.
-2. Generate a new cookie.
-3. Replace the cookie file on every node and operator workstation.
-4. Restart `nix-swarmd` on every node.
+## SSH and operator authorization
+
+Deploy and query commands require normal host-key verification and batch authentication. Add existing users to the query-socket group declaratively:
+
+```nix
+services.nix-swarm.operatorUsers = [ "alice" ];
+```
+
+Then use `--ssh-host alice@node-a`. Query operations are logged in the agent's journal. TUI actions cannot change desired state, services, or hosts.
+
+## Failure safety
+
+- configuration, intervals, replicas, unit names, query sizes, and log counts are bounded
+- agents refuse destructive reconciliation while live config digests differ
+- rollout batches stop on build, activation, membership, peer reachability, placement, or updated-node health failure; the final batch also requires config consistency and every owned unit to be healthy
+- systemd applies memory, task, file-descriptor, namespace, capability, filesystem, and device restrictions
+
+## Cookie rotation
+
+Block BEAM ports, replace the cookie on every peer, and restart the agents as one maintenance operation. Mixed cookies partition the cluster; separate partitions can temporarily run duplicate stateless replicas.

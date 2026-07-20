@@ -9,8 +9,6 @@ defmodule NixSwarm.Watchdog do
 
   use GenServer
 
-  @interval_ms 15_000
-
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
@@ -18,41 +16,56 @@ defmodule NixSwarm.Watchdog do
   @impl true
   def init(:ok) do
     notify_ready()
-    schedule_ping()
-    {:ok, %{}}
+    interval_ms = watchdog_interval_ms()
+    schedule_ping(interval_ms)
+    {:ok, %{interval_ms: interval_ms}}
   end
 
   @impl true
   def handle_info(:ping, state) do
     notify_watchdog()
-    schedule_ping()
+    schedule_ping(state.interval_ms)
     {:noreply, state}
   end
 
-  defp schedule_ping do
-    Process.send_after(self(), :ping, @interval_ms)
+  @impl true
+  def terminate(_reason, _state) do
+    _ = sd_notify(["--stopping", "--status=Nix-Swarm stopping"])
+    :ok
+  end
+
+  defp schedule_ping(interval_ms) do
+    Process.send_after(self(), :ping, interval_ms)
   end
 
   defp notify_ready do
-    _ = sd_notify("READY=1")
+    _ = sd_notify(["--ready", "--status=Nix-Swarm agent ready"])
   end
 
   defp notify_watchdog do
-    _ = sd_notify("WATCHDOG=1")
+    _ = sd_notify(["--watchdog", "--status=Nix-Swarm agent healthy"])
   end
 
-  # sd_notify communicates with systemd via a Unix socket at
-  # $NOTIFY_SOCKET. We use a shell call since there's no pure-Elixir
-  # sd_notify library and a NIF would be overkill.
-  defp sd_notify(msg) do
+  defp sd_notify(args) do
     socket = System.get_env("NOTIFY_SOCKET")
+    executable = System.get_env("NIX_SWARM_SYSTEMD_NOTIFY") || "systemd-notify"
 
     if socket do
-      System.cmd("systemd-notify", [msg], env: %{"NOTIFY_SOCKET" => socket})
+      System.cmd(executable, args,
+        env: [{"NOTIFY_SOCKET", socket}],
+        stderr_to_stdout: true
+      )
     else
       {:ok, ""}
     end
   rescue
     _ -> {:ok, ""}
+  end
+
+  defp watchdog_interval_ms do
+    case Integer.parse(System.get_env("WATCHDOG_USEC") || "") do
+      {microseconds, ""} when microseconds > 0 -> max(div(microseconds, 2_000), 1_000)
+      _ -> 15_000
+    end
   end
 end

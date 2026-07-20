@@ -1,63 +1,70 @@
-# Getting started with Nix-Swarm
+# Getting started
 
-Nix-Swarm is for small, trusted NixOS clusters where Nix defines desired state, systemd runs services, and each node independently computes placement.
-
-## Minimal workflow
-
-1. Generate one strong Erlang cookie and install it on every managed node outside the Nix store:
-
-   ```bash
-   tr -dc 'A-Za-z0-9_.-' </dev/urandom | head -c 48 > nix-swarm.cookie
-   install -m 600 -o root -g root nix-swarm.cookie /etc/nixos/nix-swarm/secrets/nix-swarm.cookie
-   ```
-
-2. Add the Nix-Swarm package to your operator workstation and import the NixOS module on each managed node.
-
-3. Keep shared topology in `cluster/cluster.nix`, machine-specific runtime setup in `machines/*.nix`, and backing service modules in `cluster/services/*.nix`.
-
-4. Put the shared operator cookie under `~/.config/nix-swarm/secrets/swarm.cookie` and launch the TUI from a workstation that can reach one cluster node:
-
-   ```bash
-   install -Dm600 /path/to/nix-swarm.cookie ~/.config/nix-swarm/secrets/swarm.cookie
-   swarm
-   ```
-
-5. `swarm` uses `NIX_SWARM_TARGET` when it is set; otherwise it connects to the first peer in `cluster/cluster.nix`. Use `--target NODE` to override that default for one launch.
-6. Use the TUI to inspect health, view placement, read logs, dry-run config changes, apply config changes, and roll out code/config updates.
-7. Keep the editable config tree in `~/.config/nix-swarm`, or point `--source` at a Git checkout when you want version-controlled cluster changes.
-
-## Network requirements
-
-Nix-Swarm uses distributed Erlang. It should run only on a trusted LAN or private overlay/VPN.
-
-| Traffic | Default port | Direction |
-|---|---:|---|
-| EPMD discovery | `4369/tcp` | operator to node, node to node |
-| Erlang distribution | `4370/tcp` | operator to node, node to node |
-| SSH deploy/update | `22/tcp` | operator to deploy hosts |
-
-If `services.nix-swarm.openFirewall = true`, the NixOS module opens the EPMD and distribution ports. Set `firewallInterfaces` to restrict those ports to a management interface.
-
-## First service
-
-A Nix-Swarm service has two pieces:
-
-- a placement entry under `services.nix-swarm.services.<name>` in `cluster/cluster.nix`
-- a NixOS service definition under `cluster/services/<name>.nix`
-
-For one replica, the default unit template is `%{service}.service`. For multiple replicas, it is `%{service}@%{slot}.service`, so the backing NixOS module must define a matching template unit such as `systemd.services."example-web@"`. If a service exposes ports, each slot needs a distinct port because placement may wrap and run more than one slot on a node when replicas exceed live eligible nodes.
-
-If constraints match no nodes, or if eligible nodes are offline, cluster status now reports placement diagnostics so the TUI/API can explain why slots have no owner.
-
-Set `replicas = 0` to disable a service declaratively. Nix-Swarm schedules no slots and best-effort stops units it previously owned while the daemon still remembers them.
-
-## Troubleshooting quick checks
+## 1. Create a working tree
 
 ```bash
-nc -vz example-node-a.local 4369
-nc -vz example-node-a.local 4370
-ssh -o BatchMode=yes root@example-node-a.local true
-journalctl -u nix-swarmd -n 100 --no-pager
+nix profile add github:ITM007/nix-swarm#operator
+nix-swarm --help
+cd ~/.config/nix-swarm
 ```
 
-Common causes of launch failures are cookie mismatch, blocked EPMD/distribution ports, wrong longname/shortname mode, or an operator node name that the target cannot route back to.
+The packaged starter is a one-node flake with one example systemd service. Commit this directory to Git after adapting it.
+
+## 2. Adapt the node
+
+Edit these values:
+
+- `flake.nix`: system architecture
+- `cluster.nix`: BEAM node name, labels, `deployHost`, and NixOS configuration name
+- `machines/node-a.nix`: hostname, BEAM node name, and original `system.stateVersion`
+
+Capture the target's hardware module:
+
+```bash
+ssh root@node-a nixos-generate-config --show-hardware-config \
+  > machines/hardware-configuration.nix
+nix flake lock
+```
+
+Use a resolvable short name such as `nix-swarm@node-a`, or a resolvable FQDN on every peer. Do not mix short and long distributed-Erlang names.
+
+## 3. Review and initialize
+
+Pre-populate SSH host keys, then run:
+
+```bash
+ssh -o StrictHostKeyChecking=yes root@node-a true
+nix-swarm cluster plan --source .
+nix-swarm cluster init --source . --yes
+```
+
+Initialization securely generates `secrets/nix-swarm.cookie` if absent, installs it on every configured deploy host, and applies the flake. The local cookie is ignored by Git.
+
+## 4. Inspect
+
+```bash
+nix-swarm cluster doctor --source . --target nix-swarm@node-a
+nix-swarm cluster status --source . --target nix-swarm@node-a
+nix-swarm --source . --target nix-swarm@node-a
+```
+
+For a non-root operator, declare `operatorUsers = [ "alice" ];` on every node and pass `--ssh-host alice@node-a`.
+
+## 5. Add services and nodes
+
+```bash
+nix-swarm service add --source . --name worker --template custom --replicas 2
+```
+
+Each placement entry needs a matching NixOS/systemd unit. `service add` creates one self-contained module with the placement declaration and `%{service}@%{slot}.service`; import that generated file from `cluster.nix`. The command never rewrites an existing Nix module.
+
+For additional nodes, add a `nixosConfigurations` output, a machine module, matching `peers`/`nodes` entries, and keep `nixSwarm.deploymentManifest` generated from those configurations. Run BEAM traffic only over a private overlay:
+
+```nix
+services.nix-swarm = {
+  openFirewall = true;
+  firewallInterfaces = [ "wg0" ]; # or tailscale0
+};
+```
+
+Operators use SSH; only agent-to-agent traffic needs TCP `4369` and `4370`.

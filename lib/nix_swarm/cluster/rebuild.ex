@@ -1,118 +1,33 @@
 defmodule NixSwarm.Cluster.Rebuild do
   @moduledoc """
-  Rebuilds remote NixOS machines to the latest nix-swarm version.
+  Compatibility entry point for cluster-wide native NixOS deployment.
 
-  For each deployHost in cluster.nix, SSHs in and runs:
-      1. nix flake lock --update-input nix-swarm
-      2. nixos-rebuild boot --impure --flake .#<hostname>
-
-  Works across any NixOS system — uses $HOME/NixFiles by default.
-  Customize the flake directory with --nixfiles.
+  Host discovery, validation, closure copying, and activation are delegated to
+  `NixSwarm.Deploy`; this module does not parse Nix source or execute remote
+  shell scripts.
   """
 
-  alias NixSwarm.ConfigFiles
+  alias NixSwarm.Deploy
 
-  def run(opts \\ []) do
-    source = Keyword.get(opts, :source)
-    paths = if source, do: ConfigFiles.defaults(source), else: ConfigFiles.normalize_paths(%{})
-    cluster_file = Keyword.get(opts, :cluster_file, paths.cluster_file)
+  def run(opts \\ [], deploy_fun \\ &Deploy.run/1) when is_function(deploy_fun, 1) do
+    deploy = deploy_fun.(opts)
 
-    IO.puts("Rebuilding cluster nodes from #{cluster_file}\n")
-
-    case parse_nodes(cluster_file) do
-      {:ok, nodes} when nodes == [] ->
-        {:error, "no nodes with deployHost found in #{cluster_file}"}
-
-      {:ok, nodes} ->
-        results = Enum.map(nodes, fn {_name, deploy_host} -> rebuild_node(deploy_host) end)
-        %{nodes: results, ok: Enum.all?(results, &(&1.status == :ok))}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    %{
+      ok: true,
+      deploy: deploy,
+      nodes:
+        Enum.map(deploy.results, fn result ->
+          %{
+            hostname: result.configuration,
+            host: result.host,
+            status: :ok,
+            action: if(deploy.dry_run, do: :preview, else: :switch),
+            output: Map.get(result, :rebuild_output, "")
+          }
+        end)
+    }
+  rescue
+    error in [ArgumentError, RuntimeError] ->
+      %{ok: false, nodes: [], error: Exception.message(error)}
   end
-
-  defp parse_nodes(cluster_file) do
-    case File.read(cluster_file) do
-      {:ok, contents} ->
-        entries =
-          Regex.scan(~r/deployHost\s*=\s*"([^"]+)"/s, contents, capture: :all_but_first)
-          |> Enum.uniq()
-          |> Enum.map(fn [host] -> {extract_nixos_hostname(host), host} end)
-        {:ok, entries}
-      {:error, reason} ->
-        {:error, "cannot read #{cluster_file}: #{:file.format_error(reason)}"}
-    end
-  end
-
-  defp rebuild_node(deploy_host) do
-    target = extract_ssh_host(deploy_host)
-    hostname = extract_nixos_hostname(deploy_host)
-
-    IO.puts("  #{hostname}: updating flake lock via #{target}...")
-
-    # Step 1: Update flake lock to get latest nix-swarm
-    update_cmd = "cd /home/itm/NixFiles && nix flake update nix-swarm --extra-experimental-features 'nix-command flakes' 2>&1"
-    update_args = ssh_command(target, update_cmd)
-
-    case System.cmd("sh", ["-c", update_args], stderr_to_stdout: true) do
-      {_, 0} -> :ok
-      {out, _} ->
-        # Flake update failed — warn but continue (might already be up-to-date)
-        unless String.trim(out) == "" do
-          IO.puts("    flake update warning: #{String.trim(String.slice(out, 0, 200))}")
-        end
-        :ok
-    end
-
-    # Step 2: Rebuild
-    IO.puts("    rebuilding...")
-    rebuild_cmd = "cd /home/itm/NixFiles && nixos-rebuild boot --impure --flake .##{hostname} --accept-flake-config 2>&1"
-    rebuild_args = ssh_command(target, rebuild_cmd)
-
-    case System.cmd("sh", ["-c", rebuild_args], stderr_to_stdout: true) do
-      {output, 0} ->
-        IO.puts("  #{hostname}: OK")
-        %{hostname: hostname, status: :ok, action: :rebuild, output: output}
-
-      {output, status} ->
-        short = String.slice(output, 0, 3000)
-        IO.puts("  #{hostname}: ERROR (exit #{status})")
-        # Show only the last few lines (the actual error)
-        error_lines = output |> String.split("\n") |> Enum.take(-10) |> Enum.join("\n")
-        IO.puts(error_lines)
-        %{hostname: hostname, status: :error, action: :rebuild, message: "exit #{status}"}
-    end
-  end
-
-  defp extract_ssh_host(deploy_host) do
-    if String.contains?(deploy_host, "@"), do: deploy_host, else: "root@#{deploy_host}"
-  end
-
-  defp extract_nixos_hostname(deploy_host) do
-    deploy_host |> String.replace(~r/:\d+$/, "") |> String.split("@") |> List.last()
-  end
-
-  defp ssh_command(host, remote_command) do
-    {ssh_host, port_opts} = extract_ssh_port(host)
-    [
-      "ssh", "-F", "/dev/null",
-      "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-      "-o", "StrictHostKeyChecking=accept-new",
-      "-o", "UserKnownHostsFile=/dev/null"
-    ] ++ port_opts ++ ["--", ssh_host, remote_command]
-    |> Enum.map_join(" ", &shell_escape/1)
-  end
-
-  defp extract_ssh_port(host) do
-    case Regex.run(~r/^(.+):(\d+)$/, host, capture: :all_but_first) do
-      [h, port] -> {h, ["-p", port]}
-      nil ->
-        case System.get_env("NIX_SWARM_SSH_PORT") do
-          nil -> {host, []}; port -> {host, ["-p", port]}
-        end
-    end
-  end
-
-  defp shell_escape(value), do: "'" <> String.replace(to_string(value), "'", "'\"'\"'") <> "'"
 end

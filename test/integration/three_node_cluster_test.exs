@@ -15,7 +15,7 @@ defmodule NixSwarm.ThreeNodeClusterTest do
     {:ok, cluster: cluster}
   end
 
-  test "three node cluster supports status, diagnostics, service control, machine control, logs, and failover",
+  test "three node cluster supports status, diagnostics, logs, durable state, and failover",
        %{
          cluster: cluster
        } do
@@ -41,63 +41,27 @@ defmodule NixSwarm.ThreeNodeClusterTest do
                converged?(cluster.root, cluster.nodes, status.placements)
              end)
 
-    remote =
-      NixSwarm.Remote.options!(
-        target: Atom.to_string(node_b),
-        cookie: Atom.to_string(Node.get_cookie())
-      )
+    remote = NixSwarm.TestCluster.remote_for(cluster, node_b)
 
     diagnostic = NixSwarm.Remote.diagnose_connection(remote)
 
-    assert diagnostic.connect_result in [true, :ignored]
+    assert diagnostic.connect_result == true
     assert diagnostic.remote_probe.cluster_members.status == :ok
 
     overview = :rpc.call(node_b, NixSwarm.API, :cluster_overview, [])
     assert length(overview.status.nodes) == 3
 
-    stop_result = :rpc.call(node_b, NixSwarm.API, :stop_service, ["gitea"])
-    assert length(stop_result) == 3
-
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               service_stopped?(cluster, "gitea")
-             end)
-
-    start_result = :rpc.call(node_b, NixSwarm.API, :start_service, ["gitea"])
-    assert length(start_result) == 3
-
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               status_after_start = :rpc.call(node_b, NixSwarm.API, :cluster_status, [])
-               converged?(cluster.root, cluster.nodes, status_after_start.placements)
-             end)
-
-    restart_result = :rpc.call(node_b, NixSwarm.API, :restart_service, ["gitea"])
-    assert length(restart_result) == 2
-
     logs = :rpc.call(node_c, NixSwarm.API, :logs, ["gitea", 50])
 
     assert Enum.any?(logs, fn {_node, entries} ->
-             Enum.any?(entries, &String.contains?(&1.logs, "restart"))
+             Enum.any?(entries, &String.contains?(&1.logs, "start"))
            end)
 
-    assert :ok = :rpc.call(node_b, NixSwarm.API, :restart_machine, [node_c])
+    operational_states =
+      Enum.map(cluster.nodes, &:rpc.call(&1, NixSwarm.OperationalState, :snapshot, []))
 
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               cluster.root
-               |> NixSwarm.TestCluster.machine_actions(node_c)
-               |> Enum.any?(&String.contains?(&1, "restart"))
-             end)
-
-    assert :ok = :rpc.call(node_b, NixSwarm.API, :shutdown_machine, [node_b])
-
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               cluster.root
-               |> NixSwarm.TestCluster.machine_actions(node_b)
-               |> Enum.any?(&String.contains?(&1, "shutdown"))
-             end)
+    assert Enum.all?(operational_states, &(&1.generation == "integration-test"))
+    assert Enum.any?(operational_states, &(&1.assignments != []))
 
     peer_a = NixSwarm.TestCluster.peer_for(cluster, node_a)
     :ok = :peer.stop(peer_a)
@@ -122,16 +86,11 @@ defmodule NixSwarm.ThreeNodeClusterTest do
   } do
     [_, node_b, _] = cluster.nodes
 
-    remote =
-      NixSwarm.Remote.options!(
-        target: Atom.to_string(node_b),
-        cookie: Atom.to_string(Node.get_cookie())
-      )
+    remote = NixSwarm.TestCluster.remote_for(cluster, node_b)
 
     diagnostic = NixSwarm.Remote.diagnose_connection(remote, skip_port_checks: true)
 
-    assert diagnostic.connect_result in [true, :ignored]
-    assert diagnostic.target_port_checks == []
+    assert diagnostic.connect_result == true
     assert diagnostic.remote_probe.cluster_members.status == :ok
   end
 
@@ -166,18 +125,6 @@ defmodule NixSwarm.ThreeNodeClusterTest do
                      "stopped"
                end)
              end)
-  end
-
-  defp service_stopped?(cluster, service_name) do
-    status = :rpc.call(hd(cluster.nodes), NixSwarm.API, :cluster_status, [])
-
-    status.placements
-    |> Map.get(service_name, [])
-    |> Enum.all?(fn slot ->
-      Enum.all?(cluster.nodes, fn node ->
-        NixSwarm.TestCluster.unit_state(cluster.root, node, slot.unit) == "stopped"
-      end)
-    end)
   end
 
   defp converged?(root, live_nodes, placements) do

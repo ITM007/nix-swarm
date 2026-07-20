@@ -1,10 +1,10 @@
 defmodule NixSwarm.API do
   @moduledoc """
-  Public API surface for the Nix-Swarm runtime.
+  Internal API surface for trusted Nix-Swarm peers.
 
-  Functions in this module are callable both locally and over distributed Erlang RPC
-  from the CLI/TUI operator tools. The module serves as the remote-callable contract
-  between the operator console and managed cluster nodes.
+  Agents call this module locally and across authenticated distributed Erlang.
+  Operator tools cannot invoke it directly: `NixSwarm.QueryServer` exposes a small,
+  read-only allowlist over a local Unix socket and SSH.
   """
 
   alias NixSwarm.ClusterLogs
@@ -50,15 +50,21 @@ defmodule NixSwarm.API do
   """
   def local_status do
     build_version = version()
+    config = NixSwarm.Config.current()
+    node_metadata = Map.get(config.nodes, Node.self(), %{})
 
     %{
       node: Node.self(),
+      availability: Map.get(node_metadata, :availability, :active),
       live_nodes: NixSwarm.Cluster.live_nodes(),
-      generation: NixSwarm.Config.runtime().generation,
+      membership: NixSwarm.Cluster.membership(),
+      generation: config.runtime.generation,
+      config_digest: NixSwarm.Config.digest_for(config),
       version: build_version,
       build_version: build_version,
       release_version: NixSwarm.release_label(),
       services: Reconciler.local_status(),
+      operational_state: NixSwarm.OperationalState.metadata(),
       metrics: node_metrics(),
       network_info: network_info()
     }
@@ -83,17 +89,28 @@ defmodule NixSwarm.API do
     end
   end
 
+  @doc "Returns the immutable desired-state digest used for safe reconciliation gates."
+  def config_digest, do: NixSwarm.Config.digest()
+
   @doc "Returns cluster-wide status: placement plan, diagnostics, and per-node status."
   def cluster_status do
     live_nodes = NixSwarm.Cluster.live_nodes()
+    placement_nodes = NixSwarm.Cluster.placement_nodes()
     config = NixSwarm.Config.current()
+    nodes = collect_statuses(live_nodes)
+    config_digests = node_config_digests(nodes)
 
     %{
       queried_node: Node.self(),
       live_nodes: live_nodes,
-      placements: Placement.plan(config, live_nodes),
-      placement_diagnostics: Placement.diagnostics(config, live_nodes),
-      nodes: collect_statuses(live_nodes)
+      placement_nodes: placement_nodes,
+      placements: Placement.plan(config, placement_nodes),
+      placement_diagnostics:
+        Placement.diagnostics(config, placement_nodes) ++
+          config_consistency_diagnostics(config_digests),
+      config_digests: config_digests,
+      config_consistent?: config_digests |> Map.values() |> Enum.uniq() |> length() <= 1,
+      nodes: nodes
     }
   end
 
@@ -102,8 +119,12 @@ defmodule NixSwarm.API do
     %{
       queried_node: Node.self(),
       live_nodes: NixSwarm.Cluster.live_nodes(),
+      placement_nodes: NixSwarm.Cluster.placement_nodes(),
+      membership: NixSwarm.Cluster.membership(),
+      required_nodes: NixSwarm.Cluster.required_nodes(),
       configured_nodes: NixSwarm.Config.peers(),
-      deploy_hosts: deploy_hosts()
+      deploy_hosts: deploy_hosts(),
+      deploy_configurations: deploy_configurations()
     }
   end
 
@@ -113,6 +134,52 @@ defmodule NixSwarm.API do
       members: cluster_members(),
       status: cluster_status(),
       ingress: ingress_info()
+    }
+  end
+
+  @doc "Returns one bounded, partial-failure-safe payload for an operator refresh."
+  def operator_snapshot(selected_service, selected_node, lines) do
+    overview = cluster_overview()
+    live_nodes = overview.members.live_nodes
+
+    service_logs =
+      if is_binary(selected_service) and selected_service != "",
+        do: logs(selected_service, lines),
+        else: []
+
+    node_service_logs =
+      if is_atom(selected_node),
+        do:
+          normalize_snapshot_rpc(
+            rpc(selected_node, __MODULE__, :local_node_service_logs, [lines])
+          ),
+        else: nil
+
+    cluster_log_results =
+      NixSwarm.RPC.multicall(live_nodes, __MODULE__, :local_cluster_logs, [lines])
+
+    cluster_logs =
+      Map.new(cluster_log_results, fn
+        {node, {:ok, output}} -> {node, output}
+        {node, {:error, reason}} -> {node, {:error, reason}}
+      end)
+
+    errors =
+      cluster_logs
+      |> Enum.flat_map(fn
+        {node, {:error, reason}} -> [%{scope: :cluster_logs, node: node, reason: inspect(reason)}]
+        {_node, _output} -> []
+      end)
+      |> maybe_add_snapshot_error(:node_service_logs, selected_node, node_service_logs)
+
+    %{
+      overview: overview,
+      service_logs: service_logs,
+      selected_node_service_logs: node_service_logs,
+      selected_node_cluster_logs:
+        if(is_atom(selected_node), do: Map.get(cluster_logs, selected_node, ""), else: ""),
+      cluster_logs: cluster_logs,
+      errors: errors
     }
   end
 
@@ -128,92 +195,6 @@ defmodule NixSwarm.API do
     |> Enum.map(fn node ->
       {node, normalize_rpc_result(rpc(node, Reconciler, :reconcile_now, []))}
     end)
-  end
-
-  @doc "Starts a service across all live nodes."
-  def start_service(service_name) do
-    service_name = to_string(service_name)
-
-    NixSwarm.Cluster.live_nodes()
-    |> Enum.map(fn node ->
-      {node, rpc(node, __MODULE__, :start_local_service, [service_name])}
-    end)
-  end
-
-  @doc "Stops a service across all live nodes."
-  def stop_service(service_name) do
-    service_name = to_string(service_name)
-
-    NixSwarm.Cluster.live_nodes()
-    |> Enum.map(fn node ->
-      {node, rpc(node, __MODULE__, :stop_local_service, [service_name])}
-    end)
-  end
-
-  @doc "Restarts a service on its owning nodes only."
-  def restart_service(service_name) do
-    service_name = to_string(service_name)
-
-    NixSwarm.Cluster.live_nodes()
-    |> owners_for(service_name)
-    |> Enum.map(fn node ->
-      {node, rpc(node, __MODULE__, :restart_local_service, [service_name])}
-    end)
-  end
-
-  @doc "Starts a service on a specific node."
-  def start_service_on_node(node_name, service_name) do
-    node_name
-    |> normalize_target_node()
-    |> rpc(__MODULE__, :start_local_service, [to_string(service_name)])
-  end
-
-  @doc "Stops a service on a specific node."
-  def stop_service_on_node(node_name, service_name) do
-    node_name
-    |> normalize_target_node()
-    |> rpc(__MODULE__, :stop_local_service, [to_string(service_name)])
-  end
-
-  @doc "Restarts a service on a specific node."
-  def restart_service_on_node(node_name, service_name) do
-    node_name
-    |> normalize_target_node()
-    |> rpc(__MODULE__, :restart_local_service, [to_string(service_name)])
-  end
-
-  def start_local_service(service_name) do
-    Reconciler.start_local_service(service_name)
-  end
-
-  def stop_local_service(service_name) do
-    Reconciler.stop_local_service(service_name)
-  end
-
-  def restart_local_service(service_name) do
-    Reconciler.restart_local_service(service_name)
-  end
-
-  @doc "Restarts the target machine."
-  def restart_machine(node_name) do
-    node_name
-    |> normalize_target_node()
-    |> rpc(__MODULE__, :restart_local_machine, [])
-  end
-
-  @doc "Shuts down the target machine."
-  def shutdown_machine(node_name) do
-    node_name
-    |> normalize_target_node()
-    |> rpc(__MODULE__, :shutdown_local_machine, [])
-  end
-
-  def restart_local_machine do
-    Executor.restart_host()
-  end
-
-  def shutdown_local_machine do
-    Executor.shutdown_host()
   end
 
   @doc "Fetches service logs from owning nodes."
@@ -239,9 +220,9 @@ defmodule NixSwarm.API do
 
   def local_node_service_logs(lines) do
     config = NixSwarm.Config.current()
-    live_nodes = NixSwarm.Cluster.live_nodes()
+    placement_nodes = NixSwarm.Cluster.placement_nodes()
 
-    Placement.local_units(Node.self(), config, live_nodes)
+    Placement.local_units(Node.self(), config, placement_nodes)
     |> Enum.group_by(& &1.service)
     |> Enum.sort_by(fn {service, _slots} -> service end)
     |> Enum.map(fn {service, slots} ->
@@ -289,15 +270,15 @@ defmodule NixSwarm.API do
 
   def local_logs(service_name, lines) do
     config = NixSwarm.Config.current()
-    live_nodes = NixSwarm.Cluster.live_nodes()
+    placement_nodes = NixSwarm.Cluster.placement_nodes()
 
-    Placement.local_units(Node.self(), config, live_nodes)
+    Placement.local_units(Node.self(), config, placement_nodes)
     |> Enum.filter(&(&1.service == service_name))
     |> Enum.map(fn slot ->
       logs =
         case Executor.unit_logs(slot.unit, lines) do
-          {:ok, output} -> output
-          {:error, reason} -> inspect(reason)
+          {:ok, output} -> ClusterLogs.terminal_safe(output)
+          {:error, reason} -> reason |> inspect() |> ClusterLogs.terminal_safe()
         end
 
       %{slot: slot.slot, unit: slot.unit, logs: logs}
@@ -379,9 +360,28 @@ defmodule NixSwarm.API do
 
     %{
       ips: ips,
-      ports: [22, 80, 443, 4369, 4370]
+      ports: [
+        environment_port("ERL_EPMD_PORT", 4369),
+        environment_port("NIX_SWARM_DISTRIBUTION_PORT", 4370)
+      ]
     }
   end
+
+  defp environment_port(name, default) do
+    case Integer.parse(System.get_env(name) || "") do
+      {port, ""} when port in 1..65_535 -> port
+      _ -> default
+    end
+  end
+
+  defp normalize_snapshot_rpc({:badrpc, reason}), do: {:error, reason}
+  defp normalize_snapshot_rpc(value), do: value
+
+  defp maybe_add_snapshot_error(errors, _scope, _node, {:error, reason}) do
+    [%{scope: :node_service_logs, reason: inspect(reason)} | errors]
+  end
+
+  defp maybe_add_snapshot_error(errors, _scope, _node, _value), do: errors
 
   defp owners_for(live_nodes, service_name) do
     NixSwarm.Config.current()
@@ -393,34 +393,46 @@ defmodule NixSwarm.API do
   end
 
   defp collect_statuses(nodes) do
-    Enum.map(nodes, fn node ->
-      status =
-        if node == Node.self() do
-          local_status()
-        else
-          case :rpc.call(node, __MODULE__, :local_status, [], NixSwarm.rpc_timeout_ms()) do
-            {:badrpc, reason} ->
-              %{
-                node: node,
-                live_nodes: [],
-                error: :node_unreachable,
-                reason: inspect(reason)
-              }
+    NixSwarm.RPC.multicall(nodes, __MODULE__, :local_status, [])
+    |> Enum.map(fn
+      {node, {:ok, status}} ->
+        {node, status}
 
-            result ->
-              result
-          end
-        end
-
-      {node, status}
+      {node, {:error, reason}} ->
+        {node,
+         %{
+           node: node,
+           live_nodes: [],
+           error: :node_unreachable,
+           reason: inspect(reason)
+         }}
     end)
   end
 
-  defp rpc(node, module, function, args) do
-    if node == Node.self() do
-      apply(module, function, args)
+  defp node_config_digests(nodes) do
+    Map.new(nodes, fn {node, status} -> {node, Map.get(status, :config_digest, "unknown")} end)
+  end
+
+  defp config_consistency_diagnostics(config_digests) do
+    if config_digests |> Map.values() |> Enum.uniq() |> length() <= 1 do
+      []
     else
-      :rpc.call(node, module, function, args, NixSwarm.rpc_timeout_ms())
+      [
+        %{
+          service: "cluster",
+          severity: :error,
+          reason: :config_digest_mismatch,
+          config_digests: config_digests,
+          message: "cluster nodes are running different desired-state configurations"
+        }
+      ]
+    end
+  end
+
+  defp rpc(node, module, function, args) do
+    case NixSwarm.RPC.call(node, module, function, args) do
+      {:ok, result} -> result
+      {:error, reason} -> {:badrpc, reason}
     end
   end
 
@@ -446,8 +458,8 @@ defmodule NixSwarm.API do
 
   defp read_unit_logs(unit, lines) do
     case Executor.unit_logs(unit, lines) do
-      {:ok, output} -> output
-      {:error, reason} -> inspect(reason)
+      {:ok, output} -> ClusterLogs.terminal_safe(output)
+      {:error, reason} -> reason |> inspect() |> ClusterLogs.terminal_safe()
     end
   end
 
@@ -480,6 +492,19 @@ defmodule NixSwarm.API do
       case Map.get(attrs, :deploy_host) do
         nil -> acc
         host -> Map.put(acc, node, host)
+      end
+    end)
+  end
+
+  defp deploy_configurations do
+    NixSwarm.Config.current().nodes
+    |> Enum.reduce(%{}, fn {_node, attrs}, acc ->
+      case {Map.get(attrs, :deploy_host), Map.get(attrs, :nixos_configuration)} do
+        {host, configuration} when is_binary(host) and is_binary(configuration) ->
+          Map.put(acc, host, configuration)
+
+        _ ->
+          acc
       end
     end)
   end

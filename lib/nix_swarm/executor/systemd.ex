@@ -2,6 +2,8 @@ defmodule NixSwarm.Executor.Systemd do
   @moduledoc false
 
   @default_command_timeout_ms 5_000
+  @disk_cache_table __MODULE__.DiskCache
+  @disk_cache_ttl_ms 60_000
 
   def start_unit(unit, config) do
     reset_failed(unit, config)
@@ -31,6 +33,36 @@ defmodule NixSwarm.Executor.Systemd do
 
       {_output, _status} ->
         {:ok, :unknown}
+    end
+  end
+
+  def batch_unit_status([], _config), do: %{}
+
+  def batch_unit_status(units, config) do
+    properties = ["Id", "ActiveState", "SubState", "Result"]
+
+    case system_cmd(
+           "systemctl",
+           ["show" | units] ++ Enum.map(properties, &"--property=#{&1}"),
+           config
+         ) do
+      {output, 0} ->
+        parsed =
+          output
+          |> String.split(~r/\n\s*\n/, trim: true)
+          |> Enum.reduce(%{}, fn block, acc ->
+            values = parse_properties(block)
+
+            case Map.get(values, "Id") do
+              id when is_binary(id) -> Map.put(acc, id, {:ok, map_unit_status(values)})
+              _ -> acc
+            end
+          end)
+
+        Map.new(units, &{&1, Map.get(parsed, &1, {:ok, :unknown})})
+
+      _error ->
+        Map.new(units, &{&1, {:ok, :unknown}})
     end
   end
 
@@ -89,8 +121,12 @@ defmodule NixSwarm.Executor.Systemd do
     end
   end
 
-  def restart_host(config), do: systemctl(["reboot"], config)
-  def shutdown_host(config), do: systemctl(["poweroff"], config)
+  def unit_cpu_usage(unit, config) do
+    case system_cmd("systemctl", ["show", unit, "--property=CPUUsageNSec"], config) do
+      {output, 0} -> output |> parse_properties() |> numeric_property("CPUUsageNSec")
+      _error -> 0
+    end
+  end
 
   defp systemctl(args, config) do
     case system_cmd("systemctl", args, config) do
@@ -146,8 +182,11 @@ defmodule NixSwarm.Executor.Systemd do
     result = Map.get(values, "Result", "")
 
     cond do
-      active_state == "active" ->
+      active_state == "active" and sub_state in ["running", "exited", "listening"] ->
         :running
+
+      active_state == "active" ->
+        :starting
 
       active_state == "activating" and restarting_state?(sub_state, result) ->
         :restarting
@@ -187,24 +226,74 @@ defmodule NixSwarm.Executor.Systemd do
         0
 
       paths ->
-        case system_cmd("du", ["-sb"] ++ paths, config) do
-          {output, 0} -> sum_du_output(output)
-          {:error, :timeout} -> 0
-          {_output, _status} -> 0
+        key = Enum.sort(paths)
+
+        case cached_disk_usage(key) do
+          {:ok, bytes} ->
+            bytes
+
+          :miss ->
+            bytes =
+              case system_cmd("du", ["-sb"] ++ paths, config) do
+                {output, 0} -> sum_du_output(output)
+                {:error, :timeout} -> 0
+                {_output, _status} -> 0
+              end
+
+            cache_disk_usage(key, bytes)
+            bytes
         end
     end
   end
 
-  defp system_cmd(command, args, config) do
-    task = Task.async(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+  defp cached_disk_usage(key) do
+    table = disk_cache_table()
+    now_ms = System.monotonic_time(:millisecond)
 
-    try do
-      Task.await(task, command_timeout_ms(config))
-    catch
-      :exit, {:timeout, _} ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, :timeout}
+    case :ets.lookup(table, key) do
+      [{^key, bytes, cached_at_ms}] when now_ms - cached_at_ms < @disk_cache_ttl_ms ->
+        {:ok, bytes}
+
+      _missing ->
+        :miss
     end
+  end
+
+  defp cache_disk_usage(key, bytes) do
+    :ets.insert(disk_cache_table(), {key, bytes, System.monotonic_time(:millisecond)})
+    :ok
+  end
+
+  defp disk_cache_table do
+    case :ets.whereis(@disk_cache_table) do
+      :undefined ->
+        try do
+          :ets.new(@disk_cache_table, [:named_table, :public, :set, read_concurrency: true])
+        rescue
+          ArgumentError -> @disk_cache_table
+        end
+
+      table ->
+        table
+    end
+  end
+
+  defp system_cmd(command, args, config) do
+    NixSwarm.Telemetry.span(
+      [:nix_swarm, :command],
+      %{command: command, operation: List.first(args)},
+      fn ->
+        task =
+          Task.Supervisor.async_nolink(NixSwarm.TaskSupervisor, fn ->
+            System.cmd(command, args, stderr_to_stdout: true)
+          end)
+
+        case Task.yield(task, command_timeout_ms(config)) || Task.shutdown(task, :brutal_kill) do
+          {:ok, result} -> result
+          nil -> {:error, :timeout}
+        end
+      end
+    )
   end
 
   defp command_timeout_ms(config) do
@@ -236,6 +325,7 @@ defmodule NixSwarm.Executor.Systemd do
     end)
   end
 
+  defp maybe_append_root_directory(paths, "/"), do: paths
   defp maybe_append_root_directory(paths, "/" <> _ = root_directory), do: [root_directory | paths]
   defp maybe_append_root_directory(paths, _value), do: paths
 

@@ -1,4 +1,5 @@
 %{
-  "ex_ratatui": {:hex, :ex_ratatui, "0.8.0", "0a8baad35508c5be33fdc0cb42b690f59526ff072ca9304a0784e6485b9b8bf3", [:mix], [{:rustler, ">= 0.0.0", [hex: :rustler, repo: "hexpm", optional: true]}, {:rustler_precompiled, "~> 0.8", [hex: :rustler_precompiled, repo: "hexpm", optional: false]}], "hexpm", "29e1057d5dc9df3191b078be5c8710e71631e601881d44524339201b06f7d2ed"},
+  "ex_ratatui": {:hex, :ex_ratatui, "0.11.1", "f3cc5c9827d957bc326d3b3b48338a927716fedc2575311d65a3af0dd03ed951", [:mix], [{:rustler, ">= 0.0.0", [hex: :rustler, repo: "hexpm", optional: true]}, {:rustler_precompiled, "~> 0.8", [hex: :rustler_precompiled, repo: "hexpm", optional: false]}, {:telemetry, "~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "b37b02b33e1e8f49874497d7b7f8872417b3807ec77d4bc1526c07c05c7e4cc9"},
   "rustler_precompiled": {:hex, :rustler_precompiled, "0.9.0", "3a052eda09f3d2436364645cc1f13279cf95db310eb0c17b0d8f25484b233aa0", [:mix], [{:rustler, "~> 0.23", [hex: :rustler, repo: "hexpm", optional: true]}], "hexpm", "471d97315bd3bf7b64623418b3693eedd8e47de3d1cb79a0ac8f9da7d770d94c"},
+  "telemetry": {:hex, :telemetry, "1.4.2", "a0cb522801dffb1c49fe6e30561badffc7b6d0e180db1300df759faa22062855", [:rebar3], [], "hexpm", "928f6495066506077862c0d1646609eed891a4326bee3126ba54b60af61febb1"},
 }

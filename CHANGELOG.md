@@ -2,59 +2,64 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.0] - 2026-07-07
+## [Unreleased]
 
 ### Added
 
-- **Auto-deploy file watcher**: `nix-swarm watch` command starts a GenServer that monitors config files using Linux `inotify`. Config changes auto-deploy within 3 seconds — no manual apply needed.
-- **Systemd user service**: `nix/nix-swarm-watcher.service` for 24/7 auto-deployment.
-- **NixSwarm.Watcher** — Port-based `inotifywait` listener with 3 second debounce, fallback polling if unavailable.
-- **NixSwarm.Executor.Server** — GenServer that serializes all `systemctl` calls, batch status checks (one `systemctl show` per N units), and short-lived status cache (200ms TTL). ~10x faster for multi-unit reconciliation.
-- **NixSwarm.Watchdog** — `sd_notify` GenServer for `Type=notify` + `WatchdogSec=30` health monitoring.
-- **NixSwarm.Telemetry** — 7 event types emitted via OTP's built-in `:telemetry` module at reconcile, RPC, systemctl, and deploy boundaries.
-- **Concurrent reconciler** — `Task.async_stream(max_concurrency: 8)` replaces sequential `Enum.map` for unit operations.
-- **Concurrent RPC sync** — `Task.async_stream` replaces O(n) sequential `:rpc.call` for peer service mode distribution.
-- **`:persistent_term` cache** — `Config.current/0` cached until `invalidate_cache/0` is called, eliminating file reads on every reconcile tick.
-- **`:sys` debug CLI** — `nix-swarm debug state` inspects live GenServer state via `:sys.get_state/1`.
-- **Delete confirmation** — Pressing `d` on machines/services shows a confirmation dialog before deleting.
-- **`shift+tab` previous view** — Symmetric with `tab` forward (was focus-cycling).
-- **`R` reconnect key** — Reconnects Erlang distribution without restarting TUI.
-- **Connection lost detection** — After 3 failed refreshes, shows `"connection lost"` help text.
-- **Edit-exit flash** — Warns `"opening $EDITOR"` before exiting TUI to editor.
-- **Footer shows `a/e/d` and `R`** — File management and reconnect visible in all views.
+- A restricted SSH-to-local-Unix-socket operator API; operator tools no longer join the BEAM cluster or receive its cookie.
+- One-command credential enrollment and health-gated flake-input upgrades.
+- A minimal packaged starter flake, flake apps, bounded query protocol, and security regression tests.
+- Declarative service capacity controls, readiness gates, per-node replica limits, and bounded CPU autoscaling with hysteresis.
+
+- Agent/operator-specific supervision trees with supervised task execution.
+- A validated, fail-closed ETS configuration snapshot owner and configuration digests.
+- A DETS-backed operational-state store for the last Nix generation, assignments, health, and reconciliation result.
+- `:erpc`-based bounded RPC helpers and telemetry spans for reconcile, RPC, command, and deploy work.
+- Native NixOS rollout batches, canary ordering, and `nixosConfiguration` node metadata.
+- Flake checks for both packages and a complete NixOS module evaluation, plus CI gates.
+- Optional ACME/forced-SSL ingress configuration.
+- Elixir 1.20 set-theoretic signature inference in application and test compilation.
+- Coverage-gated tests for secrets, rollout logic, RPC, the fake executor, watchdog notifications, templates, and deployment compatibility entry points.
+- Code-first `cluster plan`, `cluster apply`, `cluster rollback`, and `cluster doctor` workflows.
+- Declarative `active`/`draining` node availability and native systemd `OnFailure=` integration.
+- Operator query commands for cluster overview, membership, snapshots, and bounded service logs over the restricted socket API.
 
 ### Changed
 
-- **Auto-deploy model**: Config changes auto-deploy on file save. The TUI is now read-only monitoring with emergency service controls (`b`/`z`/`x`). Manual `p`/`P`/`c`/`u` keys removed.
-- **SSH port support**: `NIX_SWARM_SSH_PORT` env var and `host:port` notation in `deployHost`.
-- **Rebalance on `cluster ensure`**: `update_remote` now calls `create_machine_config`, `maybe_create_flake`. `--source` properly resolves `cluster.nix`.
-- **NixOS module**: `Type=notify` + `WatchdogSec=30` added to `nix-swarmd` service.
-- **Remove auto-seed**: Example config is no longer silently copied on first run. Bootstrap explicitly via `nix-swarm cluster ensure`.
+- The agent runs unprivileged with an exact Nix-generated polkit unit allowlist and systemd resource limits.
+- Release cookies are provisioned as private runtime files and no longer appear in process arguments or environment variables.
+- Intermediate rollout batches require reachable peers and healthy updated-node units; the final gate requires one config digest and all owned units healthy.
+- Source packaging is allowlisted, log output is terminal-sanitized, and ex_ratatui is updated to 0.11.1.
+
+- Deployments now evaluate local `nixosConfigurations` and use `nixos-rebuild --target-host`; remote source copying and remote Nix-file generation are gone.
+- SSH uses the normal client configuration with strict host-key checking.
+- Reconciliation reacts immediately to node membership changes and batches systemd status reads.
+- Placement uses SHA-256 scoring rather than VM-dependent term hashing.
+- Health is derived from systemd unit state; arbitrary shell health checks are no longer executed by the root agent.
+- `nix-swarmd` now has explicit watchdog, stop, restart-backoff, state-directory, and systemd sandbox lifecycle settings.
+- Version metadata is read from `VERSION` by both Mix and Nix.
+- CI now compiles test modules with type inference and warnings-as-errors and enforces the coverage baseline.
+- The operator TUI is read-only; all durable changes flow through reviewed Nix code and explicit CLI deployment commands.
+- Runtime desired-state overrides were replaced by durable, node-local operational observations.
+- Configuration loading now has a supervised ETS snapshot owner, generation/digest tracking, and explicit runtime validation.
+- Deployment and upgrade workflows preserve flake locks on failure, support native NixOS configuration selection, and report rollout convergence by node.
 
 ### Removed
 
-- **`NixSwarm.Update` module** (259 lines) — manual rollout functionality replaced by auto-deploy.
-- **`cluster update` CLI command** — replaced by `nix-swarm watch` auto-deploy.
-- **Manual apply/dry-run** — `p`/`P`/`y` keys removed from TUI (config auto-deploys on save).
-- **Reconcile/update keys** — `c`/`u` removed.
-- **Rollout confirmation** — Entire rollout modal flow removed (auto-deploy replaces it).
-- **Auto-seed on first run** — no more silent copy of example config.
-- **~300 lines of dead code** in tui.ex (rollout/apply/reconcile functions).
-- **`test/nix_swarm_update_test.exs`** — tests for removed module.
+- Unsafe automatic file-watcher deployment and its standalone systemd unit.
+- The executor GenServer that bypassed the validated fake/systemd adapter boundary.
+- SSH bootstrap code that wrote placeholder machine files and secrets on targets.
+- Remote API endpoints for ad-hoc service and machine mutation.
 
 ### Fixed
 
-- SSH port 22 hardcoded: `NIX_SWARM_SSH_PORT` env var now honored.
-- `cluster.nix` path resolution: `--source` correctly derives `cluster_file`.
-- Rebuild flake attribute: `#default` appended for correct `nixosConfigurations` resolution.
-- `.gitignore` filtering: stale `cluster/` dir cleaned, `/machines/` exclusion removed from synced source.
-- Nix flake cache: `nix flake lock --update-input` forces re-evaluation of path inputs.
-- nix-swarmd restart: explicit `systemctl restart nix-swarmd` added after `nixos-rebuild switch`.
-- `delete_selected_config` now uses `action_confirmation` flow instead of immediate deletion.
-- Apply keybinding: `p` = dry-run, `P` = apply (was confusing `y` = dry-run).
-- Footer labels: `shift+tab prev`, `p/P dry/apply`, `a/e/d file`, `R reconnect`.
-- `cycle_focused_container` unused after shift+tab repurposing.
-- Deploy SSH commands honor `NIX_SWARM_SSH_PORT` and `UserKnownHostsFile=/dev/null` for Nix store SSH configs.
+- Restored the rollout coordinator and injected TUI update function removed by the v0.5 work-in-progress.
+- Restored executor input validation, configured adapters, command timeouts, and normalized status contracts.
+- Invalid deployment validation now aborts before any target is changed.
+- Cluster status reports configuration digest drift across live nodes.
+- Age encryption no longer passes an unsupported stdin option to `System.cmd/3`, and temporary plaintext input is mode `0600` and removed after encryption.
+- Generated web and custom NixOS service templates correctly bind their `pkgs` argument.
+- Reconciler tests restore application state and are no longer order-dependent.
 
 ## [0.4.1] - 2026-06-18
 

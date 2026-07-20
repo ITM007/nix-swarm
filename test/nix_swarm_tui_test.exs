@@ -458,11 +458,7 @@ defmodule NixSwarmTUITest do
 
     [_node_a, node_b, _node_c] = cluster.nodes
 
-    remote =
-      NixSwarm.Remote.options!(
-        target: Atom.to_string(node_b),
-        cookie: Atom.to_string(Node.get_cookie())
-      )
+    remote = NixSwarm.TestCluster.remote_for(cluster, node_b)
 
     pid =
       start_supervised!(
@@ -717,31 +713,30 @@ defmodule NixSwarmTUITest do
     assert content =~ "service restarted"
   end
 
-  test "dashboard footer only advertises cluster-level actions" do
+  test "dashboard footer advertises the read-only boundary" do
     terminal = ExRatatui.init_test_terminal(220, 40)
-    state = sample_tui_state(:dashboard)
+    state = sample_tui_state(:dashboard) |> Map.put(:operator_mode, :read_only)
 
     :ok = ExRatatui.draw(terminal, NixSwarm.TUI.scene(state, 220, 40))
     content = ExRatatui.get_buffer_content(terminal)
 
-    assert content =~ "c reconcile"
-    assert content =~ "u update"
-    assert content =~ "P/y apply/dry-run"
+    assert content =~ "read-only"
     assert content =~ "j/k service | o sort | ? help"
     refute content =~ "mouse click/wheel"
     refute content =~ "b start"
     refute content =~ "x restart"
   end
 
-  test "services footer omits mouse click and wheel hints" do
+  test "services footer is read-only and omits mutation hints" do
     terminal = ExRatatui.init_test_terminal(220, 40)
-    state = sample_tui_state(:services)
+    state = sample_tui_state(:services) |> Map.put(:operator_mode, :read_only)
 
     :ok = ExRatatui.draw(terminal, NixSwarm.TUI.scene(state, 220, 40))
     content = ExRatatui.get_buffer_content(terminal)
 
     refute content =~ "mouse click/wheel"
-    assert content =~ "b start | z stop | x restart"
+    assert content =~ "read-only"
+    refute content =~ "b start | z stop | x restart"
   end
 
   test "logs page strips benign restart and partition warnings from issue counts" do
@@ -823,7 +818,7 @@ defmodule NixSwarmTUITest do
     assert service_content =~ "selected service log entry"
   end
 
-  test "tui update hotkey refreshes the cluster after a rollout" do
+  test "mounted TUI rejects deployment hotkeys" do
     root =
       Path.join(System.tmp_dir!(), "nix-swarm-tui-update-#{System.unique_integer([:positive])}")
 
@@ -836,25 +831,11 @@ defmodule NixSwarmTUITest do
 
     [_node_a, node_b, _node_c] = cluster.nodes
 
-    remote =
-      NixSwarm.Remote.options!(
-        target: Atom.to_string(node_b),
-        cookie: Atom.to_string(Node.get_cookie())
-      )
+    remote = NixSwarm.TestCluster.remote_for(cluster, node_b)
 
     test_pid = self()
 
-    update_fun = fn deploy_opts, _remote ->
-      send(test_pid, {:rollout_hosts, Keyword.get(deploy_opts, :hosts, [])})
-
-      %{
-        after_versions: %{
-          Atom.to_string(node_b) => "v0.1.0-test-rollout"
-        },
-        version_changed?: true,
-        completed_at: "2026-04-24 11:45:00"
-      }
-    end
+    update_fun = fn _deploy_opts, _remote -> send(test_pid, :unexpected_tui_mutation) end
 
     pid =
       start_supervised!(
@@ -870,17 +851,13 @@ defmodule NixSwarmTUITest do
     assert_receive {:tui_update, _state, %{snapshot: _snapshot}}, 2_000
 
     :ok = Runtime.inject_event(pid, %Event.Key{code: "u", modifiers: [], kind: "press"})
-    refute_receive {:rollout_hosts, _hosts}, 200
-    assert :sys.get_state(pid).user_state.rollout_confirmation != nil
+    Process.sleep(25)
 
-    :ok = Runtime.inject_event(pid, %Event.Key{code: "enter", modifiers: [], kind: "press"})
-
-    assert_receive {:tui_update, updated_state, %{snapshot: _snapshot}}, 2_000
-    assert_receive {:rollout_hosts, ["root@node-a", "root@node-b", "root@node-c"]}, 2_000
-    assert updated_state.flash =~ "cluster updated"
-    assert updated_state.last_error == nil
-    assert updated_state.last_rollout.version_changed? == true
-    assert updated_state.last_rollout.completed_at == "2026-04-24 11:45:00"
+    state = :sys.get_state(pid).user_state
+    assert state.operator_mode == :read_only
+    assert state.rollout_confirmation == nil
+    assert state.flash =~ "read-only console"
+    refute_receive :unexpected_tui_mutation, 100
   end
 
   test "machines view update confirmation can switch between selected machine and cluster scopes" do
@@ -917,7 +894,7 @@ defmodule NixSwarmTUITest do
     assert switched_back_state.rollout_confirmation.target_hosts == ["root@node-a"]
   end
 
-  test "tui service hotkeys start, stop, restart, and reconcile the cluster" do
+  test "mounted TUI service and reconcile hotkeys are read-only" do
     root =
       Path.join(System.tmp_dir!(), "nix-swarm-tui-control-#{System.unique_integer([:positive])}")
 
@@ -930,11 +907,7 @@ defmodule NixSwarmTUITest do
 
     [_node_a, node_b, _node_c] = cluster.nodes
 
-    remote =
-      NixSwarm.Remote.options!(
-        target: Atom.to_string(node_b),
-        cookie: Atom.to_string(Node.get_cookie())
-      )
+    remote = NixSwarm.TestCluster.remote_for(cluster, node_b)
 
     pid =
       start_supervised!(
@@ -944,42 +917,16 @@ defmodule NixSwarmTUITest do
 
     assert_receive {:tui_update, _state, %{snapshot: _snapshot}}, 2_000
 
-    :ok = Runtime.inject_event(pid, %Event.Key{code: "z", modifiers: [], kind: "press"})
+    for key <- ["z", "b", "x", "c"] do
+      :ok = Runtime.inject_event(pid, %Event.Key{code: key, modifiers: [], kind: "press"})
+      Process.sleep(10)
+      assert :sys.get_state(pid).user_state.flash =~ "read-only console"
+    end
 
-    assert_receive {:tui_update, stop_state, %{snapshot: _snapshot}}, 2_000
-    assert stop_state.flash =~ "stop requested for gitea"
-    assert stop_state.last_error == nil
-
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               service_fully_stopped?(cluster, "gitea")
-             end)
-
-    :ok = Runtime.inject_event(pid, %Event.Key{code: "b", modifiers: [], kind: "press"})
-
-    assert_receive {:tui_update, start_state, %{snapshot: _snapshot}}, 2_000
-    assert start_state.flash =~ "start requested for gitea"
-    assert start_state.last_error == nil
-
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               service_placement_converged?(cluster, "gitea")
-             end)
-
-    :ok = Runtime.inject_event(pid, %Event.Key{code: "x", modifiers: [], kind: "press"})
-
-    assert_receive {:tui_update, restart_state, %{snapshot: _snapshot}}, 2_000
-    assert restart_state.flash =~ "restart requested for gitea"
-    assert restart_state.last_error == nil
-
-    :ok = Runtime.inject_event(pid, %Event.Key{code: "c", modifiers: [], kind: "press"})
-
-    assert_receive {:tui_update, reconcile_state, %{snapshot: _snapshot}}, 2_000
-    assert reconcile_state.flash =~ "reconcile completed on 3 live node(s)"
-    assert reconcile_state.last_error == nil
+    assert NixSwarm.TUI.read_only?()
   end
 
-  test "tui machine power hotkeys confirm and dispatch actions" do
+  test "mounted TUI machine power hotkeys are read-only" do
     root =
       Path.join(System.tmp_dir!(), "nix-swarm-tui-machine-#{System.unique_integer([:positive])}")
 
@@ -992,11 +939,7 @@ defmodule NixSwarmTUITest do
 
     [node_a, node_b, _node_c] = cluster.nodes
 
-    remote =
-      NixSwarm.Remote.options!(
-        target: Atom.to_string(node_b),
-        cookie: Atom.to_string(Node.get_cookie())
-      )
+    remote = NixSwarm.TestCluster.remote_for(cluster, node_b)
 
     pid =
       start_supervised!(
@@ -1014,42 +957,20 @@ defmodule NixSwarmTUITest do
     :ok = Runtime.inject_event(pid, %Event.Key{code: "R", modifiers: [], kind: "press"})
     Process.sleep(25)
 
-    assert %{action: :restart, node: ^node_a} = :sys.get_state(pid).user_state.action_confirmation
-
-    :ok = Runtime.inject_event(pid, %Event.Key{code: "enter", modifiers: [], kind: "press"})
-
-    assert_receive {:tui_update, restart_state, %{snapshot: _snapshot}}, 2_000
-    assert restart_state.flash =~ "restart requested for node-a"
-    assert restart_state.last_error == nil
-
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               cluster.root
-               |> NixSwarm.TestCluster.machine_actions(node_a)
-               |> Enum.any?(&String.contains?(&1, "restart"))
-             end)
+    restart_state = :sys.get_state(pid).user_state
+    assert restart_state.action_confirmation == nil
+    assert restart_state.flash =~ "read-only console"
 
     :ok = Runtime.inject_event(pid, %Event.Key{code: "Z", modifiers: [], kind: "press"})
     Process.sleep(25)
 
-    assert %{action: :shutdown, node: ^node_a} =
-             :sys.get_state(pid).user_state.action_confirmation
-
-    :ok = Runtime.inject_event(pid, %Event.Key{code: "enter", modifiers: [], kind: "press"})
-
-    assert_receive {:tui_update, shutdown_state, %{snapshot: _snapshot}}, 2_000
-    assert shutdown_state.flash =~ "shutdown requested for node-a"
-    assert shutdown_state.last_error == nil
-
-    assert :ok ==
-             NixSwarm.TestCluster.wait_until(fn ->
-               cluster.root
-               |> NixSwarm.TestCluster.machine_actions(node_a)
-               |> Enum.any?(&String.contains?(&1, "shutdown"))
-             end)
+    shutdown_state = :sys.get_state(pid).user_state
+    assert shutdown_state.action_confirmation == nil
+    assert shutdown_state.flash =~ "read-only console"
+    assert NixSwarm.TestCluster.machine_actions(cluster.root, node_a) == []
   end
 
-  test "tui dry-run hotkey stores apply preview output" do
+  test "mounted TUI dry-run hotkey directs operators to the code-first CLI" do
     root =
       Path.join(System.tmp_dir!(), "nix-swarm-tui-apply-#{System.unique_integer([:positive])}")
 
@@ -1062,28 +983,10 @@ defmodule NixSwarmTUITest do
 
     [_node_a, node_b, _node_c] = cluster.nodes
 
-    remote =
-      NixSwarm.Remote.options!(
-        target: Atom.to_string(node_b),
-        cookie: Atom.to_string(Node.get_cookie())
-      )
+    remote = NixSwarm.TestCluster.remote_for(cluster, node_b)
 
-    deploy_fun = fn opts ->
-      %{
-        dry_run: Keyword.get(opts, :dry_run, false),
-        validation: %{
-          machine_files: [Path.join(root, "machines/node-a.nix")],
-          commands: ["validate"]
-        },
-        results: [
-          %{
-            host: "root@node-a",
-            sync_command: "sync-command",
-            rebuild_command: "rebuild-command"
-          }
-        ]
-      }
-    end
+    test_pid = self()
+    deploy_fun = fn _opts -> send(test_pid, :unexpected_tui_apply) end
 
     pid =
       start_supervised!(
@@ -1100,11 +1003,12 @@ defmodule NixSwarmTUITest do
     assert_receive {:tui_update, _state, %{snapshot: _snapshot}}, 2_000
 
     :ok = Runtime.inject_event(pid, %Event.Key{code: "y", modifiers: [], kind: "press"})
+    Process.sleep(25)
 
-    assert_receive {:tui_update, updated_state, %{snapshot: _snapshot}}, 2_000
-    assert updated_state.flash == "dry-run complete"
-    assert updated_state.apply_result.dry_run
-    assert hd(updated_state.apply_result.results).host == "root@node-a"
+    updated_state = :sys.get_state(pid).user_state
+    assert updated_state.flash =~ "nix-swarm cluster plan/apply"
+    assert updated_state.apply_result == nil
+    refute_receive :unexpected_tui_apply, 100
   end
 
   test "shift tab cycles focus and routes movement to the focused pane" do
@@ -1418,31 +1322,6 @@ defmodule NixSwarmTUITest do
              )
 
     assert select_machine_state.flash == "select a machine before restarting"
-  end
-
-  defp service_placement_converged?(cluster, service_name) do
-    status = :rpc.call(hd(cluster.nodes), NixSwarm.API, :cluster_status, [])
-
-    status.placements
-    |> Map.get(service_name, [])
-    |> Enum.all?(fn slot ->
-      Enum.all?(cluster.nodes, fn node ->
-        expected = if node == slot.owner, do: "running", else: "stopped"
-        NixSwarm.TestCluster.unit_state(cluster.root, node, slot.unit) == expected
-      end)
-    end)
-  end
-
-  defp service_fully_stopped?(cluster, service_name) do
-    status = :rpc.call(hd(cluster.nodes), NixSwarm.API, :cluster_status, [])
-
-    status.placements
-    |> Map.get(service_name, [])
-    |> Enum.all?(fn slot ->
-      Enum.all?(cluster.nodes, fn node ->
-        NixSwarm.TestCluster.unit_state(cluster.root, node, slot.unit) == "stopped"
-      end)
-    end)
   end
 
   defp sample_tui_state(active_view) do

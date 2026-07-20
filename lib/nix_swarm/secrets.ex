@@ -54,17 +54,36 @@ defmodule NixSwarm.Secrets do
   """
   def encrypt_cookie(cookie, recipient, output_path) do
     age_bin = find_age_binary()
+    File.mkdir_p!(Path.dirname(Path.expand(output_path)))
+    temporary_dir = temporary_secret_directory()
+    File.mkdir!(temporary_dir)
+    File.chmod!(temporary_dir, 0o700)
+    input_path = Path.join(temporary_dir, "plaintext")
+    File.write!(input_path, cookie, [:exclusive])
+    File.chmod!(input_path, 0o600)
 
-    case System.cmd(age_bin, ["--encrypt", "--recipient", recipient, "--output", output_path],
-           stdin_data: cookie,
-           stderr_to_stdout: true
-         ) do
-      {_output, 0} ->
-        :ok
+    try do
+      case System.cmd(
+             age_bin,
+             ["--encrypt", "--recipient", recipient, "--output", output_path, input_path],
+             stderr_to_stdout: true
+           ) do
+        {_output, 0} ->
+          :ok
 
-      {output, status} ->
-        raise "age encryption failed (status #{status}): #{String.trim(output)}"
+        {output, status} ->
+          raise "age encryption failed (status #{status}): #{String.trim(output)}"
+      end
+    after
+      File.rm_rf(temporary_dir)
     end
+  end
+
+  defp temporary_secret_directory do
+    Path.join(
+      System.tmp_dir!(),
+      "nix-swarm-secret-#{System.unique_integer([:positive, :monotonic])}-#{:erlang.phash2(make_ref())}"
+    )
   end
 
   defp find_age_binary do

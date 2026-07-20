@@ -9,7 +9,7 @@ defmodule NixSwarm.TUI do
   alias ExRatatui.Style
   alias ExRatatui.Text.{Line, Span}
   alias ExRatatui.Widgets.{Block, Gauge, Paragraph, Table, Tabs, Throbber}
-  alias NixSwarm.{Ascii, ClusterLogs, ConfigFiles, Deploy, Remote}
+  alias NixSwarm.{Ascii, ClusterLogs, ConfigFiles, Deploy, Remote, Update}
 
   require Logger
 
@@ -25,8 +25,12 @@ defmodule NixSwarm.TUI do
     logs: [:logs_content, :logs_filter]
   }
   @input_refresh_debounce_ms 750
+  @read_only_message "read-only console: change Nix code, then use `nix-swarm cluster plan/apply`"
 
   @type state :: map()
+
+  @doc "The operator TUI is intentionally a read-only projection of cluster state."
+  def read_only?, do: true
 
   def run(opts) do
     with_terminal_logging_suppressed(fn ->
@@ -53,9 +57,7 @@ defmodule NixSwarm.TUI do
               opts,
               :services_dir,
               ConfigFiles.defaults(Keyword.get(opts, :source)).services_dir
-            ),
-          remote_path: Keyword.get(opts, :remote_path, Deploy.defaults().remote_path),
-          nixos_dir: Keyword.get(opts, :nixos_dir, Deploy.defaults().nixos_dir)
+            )
         })
 
       # Establish connection in the main process before starting the UI
@@ -132,7 +134,7 @@ defmodule NixSwarm.TUI do
         active_view: :dashboard,
         selected_service: nil,
         selected_node: nil,
-        update_fun: fn _, _ -> :ok end,
+        update_fun: Keyword.get(opts, :update_fun, &Update.run/2),
         diagnostic: nil,
         overview: nil,
         service_logs: [],
@@ -187,6 +189,7 @@ defmodule NixSwarm.TUI do
         test_pid: Keyword.get(opts, :test_pid)
       }
       |> Map.merge(resume_state)
+      |> Map.put(:operator_mode, :read_only)
       |> ensure_viewport(Keyword.get(opts, :test_mode))
       |> normalize_focused_container()
 
@@ -784,6 +787,9 @@ defmodule NixSwarm.TUI do
 
   defp request_refresh(state, trigger), do: queue_refresh(state, trigger)
 
+  defp request_service_action(%{operator_mode: :read_only} = state, _action),
+    do: put_flash(state, @read_only_message)
+
   defp request_service_action(%{selected_service: nil} = state, action) do
     put_flash(state, "select a service before #{service_action_verb(action)}")
   end
@@ -812,6 +818,9 @@ defmodule NixSwarm.TUI do
       }
     end)
   end
+
+  defp request_node_service_action(%{operator_mode: :read_only} = state, _action),
+    do: put_flash(state, @read_only_message)
 
   defp request_node_service_action(%{selected_node: nil} = state, action) do
     put_flash(state, "select a machine before #{service_action_verb(action)} a local service")
@@ -864,6 +873,9 @@ defmodule NixSwarm.TUI do
 
   defp request_restart(state), do: request_service_action(state, :restart)
 
+  defp request_machine_action(%{operator_mode: :read_only} = state, _action),
+    do: put_flash(state, @read_only_message)
+
   defp request_machine_action(%{selected_node: nil} = state, action) do
     put_flash(state, "select a machine before #{machine_action_verb(action)}")
   end
@@ -888,6 +900,10 @@ defmodule NixSwarm.TUI do
     |> put_flash(
       "#{machine_action_label(action)} ready: press y or enter to confirm, esc to cancel"
     )
+  end
+
+  defp confirm_action_confirmation(%{operator_mode: :read_only} = state) do
+    state |> Map.put(:action_confirmation, nil) |> put_flash(@read_only_message)
   end
 
   defp confirm_action_confirmation(%{action_confirmation: %{action: action, node: node}} = state) do
@@ -922,6 +938,9 @@ defmodule NixSwarm.TUI do
     |> put_flash("machine action cancelled")
   end
 
+  defp request_reconcile(%{operator_mode: :read_only} = state),
+    do: put_flash(state, @read_only_message)
+
   defp request_reconcile(%{job_ref: nil} = state) do
     launch_reconcile(state)
   end
@@ -945,6 +964,9 @@ defmodule NixSwarm.TUI do
     end)
   end
 
+  defp request_update(%{operator_mode: :read_only} = state),
+    do: put_flash(state, @read_only_message)
+
   defp request_update(%{job_ref: nil, rollout_confirmation: nil} = state) do
     open_rollout_confirmation(state)
   end
@@ -961,6 +983,10 @@ defmodule NixSwarm.TUI do
     state
     |> put_rollout_confirmation(default_rollout_scope(state))
     |> put_flash("rollout ready: press u or enter to confirm, esc to cancel")
+  end
+
+  defp confirm_rollout(%{operator_mode: :read_only} = state) do
+    state |> Map.put(:rollout_confirmation, nil) |> put_flash(@read_only_message)
   end
 
   defp confirm_rollout(%{rollout_confirmation: %{deploy_opts: deploy_opts, scope: scope}} = state) do
@@ -983,6 +1009,9 @@ defmodule NixSwarm.TUI do
     |> put_flash("rollout cancelled")
   end
 
+  defp request_apply(%{operator_mode: :read_only} = state, _dry_run?),
+    do: put_flash(state, @read_only_message)
+
   defp request_apply(%{job_ref: nil} = state, dry_run?) do
     launch_apply(state, dry_run?)
   end
@@ -1002,8 +1031,6 @@ defmodule NixSwarm.TUI do
           source: state.config_paths.source,
           cluster_file: state.config_paths.cluster_file,
           machines_dir: state.config_paths.machines_dir,
-          remote_path: state.config_paths.remote_path,
-          nixos_dir: state.config_paths.nixos_dir,
           dry_run: dry_run?
         )
 
@@ -1091,8 +1118,6 @@ defmodule NixSwarm.TUI do
     %{state | prompt: %{prompt | value: prompt.value <> suffix}}
   end
 
-  defp submit_prompt(%{prompt: nil} = state), do: state
-
   defp submit_prompt(%{prompt: %{kind: :log_search, value: value}} = state) do
     state
     |> Map.put(:prompt, nil)
@@ -1156,7 +1181,7 @@ defmodule NixSwarm.TUI do
       rollout_base_opts(state)
       |> Keyword.put(:hosts, target_hosts)
       |> Keyword.put(:target_nodes, target_nodes)
-      |> Map.get(%{overview: state.overview})
+      |> Update.effective_deploy_opts(%{overview: state.overview})
 
     %{
       scope: scope,
@@ -1175,15 +1200,11 @@ defmodule NixSwarm.TUI do
     |> Keyword.drop([:hosts])
     |> Keyword.put(:cluster_file, state.config_paths.cluster_file)
     |> Keyword.put(:machines_dir, state.config_paths.machines_dir)
-    |> Keyword.put(:remote_path, state.config_paths.remote_path)
-    |> Keyword.put(:nixos_dir, state.config_paths.nixos_dir)
   end
 
   defp put_rollout_confirmation(state, scope) do
     %{state | rollout_confirmation: build_rollout_confirmation(state, scope)}
   end
-
-  defp set_rollout_scope(%{rollout_confirmation: nil} = state, _scope), do: state
 
   defp set_rollout_scope(state, scope) do
     if scope in rollout_available_scopes(state) do
@@ -1225,7 +1246,7 @@ defmodule NixSwarm.TUI do
   defp rollout_targets(state, _scope) do
     target_hosts =
       rollout_base_opts(state)
-      |> Map.get(%{overview: state.overview})
+      |> Update.effective_deploy_opts(%{overview: state.overview})
       |> Keyword.get(:hosts, [])
 
     target_nodes =
@@ -1290,6 +1311,9 @@ defmodule NixSwarm.TUI do
     end
   end
 
+  defp run_operator_action(%{operator_mode: :read_only} = state, _action),
+    do: put_flash(state, @read_only_message)
+
   defp run_operator_action(state, {:service_action, action, service}) do
     launch_service_action(%{state | selected_service: service}, action, service)
   end
@@ -1312,61 +1336,60 @@ defmodule NixSwarm.TUI do
   defp run_operator_action(state, {:apply, dry_run?}), do: launch_apply(state, dry_run?)
 
   defp fetch_snapshot(remote, lines, selected_service, selected_node) do
-    diagnostic = Remote.diagnose_connection(remote, skip_port_checks: true)
+    request = {:operator_snapshot, selected_service, selected_node, lines}
 
-    if Remote.connected?(diagnostic) do
-      overview = Remote.rpc!(diagnostic.target_node, NixSwarm.API, :cluster_overview, [])
-      services = service_names(overview)
-      selected_service = normalize_selected_service(selected_service, services)
-      selected_node = normalize_selected_node(selected_node, overview)
+    case Remote.query(remote, request) do
+      {:ok, payload} when is_map(payload) ->
+        overview = Map.get(payload, :overview, %{})
+        services = service_names(overview)
+        selected_service = normalize_selected_service(selected_service, services)
+        selected_node = normalize_selected_node(selected_node, overview)
 
-      service_logs =
-        if selected_service do
-          Remote.rpc!(diagnostic.target_node, NixSwarm.API, :logs, [selected_service, lines])
-        else
-          []
-        end
+        diagnostic =
+          Map.merge(remote, %{
+            target_node: remote,
+            connect_result: true,
+            remote_probe: %{operator_snapshot: %{status: :ok}}
+          })
 
-      cluster_logs =
-        if selected_node && node_live?(overview, selected_node) do
-          fetch_cluster_logs(diagnostic.target_node, selected_node, overview, lines)
-        else
-          ""
-        end
+        %{
+          diagnostic: diagnostic,
+          overview: overview,
+          selected_service: selected_service,
+          selected_node: selected_node,
+          service_logs: Map.get(payload, :service_logs, []),
+          cluster_logs: payload |> Map.get(:selected_node_cluster_logs, "") |> log_payload_text(),
+          cluster_event_logs:
+            payload |> Map.get(:cluster_logs, %{}) |> format_cluster_event_logs(overview),
+          snapshot_errors: Map.get(payload, :errors, []),
+          last_refresh_at: timestamp(),
+          captured_at_ms: System.monotonic_time(:millisecond)
+        }
 
-      cluster_event_logs = fetch_cluster_event_logs(diagnostic.target_node, overview, lines)
+      {:error, reason} ->
+        diagnostic =
+          Map.merge(remote, %{
+            target_node: remote,
+            connect_result: false,
+            remote_probe: %{operator_snapshot: %{status: :error, detail: inspect(reason)}}
+          })
 
-      %{
-        diagnostic: diagnostic,
-        overview: overview,
-        selected_service: selected_service,
-        selected_node: selected_node,
-        service_logs: service_logs,
-        cluster_logs: cluster_logs,
-        cluster_event_logs: cluster_event_logs,
-        last_refresh_at: timestamp(),
-        captured_at_ms: System.monotonic_time(:millisecond)
-      }
-    else
-      %{
-        diagnostic: diagnostic,
-        overview: nil,
-        selected_service: nil,
-        selected_node: nil,
-        service_logs: [],
-        cluster_logs: "",
-        cluster_event_logs: "",
-        last_refresh_at: timestamp(),
-        captured_at_ms: System.monotonic_time(:millisecond)
-      }
+        %{
+          diagnostic: diagnostic,
+          overview: nil,
+          selected_service: nil,
+          selected_node: nil,
+          service_logs: [],
+          cluster_logs: "",
+          cluster_event_logs: "",
+          snapshot_errors: [%{scope: :operator_snapshot, reason: inspect(reason)}],
+          last_refresh_at: timestamp(),
+          captured_at_ms: System.monotonic_time(:millisecond)
+        }
     end
   end
 
-  defp fetch_cluster_logs(target_node, selected_node, overview, lines) do
-    cluster_log_payload(target_node, selected_node, overview, lines)
-  end
-
-  defp fetch_cluster_event_logs(target_node, overview, lines) do
+  defp format_cluster_event_logs(cluster_logs, overview) do
     nodes =
       overview
       |> Map.get(:members, %{})
@@ -1377,43 +1400,19 @@ defmodule NixSwarm.TUI do
       [] ->
         "No live nodes are currently connected, so cluster logs are unavailable."
 
-      _ ->
-        nodes
-        |> Enum.map(fn node ->
+      _nodes ->
+        Enum.map_join(nodes, "\n\n", fn node ->
           heading = "== #{Atom.to_string(node)} =="
-          body = cluster_log_payload(target_node, node, overview, lines) |> String.trim()
+          body = cluster_logs |> Map.get(node, "") |> log_payload_text() |> String.trim()
           [heading, if(body == "", do: "(no log output)", else: body)] |> Enum.join("\n")
         end)
-        |> Enum.join("\n\n")
     end
   end
 
-  defp cluster_log_payload(target_node, selected_node, overview, lines) do
-    if Remote.function_exported?(target_node, NixSwarm.API, :cluster_logs, 2) &&
-         Remote.function_exported?(selected_node, NixSwarm.API, :local_cluster_logs, 1) do
-      Remote.rpc!(target_node, NixSwarm.API, :cluster_logs, [selected_node, lines])
-    else
-      legacy_cluster_logs(selected_node, overview)
-    end
-  end
-
-  defp legacy_cluster_logs(selected_node, overview) do
-    version =
-      overview
-      |> node_status_for(selected_node)
-      |> case do
-        nil -> "unknown"
-        node_status -> display_version_from_status(node_status)
-      end
-
-    [
-      "Cluster runtime logs are unavailable from this node's current release.",
-      "selected node: #{format_selected_node(selected_node)}",
-      "reported version: #{version}",
-      "Run the cluster update command, then refresh this view to enable node cluster logs."
-    ]
-    |> Enum.join("\n")
-  end
+  defp log_payload_text(value) when is_binary(value), do: value
+  defp log_payload_text(value) when is_list(value), do: to_string(value)
+  defp log_payload_text({:error, reason}), do: "log query failed: #{inspect(reason)}"
+  defp log_payload_text(value), do: inspect(value)
 
   defp apply_snapshot(state, snapshot) do
     {new_history, cluster_metrics, metrics_sample} =
@@ -1960,6 +1959,14 @@ defmodule NixSwarm.TUI do
     |> Kernel.++(footer_action_spans(state))
   end
 
+  defp footer_action_spans(%{operator_mode: :read_only} = state) do
+    [
+      Span.new("read-only", style: %Style{fg: :yellow, modifiers: [:bold]}),
+      Span.new(" | ")
+    ]
+    |> maybe_append_secondary_navigation(state)
+  end
+
   defp footer_action_spans(%{active_view: :dashboard} = state) do
     [
       Span.new("c", style: %Style{fg: :cyan}),
@@ -2010,16 +2017,16 @@ defmodule NixSwarm.TUI do
     do: "j/k service | o sort | ? help"
 
   defp secondary_navigation_label(%{active_view: :machines}),
-    do: "arrows/hjkl move | R reboot | Z shutdown | / search | t tail | ? help"
+    do: "arrows/hjkl move | / search | t tail | ? help"
 
   defp secondary_navigation_label(%{active_view: :services}),
-    do: "arrows/hjkl move | b start | z stop | x restart | / search | t tail | ? help"
+    do: "arrows/hjkl move | / search | t tail | ? help"
 
   defp secondary_navigation_label(%{active_view: :logs}),
     do: "arrows/hjkl move | 1-4/f filter | / search | t tail | ? help"
 
   defp secondary_navigation_label(_state),
-    do: "arrows/j/k move | b start | z stop | x restart | ? help"
+    do: "arrows/j/k move | ? help"
 
   defp service_table_widget(%{overview: nil}) do
     %Table{
@@ -2079,16 +2086,22 @@ defmodule NixSwarm.TUI do
     rows =
       case nodes do
         [] ->
-          [["-", "-", "down", "unknown"]]
+          [["-", "-", "down", "active", "unknown"]]
 
         _ ->
           Enum.map(nodes, &machine_entry_row/1)
       end
 
     %Table{
-      header: ["host name", "node name", "status", "version"],
+      header: ["host name", "node name", "status", "placement", "version"],
       rows: rows,
-      widths: [{:percentage, 22}, {:percentage, 32}, {:length, 14}, {:percentage, 32}],
+      widths: [
+        {:percentage, 20},
+        {:percentage, 28},
+        {:length, 12},
+        {:length, 12},
+        {:percentage, 28}
+      ],
       selected: selected_index,
       highlight_symbol: "> ",
       highlight_style: %Style{fg: :yellow, modifiers: [:bold]},
@@ -2186,7 +2199,12 @@ defmodule NixSwarm.TUI do
       end)
 
     ratio = if total_owned > 0, do: min(total_running / total_owned, 1.0), else: 0.0
-    label = "#{total_running}/#{total_owned} running (#{round(ratio * 100)}%)"
+
+    label =
+      Integer.to_string(total_running) <>
+        "/" <>
+        Integer.to_string(total_owned) <>
+        " running (" <> Integer.to_string(round(ratio * 100)) <> "%)"
 
     color =
       cond do
@@ -2294,7 +2312,8 @@ defmodule NixSwarm.TUI do
 
     [
       "node: #{format_selected_node(node)}",
-      "status: #{machine_status_label(state, state.overview, node, node_status)}",
+      "status: #{machine_status_label(state, state.overview, node, node_status)} | " <>
+        "placement: #{Map.get(node_status || %{}, :availability, :active)}",
       "live: #{if(node_live?(state.overview, node), do: "yes", else: "no")}",
       "version: #{version}",
       "update available: #{update_status}",
@@ -2304,8 +2323,7 @@ defmodule NixSwarm.TUI do
       "source: #{state.config_paths.source}",
       "machine file: #{current_selected_file(state, :machines) || "(no matching file)"}",
       "cluster file: #{ConfigFiles.cluster_file(state.config_paths)}",
-      "remote path: #{state.config_paths.remote_path}",
-      "nixos dir: #{state.config_paths.nixos_dir}",
+      "deployment: native nixos-rebuild --target-host",
       "ips: #{format_list(Map.get(network_info, :ips, []))}",
       "ports: #{format_port_list(Map.get(network_info, :ports, []))}"
     ]
@@ -2359,8 +2377,7 @@ defmodule NixSwarm.TUI do
       "service file: #{current_selected_file(state, :services) || "(no matching file)"}",
       "cluster file: #{ConfigFiles.cluster_file(state.config_paths)}",
       "services dir: #{state.config_paths.services_dir}",
-      "remote path: #{state.config_paths.remote_path}",
-      "nixos dir: #{state.config_paths.nixos_dir}"
+      "deployment: native nixos-rebuild --target-host"
     ]
     |> Enum.join("\n")
   end
@@ -2877,8 +2894,6 @@ defmodule NixSwarm.TUI do
     |> :erlang.float()
   end
 
-  defp clamp_ratio(_), do: 0.0
-
   defp rollout_summary_widget(%{last_rollout: nil, overview: overview}) do
     %Paragraph{
       text:
@@ -2903,7 +2918,7 @@ defmodule NixSwarm.TUI do
   defp rollout_widget(%{last_rollout: nil}) do
     %Paragraph{
       text:
-        "No rollout has run yet.\nPress u to preview target hosts before applying the next update.",
+        "No rollout is recorded in this read-only session.\nUse `nix-swarm cluster plan` and `nix-swarm cluster apply --yes` from the code checkout.",
       wrap: true,
       block: panel_block("rollout status")
     }
@@ -2941,7 +2956,6 @@ defmodule NixSwarm.TUI do
     }
   end
 
-  defp selected_slots(nil, _service), do: []
   defp selected_slots(_overview, nil), do: []
 
   defp selected_slots(%{status: %{placements: placements}}, service),
@@ -3124,6 +3138,7 @@ defmodule NixSwarm.TUI do
         host_name: node_hostname(state.overview, node),
         node_name: Atom.to_string(node),
         status: status,
+        availability: Map.get(node_status || %{}, :availability, :active),
         version: if(node_status, do: display_version_from_status(node_status), else: "unknown"),
         update_available?: node_update_available?(state.overview, node)
       }
@@ -3151,6 +3166,7 @@ defmodule NixSwarm.TUI do
       entry.host_name,
       entry.node_name,
       live_status_span(entry.status),
+      to_string(entry.availability),
       machine_version_span(entry)
     ]
   end
@@ -3232,6 +3248,9 @@ defmodule NixSwarm.TUI do
     end
   end
 
+  defp open_add_config_prompt(%{operator_mode: :read_only} = state, _view),
+    do: put_flash(state, @read_only_message)
+
   defp open_add_config_prompt(state, :machines) do
     %{
       state
@@ -3259,6 +3278,9 @@ defmodule NixSwarm.TUI do
     |> put_flash("enter service as: name 1 label1,label2 nix-swarm@host")
   end
 
+  defp edit_selected_config_file(%{operator_mode: :read_only} = state, _view),
+    do: {:error, put_flash(state, @read_only_message)}
+
   defp edit_selected_config_file(state, view) do
     case current_selected_file(state, view) do
       nil ->
@@ -3272,6 +3294,9 @@ defmodule NixSwarm.TUI do
          }}
     end
   end
+
+  defp delete_selected_config(%{operator_mode: :read_only} = state, _view),
+    do: put_flash(state, @read_only_message)
 
   defp delete_selected_config(state, :machines) do
     case current_selected_file(state, :machines) do
@@ -3380,8 +3405,6 @@ defmodule NixSwarm.TUI do
     |> Enum.uniq()
     |> Enum.sort()
   end
-
-  defp service_desired_state(nil, _service), do: :running
 
   defp service_desired_state(%{status: %{nodes: nodes}}, service) do
     Enum.find_value(nodes, :running, fn {_node, node_status} ->
@@ -3719,7 +3742,6 @@ defmodule NixSwarm.TUI do
 
   defp busy_label(nil), do: "idle"
   defp busy_label(:reconcile), do: "reconciling cluster"
-  defp busy_label({:refresh, :auto}), do: "auto-refreshing"
   defp busy_label({:refresh, :initial}), do: "loading dashboard"
   defp busy_label({:refresh, :manual}), do: "refreshing"
   defp busy_label({:refresh, :selection}), do: "loading selected service"
@@ -4933,7 +4955,6 @@ defmodule NixSwarm.TUI do
     mouse click         focus a pane or select a row
     mouse wheel         scroll the focused or hovered pane
     o / O               cycle or reverse service table sorting
-    b / z / x           start, stop, or restart the selected service
     Y / U               copy or export the selected service row
     r / enter           refresh
     q / esc / ?         close help or quit
@@ -4966,7 +4987,6 @@ defmodule NixSwarm.TUI do
     mouse click         focus a pane or select a machine row
     mouse wheel         scroll the hovered pane
     o / O               cycle or reverse machine sorting
-    R / Z               restart or shut down the selected machine
     / then n / N        search logs and move between matches
     t                   toggle live log tailing
     C / E               copy or export the current logs
@@ -4986,7 +5006,6 @@ defmodule NixSwarm.TUI do
     mouse click         focus a pane or select a service row
     mouse wheel         scroll the hovered pane
     o / O               cycle or reverse service sorting
-    b / z / x           start, stop, or restart the selected service
     / then n / N        search logs and move between matches
     t                   toggle live log tailing
     C / E               copy or export the current logs
@@ -5221,7 +5240,6 @@ defmodule NixSwarm.TUI do
     end
   end
 
-  defp selected_node_update_status(nil, _node), do: "unknown"
   defp selected_node_update_status(_overview, nil), do: "unknown"
 
   defp selected_node_update_status(overview, node) do
@@ -5508,15 +5526,26 @@ defmodule NixSwarm.TUI do
   end
 
   defp write_export_file(label, text) do
+    state_home =
+      System.get_env("XDG_STATE_HOME") || Path.join(System.user_home!(), ".local/state")
+
+    export_dir = Path.join([state_home, "nix-swarm", "exports"])
+    File.mkdir_p!(export_dir)
+    File.chmod!(export_dir, 0o700)
+
     path =
       Path.join(
-        System.tmp_dir!(),
+        export_dir,
         "#{sanitize_export_label(label)}-#{System.unique_integer([:positive])}.txt"
       )
 
-    case File.write(path, text) do
-      :ok -> {:ok, path}
-      {:error, reason} -> {:error, "failed to export view: #{inspect(reason)}"}
+    case File.write(path, ClusterLogs.terminal_safe(text), [:exclusive]) do
+      :ok ->
+        File.chmod!(path, 0o600)
+        {:ok, path}
+
+      {:error, reason} ->
+        {:error, "failed to export view: #{inspect(reason)}"}
     end
   end
 

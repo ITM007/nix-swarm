@@ -6,10 +6,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-release-packages:
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -26,18 +28,20 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
       - name: Build operator and cluster packages
         run: |
-          nix build .#packages.${{ matrix.system }}.operator
-          nix build .#packages.${{ matrix.system }}.cluster
+          nix build --out-link result-operator .#packages.${{ matrix.system }}.operator
+          nix build --out-link result-cluster .#packages.${{ matrix.system }}.cluster
+          nix path-info --json --recursive .#packages.${{ matrix.system }}.operator > nix-swarm-operator-${TAG_NAME}-${{ matrix.system }}-closure.json
+          nix path-info --json --recursive .#packages.${{ matrix.system }}.cluster > nix-swarm-cluster-${TAG_NAME}-${{ matrix.system }}-closure.json
 
       - name: Export operator package cache
         run: |
@@ -59,20 +63,38 @@ jobs:
           nix copy --to file://$PWD/release-cache/cluster .#packages.${{ matrix.system }}.cluster
           tar -C release-cache/cluster -czf nix-swarm-cluster-${TAG_NAME}-${{ matrix.system }}-nix-cache.tar.gz .
 
+      - name: Write checksums
+        run: sha256sum nix-swarm-*-${TAG_NAME}-${{ matrix.system }}-* > nix-swarm-${TAG_NAME}-${{ matrix.system }}.sha256
+
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: nix-packages-${{ matrix.system }}
           path: |
             nix-swarm-operator-${{ env.TAG_NAME }}-${{ matrix.system }}-nix-cache.tar.gz
             nix-swarm-cluster-${{ env.TAG_NAME }}-${{ matrix.system }}-nix-cache.tar.gz
+            nix-swarm-operator-${{ env.TAG_NAME }}-${{ matrix.system }}-closure.json
+            nix-swarm-cluster-${{ env.TAG_NAME }}-${{ matrix.system }}-closure.json
+            nix-swarm-${{ env.TAG_NAME }}-${{ matrix.system }}.sha256
+
+  publish-release-assets:
+    if: github.event_name == 'release'
+    needs: build-release-packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG_NAME: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Download verified build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: nix-packages-*
+          path: release-artifacts
+          merge-multiple: true
 
       - name: Attach release assets
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${TAG_NAME}" \
-            nix-swarm-operator-${TAG_NAME}-${{ matrix.system }}-nix-cache.tar.gz \
-            nix-swarm-cluster-${TAG_NAME}-${{ matrix.system }}-nix-cache.tar.gz \
-            --clobber
+          gh release upload "${TAG_NAME}" release-artifacts/* --clobber

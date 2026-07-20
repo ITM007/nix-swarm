@@ -1,25 +1,18 @@
 defmodule NixSwarm.Remote do
   @moduledoc false
 
-  alias NixSwarm.NodeName
+  alias NixSwarm.QueryProtocol
 
-  @epmd_port 4369
-  @fallback_distribution_port 4370
-  @tcp_connect_timeout_ms 1_000
-  @legacy_api_module Swarm.API
-
-  defp distribution_port do
-    case Application.get_env(:nix_swarm, :distribution_port) do
-      nil ->
-        case System.get_env("NIX_SWARM_DISTRIBUTION_PORT") do
-          nil -> @fallback_distribution_port
-          value -> String.to_integer(value)
-        end
-
-      value when is_integer(value) ->
-        value
-    end
-  end
+  @query_timeout_ms 15_000
+  @allowed_calls [
+    {NixSwarm.API, :cluster_overview, 0},
+    {NixSwarm.API, :cluster_members, 0},
+    {NixSwarm.API, :operator_snapshot, 3},
+    {NixSwarm.API, :logs, 2},
+    {NixSwarm.API, :node_service_logs, 2},
+    {NixSwarm.API, :cluster_logs, 2}
+  ]
+  @reported_capabilities @allowed_calls ++ [{NixSwarm.API, :local_cluster_logs, 1}]
 
   defmodule Error do
     defexception [:message]
@@ -28,17 +21,21 @@ defmodule NixSwarm.Remote do
   def options!(opts) when is_list(opts) do
     target =
       case Keyword.fetch(opts, :target) do
-        {:ok, value} -> value
+        {:ok, value} when is_binary(value) and value != "" -> value
+        {:ok, _value} -> fail("--target must not be blank")
         :error -> fail("missing required --target for remote command")
       end
 
-    {cookie, cookie_source} = remote_cookie(opts)
+    if Keyword.has_key?(opts, :cookie) or Keyword.has_key?(opts, :cookie_file) do
+      fail(
+        "operator cookie options were removed; read-only access now uses SSH and the local query socket"
+      )
+    end
 
     %{
-      target: target,
-      cookie: cookie,
-      cookie_source: cookie_source,
-      cli_name: Keyword.get(opts, :cli_name) || Keyword.get(opts, :name)
+      target: validate_target!(target),
+      ssh_host: validate_ssh_host!(Keyword.get(opts, :ssh_host) || target_host(target)),
+      query_fun: Keyword.get(opts, :query_fun)
     }
   end
 
@@ -48,161 +45,130 @@ defmodule NixSwarm.Remote do
     diagnostic = diagnose_connection(remote)
 
     if connected?(diagnostic) do
-      diagnostic.target_node
+      remote
     else
       fail(format_connection_error(diagnostic))
     end
   end
 
-  def connected?(%{connect_result: result}), do: result in [true, :ignored]
+  def connected?(%{connect_result: result}), do: result == true
 
-  def diagnose_connection(remote), do: diagnose_connection(remote, [])
+  def diagnose_connection(remote, opts \\ []) when is_map(remote) and is_list(opts) do
+    query_fun = Keyword.get(opts, :query_fun) || Map.get(remote, :query_fun) || (&query/2)
 
-  def diagnose_connection(%{target: target, cookie: cookie, cli_name: cli_name} = remote, opts)
-      when is_list(opts) do
-    target_node = NodeName.to_node!(target, label: "target node")
-    {node_mode, target_host} = target_mode_and_host(target)
-    %{name: cli_node_name} = cli_node_identity(target, cli_name)
-    skip_port_checks? = Keyword.get(opts, :skip_port_checks, false)
+    case query_fun.(remote, :cluster_members) do
+      {:ok, members} ->
+        Map.merge(remote, %{
+          target_node: remote,
+          connect_result: true,
+          remote_probe: %{cluster_members: %{status: :ok, value: members}}
+        })
 
-    ensure_cli_node(cli_node_name, node_mode)
-    Node.set_cookie(NodeName.cookie_atom!(cookie))
-
-    target_resolution = resolve_host_details(target_host)
-    target_port_checks = target_port_checks(node_mode, target_resolution, skip_port_checks?)
-    local_ip_candidates = local_ip_candidates()
-    connect_result = ensure_connected(target_node)
-    remote_probe = probe_remote(target_node, connect_result)
-
-    Map.merge(remote, %{
-      target_node: target_node,
-      target_mode: node_mode,
-      target_host: target_host,
-      cli_node: Node.self(),
-      target_resolution: target_resolution,
-      target_port_checks: target_port_checks,
-      local_ip_candidates: local_ip_candidates,
-      connect_result: connect_result,
-      remote_probe: remote_probe
-    })
+      {:error, reason} ->
+        Map.merge(remote, %{
+          target_node: remote,
+          connect_result: false,
+          remote_probe: %{cluster_members: %{status: :error, detail: inspect(reason)}}
+        })
+    end
   end
 
-  def cli_node_identity(target, cli_name \\ nil, host_resolver \\ &local_host_for_target/1) do
-    {node_mode, target_host} = target_mode_and_host(target)
+  def rpc!(remote, module, function, args) when is_map(remote) and is_list(args) do
+    request = request_for!(module, function, args)
+    query_fun = Map.get(remote, :query_fun) || (&query/2)
 
-    name =
-      case {cli_name, node_mode} do
-        {nil, :longnames} ->
-          host = host_resolver.(target_host)
-          "nix-swarmctl-#{System.unique_integer([:positive])}@#{host}"
+    case query_fun.(remote, request) do
+      {:ok, value} ->
+        value
 
-        {nil, :shortnames} ->
-          "nix-swarmctl-#{System.unique_integer([:positive])}"
-
-        {provided_name, :longnames} ->
-          if String.contains?(provided_name, "@") do
-            provided_name
-          else
-            fail("--name must include @HOST when connecting to a longname target")
-          end
-
-        {provided_name, :shortnames} ->
-          provided_name
-      end
-
-    %{name: NodeName.to_node!(name, label: "CLI node name"), mode: node_mode}
-  end
-
-  def rpc!(node, module, function, args), do: rpc!(node, module, function, args, &:rpc.call/5)
-
-  @doc false
-  def rpc!(node, module, function, args, rpc_fun) when is_function(rpc_fun, 5) do
-    case rpc_result(node, module, function, args, rpc_fun) do
-      {:ok, _module, result} ->
-        result
-
-      {:error, attempted_module, reason} ->
-        fail(
-          "remote call #{inspect(attempted_module)}.#{function}/#{length(args)} failed on #{node}: #{inspect(reason)}"
-        )
+      {:error, reason} ->
+        fail("read-only query #{function}/#{length(args)} failed: #{inspect(reason)}")
     end
   end
 
   @doc false
-  def function_exported?(node, module, function, arity),
-    do: function_exported?(node, module, function, arity, &:rpc.call/5)
+  def rpc!(remote, module, function, args, query_fun) when is_function(query_fun, 2) do
+    request = request_for!(module, function, args)
+
+    case query_fun.(remote, request) do
+      {:ok, value} ->
+        value
+
+      {:error, reason} ->
+        fail("read-only query #{function}/#{length(args)} failed: #{inspect(reason)}")
+    end
+  end
 
   @doc false
-  def function_exported?(node, module, function, arity, rpc_fun) when is_function(rpc_fun, 5) do
-    module
-    |> compatible_modules()
-    |> Enum.any?(fn candidate ->
-      case rpc_fun.(
-             node,
-             :erlang,
-             :function_exported,
-             [candidate, function, arity],
-             NixSwarm.rpc_timeout_ms()
-           ) do
-        true -> true
-        _ -> false
-      end
-    end)
+  def function_exported?(_remote, module, function, arity) do
+    {normalize_module(module), function, arity} in @reported_capabilities
+  end
+
+  @doc false
+  def function_exported?(_remote, module, function, arity, _query_fun) do
+    function_exported?(nil, module, function, arity)
+  end
+
+  def query(%{query_fun: query_fun} = remote, request) when is_function(query_fun, 2) do
+    query_fun.(remote, request)
+  end
+
+  def query(remote, request) do
+    with {:ok, payload} <- QueryProtocol.encode_request(request) do
+      encoded = Base.url_encode64(payload, padding: false)
+      run_ssh_query(remote, encoded)
+    end
   end
 
   def doctor_context_rows(diagnostic) do
     [
-      ["target node", diagnostic.target],
-      ["target host", diagnostic.target_host || "shortname target"],
-      ["target mode", diagnostic.target_mode],
-      [
-        "local control node",
-        "#{diagnostic.cli_node} (#{cli_node_source_label(diagnostic.cli_name)})"
-      ],
-      ["cookie source", cookie_source_label(diagnostic.cookie_source)],
-      ["local IP candidates", format_list(diagnostic.local_ip_candidates)]
+      ["cluster target", diagnostic.target],
+      ["SSH host", diagnostic.ssh_host],
+      ["transport", "SSH to a local, read-only Unix socket"]
+    ]
+  end
+
+  def diagnostic_checks(%{connect_result: true}) do
+    [
+      %{
+        label: "restricted operator query",
+        status: :ok,
+        detail: "SSH and the local query socket responded"
+      }
     ]
   end
 
   def diagnostic_checks(diagnostic) do
-    [resolution_check(diagnostic)]
-    |> Kernel.++(diagnostic.target_port_checks)
-    |> Kernel.++([connectivity_check(diagnostic)])
-    |> Kernel.++(remote_probe_checks(diagnostic))
+    [
+      %{
+        label: "restricted operator query",
+        status: :error,
+        detail: diagnostic.remote_probe.cluster_members.detail
+      }
+    ]
+  end
+
+  def connection_solutions(%{connect_result: true}) do
+    ["The target is ready for read-only status, metrics, and bounded log queries."]
   end
 
   def connection_solutions(diagnostic) do
-    []
-    |> maybe_add_solution(target_resolution_solution(diagnostic))
-    |> maybe_add_solution(port_solution(diagnostic, @epmd_port))
-    |> maybe_add_solution(port_solution(diagnostic, distribution_port()))
-    |> maybe_add_solution(connection_failure_solution(diagnostic))
-    |> maybe_add_solution(name_override_solution(diagnostic))
-    |> maybe_add_solution(remote_api_solution(diagnostic))
-    |> maybe_add_solution(success_solution(diagnostic))
-    |> Enum.uniq()
+    [
+      "Verify SSH access to #{diagnostic.ssh_host} with BatchMode enabled.",
+      "Install the Nix-Swarm cluster package on the target so `nix-swarm-query` is available.",
+      "Add the SSH user to the target's Nix-Swarm operator group, then start nix-swarmd."
+    ]
   end
 
   def format_connection_error(diagnostic) do
     """
-    unable to connect to #{diagnostic.target}
-
-    connection context:
-      target node: #{diagnostic.target}
-      target host: #{diagnostic.target_host || "shortname target"}
-      target mode: #{diagnostic.target_mode}
-      local control node: #{diagnostic.cli_node} (#{cli_node_source_label(diagnostic.cli_name)})
-      cookie source: #{cookie_source_label(diagnostic.cookie_source)}
-      local IP candidates: #{format_list(diagnostic.local_ip_candidates)}
+    unable to query #{diagnostic.target} through #{diagnostic.ssh_host}
 
     checks:
     #{Enum.map_join(diagnostic_checks(diagnostic), "\n", &format_check_line/1)}
 
     likely fixes:
     #{Enum.map_join(connection_solutions(diagnostic), "\n", &"  - #{&1}")}
-
-    next step:
-      relaunch `#{NixSwarm.operator_launch(diagnostic.target)}` with the same cookie source after applying the fixes above
     """
     |> String.trim()
   end
@@ -214,12 +180,7 @@ defmodule NixSwarm.Remote do
     #{heading}
     #{String.duplicate("=", String.length(heading))}
     connection context:
-      target node: #{diagnostic.target}
-      target host: #{diagnostic.target_host || "shortname target"}
-      target mode: #{diagnostic.target_mode}
-      local control node: #{diagnostic.cli_node} (#{cli_node_source_label(diagnostic.cli_name)})
-      cookie source: #{cookie_source_label(diagnostic.cookie_source)}
-      local IP candidates: #{format_list(diagnostic.local_ip_candidates)}
+    #{Enum.map_join(doctor_context_rows(diagnostic), "\n", fn [label, value] -> "  #{label}: #{value}" end)}
 
     checks:
     #{Enum.map_join(diagnostic_checks(diagnostic), "\n", &format_check_line/1)}
@@ -233,478 +194,117 @@ defmodule NixSwarm.Remote do
     |> String.trim()
   end
 
-  def doctor_result(%{connect_result: result, remote_probe: %{cluster_members: %{status: :ok}}})
-      when result in [true, :ignored] do
-    "The target is reachable and the Nix-Swarm API responded. This machine can control the cluster through #{result_label(result)}."
-  end
-
-  def doctor_result(%{connect_result: result}) when result in [true, :ignored] do
-    "The Erlang connection worked, but the target did not answer the Nix-Swarm API cleanly."
+  def doctor_result(%{connect_result: true}) do
+    "The target is reachable and the restricted Nix-Swarm query API responded."
   end
 
   def doctor_result(_diagnostic) do
-    "Issues were detected. Fix the failed checks above, then relaunch the TUI."
+    "Issues were detected. Fix the failed check above, then retry."
   end
 
-  defp remote_cookie(opts) do
-    cond do
-      Keyword.has_key?(opts, :cookie) ->
-        {Keyword.fetch!(opts, :cookie), :provided}
+  defp request_for!(module, function, args) do
+    key = {normalize_module(module), function, length(args)}
 
-      Keyword.has_key?(opts, :cookie_file) ->
-        {read_cookie_file!(Keyword.fetch!(opts, :cookie_file)), :cookie_file}
+    case {key, args} do
+      {{NixSwarm.API, :cluster_overview, 0}, []} ->
+        :cluster_overview
 
-      System.get_env("NIX_SWARM_COOKIE") not in [nil, ""] ->
-        {System.get_env("NIX_SWARM_COOKIE"), :env}
+      {{NixSwarm.API, :cluster_members, 0}, []} ->
+        :cluster_members
 
-      System.get_env("NIX_SWARM_COOKIE_FILE") not in [nil, ""] ->
-        {read_cookie_file!(System.get_env("NIX_SWARM_COOKIE_FILE")), :env_file}
+      {{NixSwarm.API, :operator_snapshot, 3}, [service, node, lines]} ->
+        {:operator_snapshot, service, node, lines}
 
-      true ->
+      {{NixSwarm.API, :logs, 2}, [service, lines]} ->
+        {:logs, to_string(service), lines}
+
+      {{NixSwarm.API, :node_service_logs, 2}, [node, lines]} ->
+        {:node_service_logs, node, lines}
+
+      {{NixSwarm.API, :cluster_logs, 2}, [node, lines]} ->
+        {:cluster_logs, node, lines}
+
+      _ ->
         fail(
-          "missing cookie for remote command; pass --cookie or --cookie-file, or set NIX_SWARM_COOKIE / NIX_SWARM_COOKIE_FILE"
+          "remote call #{inspect(module)}.#{function}/#{length(args)} is not read-only or allowlisted"
         )
     end
   end
 
-  defp read_cookie_file!(path) do
-    case File.read(path) do
-      {:ok, contents} ->
-        cookie = String.trim(contents)
+  defp normalize_module(Swarm.API), do: NixSwarm.API
+  defp normalize_module(module), do: module
 
-        if cookie == "" do
-          fail("cookie file is empty: #{path}")
-        else
-          cookie
-        end
+  defp run_ssh_query(remote, encoded) do
+    args = [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+      "-o",
+      "ServerAliveInterval=5",
+      "-o",
+      "ServerAliveCountMax=2",
+      "-o",
+      "StrictHostKeyChecking=yes",
+      "-o",
+      "ClearAllForwardings=yes",
+      "-o",
+      "ForwardAgent=no",
+      "-o",
+      "ForwardX11=no",
+      "-o",
+      "PermitLocalCommand=no",
+      "--",
+      remote.ssh_host,
+      "nix-swarm-query",
+      encoded
+    ]
 
-      {:error, reason} ->
-        fail("failed to read cookie file #{path}: #{:file.format_error(reason)}")
+    task = Task.async(fn -> System.cmd("ssh", args, stderr_to_stdout: true) end)
+
+    case Task.yield(task, @query_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {output, 0}} -> decode_ssh_response(output)
+      {:ok, {output, status}} -> {:error, {:ssh_failed, status, String.trim(output)}}
+      nil -> {:error, :ssh_timeout}
+    end
+  rescue
+    error -> {:error, {:ssh_failed, Exception.message(error)}}
+  end
+
+  defp decode_ssh_response(output) do
+    with {:ok, response} <- QueryProtocol.decode_response(output) do
+      response
     end
   end
 
-  defp ensure_cli_node(cli_node_name, node_mode) do
-    unless Node.alive?() do
-      System.cmd("epmd", ["-daemon"])
-      ensure_net_kernel_started(cli_node_name, node_mode)
-    else
-      ensure_node_mode!(node_mode)
-    end
-  end
-
-  defp ensure_net_kernel_started(cli_node_name, node_mode) do
-    case :net_kernel.start([cli_node_name, node_mode]) do
-      {:ok, _pid} ->
-        :ok
-
-      {:error, {:already_started, _pid}} ->
-        :ok
-
-      {:error, reason} ->
-        fail("failed to start local control node #{cli_node_name}: #{inspect(reason)}")
-    end
-  end
-
-  defp ensure_node_mode!(expected_mode) do
-    current_mode = target_mode_and_host(Atom.to_string(Node.self())) |> elem(0)
-
-    if current_mode != expected_mode do
-      fail(
-        "local control node #{Node.self()} is already running with #{current_mode}, but the target requires #{expected_mode}"
-      )
-    end
-  end
-
-  defp target_mode_and_host(target) do
+  defp target_host(target) do
     case String.split(target, "@", parts: 2) do
-      [_name, host] -> {node_mode_for_host(host), host}
-      [_name] -> {:shortnames, nil}
+      [_node, host] when host != "" -> host
+      [host] -> host
     end
   end
 
-  defp node_mode_for_host(host) when is_binary(host) do
-    if String.contains?(host, ".") or String.contains?(host, ":") do
-      :longnames
+  defp validate_target!(target) do
+    if byte_size(target) <= 255 and
+         String.match?(target, ~r/\A[A-Za-z0-9][A-Za-z0-9_.-]*(?:@[A-Za-z0-9][A-Za-z0-9_.-]*)?\z/) do
+      target
     else
-      :shortnames
+      fail("--target contains unsupported characters")
     end
   end
 
-  defp local_host_for_target(target_host) do
-    with {:ok, target_address} <- resolve_host(target_host),
-         {:ok, local_host} <- local_host_for_address(target_address) do
-      local_host
+  defp validate_ssh_host!(host) do
+    if byte_size(host) <= 255 and
+         String.match?(host, ~r/\A[A-Za-z0-9][A-Za-z0-9_.@:-]*\z/) do
+      host
     else
-      _ -> fallback_local_host()
+      fail("--ssh-host contains unsupported characters")
     end
-  end
-
-  defp resolve_host(nil), do: {:error, :missing_host}
-
-  defp resolve_host(host) do
-    charlist = String.to_charlist(host)
-
-    case :inet.getaddr(charlist, :inet) do
-      {:ok, address} -> {:ok, address}
-      {:error, _reason} -> :inet.getaddr(charlist, :inet6)
-    end
-  end
-
-  defp local_host_for_address(target_address) do
-    case :gen_udp.open(0, [:binary, active: false]) do
-      {:ok, socket} ->
-        try do
-          with :ok <- :gen_udp.connect(socket, target_address, @epmd_port),
-               {:ok, {local_address, _port}} <- :inet.sockname(socket) do
-            {:ok, local_address |> :inet.ntoa() |> to_string()}
-          end
-        after
-          :gen_udp.close(socket)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp fallback_local_host do
-    case :inet.gethostname() do
-      {:ok, hostname} -> List.to_string(hostname)
-      {:error, _reason} -> "localhost"
-    end
-  end
-
-  defp resolve_host_details(nil) do
-    %{
-      status: :info,
-      host: nil,
-      address: nil,
-      detail: "shortname target; no remote host lookup was required"
-    }
-  end
-
-  defp resolve_host_details(host) do
-    case resolve_host(host) do
-      {:ok, address} ->
-        %{
-          status: :ok,
-          host: host,
-          address: address,
-          detail: address |> :inet.ntoa() |> to_string()
-        }
-
-      {:error, reason} ->
-        %{
-          status: :error,
-          host: host,
-          address: nil,
-          detail: inspect(reason)
-        }
-    end
-  end
-
-  defp ensure_connected(target_node) do
-    cond do
-      target_node == Node.self() -> :ignored
-      target_node in Node.list() -> :ignored
-      true -> Node.connect(target_node)
-    end
-  end
-
-  defp target_port_checks(_node_mode, _target_resolution, true), do: []
-  defp target_port_checks(:shortnames, _target_resolution, false), do: []
-
-  defp target_port_checks(_node_mode, %{status: :ok, address: address}, false) do
-    [
-      tcp_port_check(address, @epmd_port, "target epmd TCP port #{@epmd_port}"),
-      tcp_port_check(
-        address,
-        distribution_port(),
-        "target Nix-Swarm distribution TCP port #{distribution_port()}"
-      )
-    ]
-  end
-
-  defp target_port_checks(_node_mode, _target_resolution, false) do
-    [
-      %{
-        label: "target epmd TCP port #{@epmd_port}",
-        status: :info,
-        detail: "skipped because the target host could not be resolved"
-      },
-      %{
-        label: "target Nix-Swarm distribution TCP port #{distribution_port()}",
-        status: :info,
-        detail: "skipped because the target host could not be resolved"
-      }
-    ]
-  end
-
-  defp tcp_port_check(address, port, label) do
-    case :gen_tcp.connect(address, port, [:binary, active: false], @tcp_connect_timeout_ms) do
-      {:ok, socket} ->
-        :ok = :gen_tcp.close(socket)
-        %{label: label, status: :ok, detail: "reachable"}
-
-      {:error, reason} ->
-        %{label: label, status: :error, detail: inspect(reason)}
-    end
-  end
-
-  defp probe_remote(_target_node, connect_result) when connect_result not in [true, :ignored] do
-    %{
-      remote_self: %{
-        status: :info,
-        detail: "skipped because the distributed Erlang connection failed"
-      },
-      cluster_members: %{
-        status: :info,
-        detail: "skipped because the distributed Erlang connection failed"
-      }
-    }
-  end
-
-  defp probe_remote(target_node, _connect_result) do
-    %{
-      remote_self: rpc_probe(target_node, Node, :self, []),
-      cluster_members: api_rpc_probe(target_node, :cluster_members, [])
-    }
-  end
-
-  defp api_rpc_probe(node, function, args) do
-    case rpc_result(node, NixSwarm.API, function, args, &:rpc.call/5) do
-      {:ok, _module, value} ->
-        %{status: :ok, value: value}
-
-      {:error, _module, reason} ->
-        %{status: :error, detail: inspect(reason)}
-    end
-  end
-
-  defp rpc_probe(node, module, function, args) do
-    case :rpc.call(node, module, function, args, NixSwarm.rpc_timeout_ms()) do
-      {:badrpc, reason} ->
-        %{status: :error, detail: inspect(reason)}
-
-      value ->
-        %{status: :ok, value: value}
-    end
-  end
-
-  defp local_ip_candidates do
-    case :inet.getifaddrs() do
-      {:ok, interfaces} ->
-        interfaces
-        |> Enum.flat_map(fn {_name, options} ->
-          options
-          |> Keyword.get_values(:addr)
-          |> Enum.map(&format_ip_address/1)
-        end)
-        |> Enum.reject(&is_nil/1)
-        |> Enum.reject(&(&1 in ["127.0.0.1", "::1"]))
-        |> Enum.uniq()
-        |> Enum.sort()
-
-      {:error, _reason} ->
-        []
-    end
-  end
-
-  defp format_ip_address(address) when tuple_size(address) in [4, 8] do
-    address |> :inet.ntoa() |> to_string()
-  end
-
-  defp format_ip_address(_address), do: nil
-
-  defp resolution_check(%{target_resolution: %{status: :ok, host: host, detail: detail}}) do
-    %{label: "target host #{host} resolves", status: :ok, detail: detail}
-  end
-
-  defp resolution_check(%{target_resolution: %{status: :error, host: host, detail: detail}}) do
-    %{label: "target host #{host} resolves", status: :error, detail: detail}
-  end
-
-  defp resolution_check(%{target_resolution: %{detail: detail}}) do
-    %{label: "target host resolution", status: :info, detail: detail}
-  end
-
-  defp connectivity_check(%{target: target, connect_result: true}) do
-    %{label: "distributed Erlang connection to #{target}", status: :ok, detail: "connected"}
-  end
-
-  defp connectivity_check(%{target: target, connect_result: :ignored}) do
-    %{
-      label: "distributed Erlang connection to #{target}",
-      status: :ok,
-      detail: "already connected"
-    }
-  end
-
-  defp connectivity_check(%{target: target, connect_result: false}) do
-    %{
-      label: "distributed Erlang connection to #{target}",
-      status: :error,
-      detail: "connection failed"
-    }
-  end
-
-  defp remote_probe_checks(%{remote_probe: probe, target: target}) do
-    [
-      remote_self_check(target, probe.remote_self),
-      cluster_members_check(probe.cluster_members)
-    ]
-  end
-
-  defp remote_self_check(target, %{status: :ok, value: value}) do
-    if value == NodeName.to_node!(target, label: "target node") do
-      %{label: "remote node identity", status: :ok, detail: Atom.to_string(value)}
-    else
-      %{label: "remote node identity", status: :error, detail: Atom.to_string(value)}
-    end
-  end
-
-  defp remote_self_check(_target, %{status: status, detail: detail}) do
-    %{label: "remote node identity", status: status, detail: detail}
-  end
-
-  defp cluster_members_check(%{status: :ok, value: %{live_nodes: live_nodes}}) do
-    %{
-      label: "remote Nix-Swarm API",
-      status: :ok,
-      detail: "live nodes: #{format_nodes(live_nodes)}"
-    }
-  end
-
-  defp cluster_members_check(%{status: :ok, value: value}) do
-    %{label: "remote Nix-Swarm API", status: :ok, detail: inspect(value)}
-  end
-
-  defp cluster_members_check(%{status: status, detail: detail}) do
-    %{label: "remote Nix-Swarm API", status: status, detail: detail}
   end
 
   defp format_check_line(%{label: label, status: status, detail: detail}) do
-    "  [#{format_check_status(status)}] #{label}: #{detail}"
-  end
-
-  defp format_check_status(:ok), do: "ok"
-  defp format_check_status(:error), do: "fail"
-  defp format_check_status(:info), do: "info"
-
-  defp maybe_add_solution(solutions, nil), do: solutions
-  defp maybe_add_solution(solutions, solution), do: solutions ++ [solution]
-
-  defp target_resolution_solution(%{
-         target_resolution: %{status: :error},
-         target_host: target_host
-       }) do
-    "Use an IP or DNS name that resolves from the control machine. `#{target_host}` did not resolve here."
-  end
-
-  defp target_resolution_solution(_diagnostic), do: nil
-
-  defp port_solution(diagnostic, port) do
-    case Enum.find(
-           diagnostic.target_port_checks,
-           &String.contains?(&1.label, Integer.to_string(port))
-         ) do
-      %{status: :error} when port == @epmd_port ->
-        "Make sure `nix-swarmd` is running on #{diagnostic.target_host} and TCP #{port} is open. If you want Nix-Swarm to manage the firewall, set `services.nix-swarm.openFirewall = true` and optionally scope it with `services.nix-swarm.firewallInterfaces`."
-
-      %{status: :error} = _check ->
-        if port == distribution_port() do
-          "Make sure the target allows TCP #{port} for distributed Erlang. If you changed `services.nix-swarm.distributionPort`, open that port instead."
-        else
-          nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp connection_failure_solution(%{connect_result: false, cli_node: cli_node}) do
-    "Verify the cookie matches on both nodes, and make sure the target can resolve and reach `#{cli_node}`. Distributed Erlang needs the target to reach the local control node name too."
-  end
-
-  defp connection_failure_solution(_diagnostic), do: nil
-
-  defp name_override_solution(%{target_mode: :longnames, cli_name: nil} = diagnostic) do
-    "Retry with `--name #{override_name_hint(diagnostic)}` if the auto-detected control host is not the right reachable LAN address."
-  end
-
-  defp name_override_solution(_diagnostic), do: nil
-
-  defp remote_api_solution(%{remote_probe: %{cluster_members: %{status: :error}}}) do
-    "The Erlang node answered, but the expected API module did not. Make sure the target is running either the current `nix_swarm` release or a legacy `swarm` release."
-  end
-
-  defp remote_api_solution(_diagnostic), do: nil
-
-  defp success_solution(%{
-         connect_result: result,
-         remote_probe: %{cluster_members: %{status: :ok}}
-       })
-       when result in [true, :ignored] do
-    "This node is reachable for Nix-Swarm RPC. You can run cluster-wide status, map, reconcile, restart, and logs commands from here."
-  end
-
-  defp success_solution(_diagnostic), do: nil
-
-  defp override_name_hint(%{cli_node: cli_node}) do
-    cli_node
-    |> Atom.to_string()
-    |> String.split("@", parts: 2)
-    |> List.last()
-    |> then(&"nix-swarmctl@#{&1}")
-  end
-
-  defp override_name_hint(%{local_ip_candidates: [candidate | _]}) do
-    "nix-swarmctl@#{candidate}"
-  end
-
-  defp result_label(true), do: "a direct distributed Erlang connection"
-  defp result_label(:ignored), do: "the existing distributed Erlang connection"
-
-  defp cli_node_source_label(nil), do: "auto-detected"
-  defp cli_node_source_label(_name), do: "provided via --name"
-
-  defp cookie_source_label(:provided), do: "command line"
-  defp cookie_source_label(:cookie_file), do: "cookie file"
-  defp cookie_source_label(:env), do: "NIX_SWARM_COOKIE"
-  defp cookie_source_label(:env_file), do: "NIX_SWARM_COOKIE_FILE"
-
-  defp format_list([]), do: "-"
-  defp format_list(values), do: Enum.join(values, ", ")
-
-  defp format_nodes(nodes), do: nodes |> Enum.map(&Atom.to_string/1) |> Enum.join(", ")
-
-  defp rpc_result(node, module, function, args, rpc_fun) do
-    candidates = compatible_modules(module)
-
-    candidates
-    |> Enum.reduce_while(nil, fn candidate, _last_error ->
-      case rpc_fun.(node, candidate, function, args, NixSwarm.rpc_timeout_ms()) do
-        {:badrpc, reason} ->
-          if undefined_remote_function?(reason) and candidate != List.last(candidates) do
-            {:cont, {:error, candidate, reason}}
-          else
-            {:halt, {:error, candidate, reason}}
-          end
-
-        result ->
-          {:halt, {:ok, candidate, result}}
-      end
-    end)
-  end
-
-  defp compatible_modules(NixSwarm.API), do: [NixSwarm.API, @legacy_api_module]
-  defp compatible_modules(module), do: [module]
-
-  defp undefined_remote_function?(reason) do
-    reason
-    |> inspect()
-    |> String.contains?(":undef")
+    status = if status == :ok, do: "ok", else: "fail"
+    "  [#{status}] #{label}: #{detail}"
   end
 
   defp fail(message), do: raise(Error, message: message)

@@ -6,78 +6,30 @@ defmodule NixSwarm.Service.Templates do
 
   @templates %{
     "web" => %{
-      description: "Generic web service (HTTP on port 8080)",
+      description: "Local example web service (ports 8080 + slot)",
       filename: "{name}.nix",
       content: ~S'''
-      { lib, ... }:
+      { lib, pkgs, ... }:
       let
-        port = 8080;
+        basePort = 8080;
       in
       {
-        # systemd unit that backs this service
+        # Replace this example server with your packaged application.
         systemd.services."{name}@" = {
           description = "{name} web service";
           wantedBy = lib.mkForce [];
 
           serviceConfig = {
-            ExecStart = "${pkgs.bash}/bin/bash -lc 'port=$((port + %i)); exec ${pkgs.python3}/bin/python3 -m http.server \"$port\"'";
-            Restart = "always";
+            DynamicUser = true;
+            ExecStart = "${pkgs.bash}/bin/bash -c 'port=$(( ${toString basePort} + %i )); exec ${pkgs.python3}/bin/python3 -m http.server \"$port\" --bind 127.0.0.1 --directory /var/empty'";
+            Restart = "on-failure";
             RestartSec = 5;
+            NoNewPrivileges = true;
+            PrivateTmp = true;
+            ProtectHome = true;
+            ProtectSystem = "strict";
           };
         };
-
-        # Firewall
-        networking.firewall.allowedTCPPorts = [ port ];
-      }
-      '''
-    },
-    "gitea" => %{
-      description: "Gitea Git service (port 3003)",
-      filename: "{name}.nix",
-      content: ~S'''
-      { lib, ... }:
-      {
-        services.gitea.enable = true;
-        services.gitea.stateDir = "/var/lib/gitea";
-        services.gitea.settings.server.HTTP_PORT = 3003;
-        services.gitea.settings.server.DOMAIN = "{name}.local";
-        services.gitea.settings.server.ROOT_URL = "http://{name}.local:3003";
-
-        systemd.services.gitea.wantedBy = lib.mkForce [];
-
-        networking.firewall.allowedTCPPorts = [ 3003 ];
-      }
-      '''
-    },
-    "postgres" => %{
-      description: "PostgreSQL database (port 5432)",
-      filename: "{name}.nix",
-      content: ~S'''
-      { lib, ... }:
-      {
-        services.postgresql.enable = true;
-        services.postgresql.authentication = "local all all trust\nhost all all 127.0.0.1/32 trust\nhost all all ::1/128 trust";
-
-        systemd.services.postgresql.wantedBy = lib.mkForce [];
-
-        networking.firewall.allowedTCPPorts = [ 5432 ];
-      }
-      '''
-    },
-    "nginx" => %{
-      description: "Nginx reverse proxy (port 80)",
-      filename: "{name}.nix",
-      content: ~S'''
-      { ... }:
-      {
-        services.nginx.enable = true;
-        services.nginx.virtualHosts."{name}.local" = {
-          locations."/" = {
-            proxyPass = "http://127.0.0.1:8080";
-          };
-        };
-
-        networking.firewall.allowedTCPPorts = [ 80 ];
       }
       '''
     },
@@ -85,7 +37,7 @@ defmodule NixSwarm.Service.Templates do
       description: "Minimal skeleton — fill in your own systemd unit",
       filename: "{name}.nix",
       content: ~S'''
-      { lib, ... }:
+      { lib, pkgs, ... }:
       {
         # Replace this with your own systemd service
         systemd.services."{name}@" = {
@@ -93,9 +45,14 @@ defmodule NixSwarm.Service.Templates do
           wantedBy = lib.mkForce [];
 
           serviceConfig = {
-            ExecStart = "${pkgs.bash}/bin/bash -c 'echo {name} running; sleep 10'";
-            Restart = "always";
+            DynamicUser = true;
+            ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
+            Restart = "on-failure";
             RestartSec = 5;
+            NoNewPrivileges = true;
+            PrivateTmp = true;
+            ProtectHome = true;
+            ProtectSystem = "strict";
           };
         };
       }

@@ -38,11 +38,21 @@ defmodule NixSwarmReconcilerTest do
     File.rm_rf!(root)
     File.mkdir_p!(root)
 
+    previous_config = Application.get_env(:nix_swarm, :cluster_config)
     config = put_in(@test_config.runtime.executor.root, root)
+    Application.stop(:nix_swarm)
     Application.put_env(:nix_swarm, :cluster_config, config)
 
     on_exit(fn ->
       Application.stop(:nix_swarm)
+
+      if previous_config do
+        Application.put_env(:nix_swarm, :cluster_config, previous_config)
+      else
+        Application.delete_env(:nix_swarm, :cluster_config)
+      end
+
+      {:ok, _apps} = Application.ensure_all_started(:nix_swarm)
       File.rm_rf!(root)
     end)
 
@@ -63,6 +73,28 @@ defmodule NixSwarmReconcilerTest do
       r1 = Reconciler.reconcile_now()
       r2 = Reconciler.reconcile_now()
       assert r1.owned_units == r2.owned_units
+    end
+
+    test "emits telemetry spans" do
+      handler_id = "reconcile-test-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [[:nix_swarm, :reconcile, :start], [:nix_swarm, :reconcile, :stop]],
+          fn event, measurements, metadata, pid ->
+            send(pid, {:telemetry, event, measurements, metadata})
+          end,
+          test_pid
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+      Reconciler.reconcile_now()
+
+      assert_receive {:telemetry, [:nix_swarm, :reconcile, :start], _, %{node: _}}
+      assert_receive {:telemetry, [:nix_swarm, :reconcile, :stop], %{duration: duration}, _}
+      assert duration > 0
     end
   end
 
@@ -94,69 +126,46 @@ defmodule NixSwarmReconcilerTest do
     end
   end
 
-  describe "local_service_modes/0" do
-    test "returns an empty map initially" do
-      assert Reconciler.local_service_modes() == %{}
+  describe "code-first durable state" do
+    test "records the applied Nix generation and assignments across restarts" do
+      result = Reconciler.reconcile_now()
+      snapshot = NixSwarm.OperationalState.snapshot()
+
+      assert snapshot.generation == "reconciler-test"
+      assert snapshot.config_digest == NixSwarm.Config.digest()
+      assert snapshot.owned_units == result.owned_units
+      assert is_list(snapshot.assignments)
+
+      assert :ok = Application.stop(:nix_swarm)
+      assert {:ok, _apps} = Application.ensure_all_started(:nix_swarm)
+      assert NixSwarm.OperationalState.snapshot() == snapshot
+    end
+
+    test "does not expose mutable service control functions" do
+      refute function_exported?(Reconciler, :start_local_service, 1)
+      refute function_exported?(Reconciler, :stop_local_service, 1)
+      refute function_exported?(Reconciler, :restart_local_service, 1)
     end
   end
 
-  describe "start_local_service/1" do
-    test "returns ok for a known service" do
-      result = Reconciler.start_local_service("api")
-      assert is_map(result)
-      assert result.desired_state == :running
-    end
-
-    test "returns error for an unknown service" do
-      assert {:error, :unknown_service} = Reconciler.start_local_service("nonexistent")
-    end
-  end
-
-  describe "stop_local_service/1" do
-    test "stops a running service and updates desired state" do
-      {:ok, _} = Application.ensure_all_started(:nix_swarm)
-
-      result = Reconciler.stop_local_service("api")
-      assert is_map(result)
-      assert result.desired_state == :stopped
-
-      status = Reconciler.local_status()
-      api_service = Enum.find(status, &(&1.name == "api"))
-      assert api_service.desired_state == :stopped
-    end
-  end
-
-  describe "restart_local_service/1" do
-    test "restarts a running service" do
-      result = Reconciler.restart_local_service("api")
-      assert is_list(result)
-
-      Enum.each(result, fn {unit_name, restart_result} ->
-        assert is_binary(unit_name)
-        assert restart_result == :ok
-      end)
-    end
-
-    test "returns error for an unknown service" do
-      assert {:error, :unknown_service} = Reconciler.restart_local_service("nonexistent")
-    end
-  end
-
-  describe "healthcheck" do
-    test "reconcile_now reports healthcheck results for services that define one" do
+  describe "systemd health" do
+    test "reconcile_now derives health from unit state without executing shell commands" do
       result = Reconciler.reconcile_now()
       assert Map.has_key?(result, :healthcheck)
       assert is_map(result.healthcheck)
       assert Map.has_key?(result.healthcheck, "api")
-      assert result.healthcheck["api"].healthy == true
+      assert result.healthcheck["api"].source == :systemd
+      assert is_boolean(result.healthcheck["api"].healthy)
+      refute Map.has_key?(result.healthcheck["api"], :output)
     end
 
-    test "local_status includes healthcheck results" do
+    test "local_status includes systemd-derived health results" do
       Reconciler.reconcile_now()
       status = Reconciler.local_status()
       api_service = Enum.find(status, &(&1.name == "api"))
       assert api_service.healthcheck != nil
-      assert api_service.healthcheck.healthy == true
+      assert api_service.healthcheck.source == :systemd
+      assert is_map(api_service.healthcheck.units)
     end
   end
 end

@@ -31,6 +31,9 @@ defmodule NixSwarm.TestCluster do
       runtime: %{
         connect_interval_ms: 100,
         reconcile_interval_ms: 100,
+        autoscale_interval_ms: 1_000,
+        failure_grace_ms: 200,
+        recovery_stabilization_ms: 200,
         executor: %{adapter: :fake, root: root},
         generation: "integration-test"
       }
@@ -55,7 +58,7 @@ defmodule NixSwarm.TestCluster do
     wait_until(fn ->
       Enum.all?(nodes, fn node ->
         status = :rpc.call(node, NixSwarm.API, :cluster_members, [])
-        Enum.sort(status.live_nodes) == nodes
+        Enum.sort(status.live_nodes) == nodes and Enum.sort(status.placement_nodes) == nodes
       end)
     end)
 
@@ -77,6 +80,54 @@ defmodule NixSwarm.TestCluster do
     |> Enum.find_value(fn {peer, node} ->
       if node == node_name, do: peer
     end)
+  end
+
+  def remote_for(cluster, target_node) do
+    query_fun = fn _remote, request ->
+      result =
+        case request do
+          :cluster_members ->
+            :rpc.call(target_node, NixSwarm.API, :cluster_members, [])
+
+          :cluster_overview ->
+            :rpc.call(target_node, NixSwarm.API, :cluster_overview, [])
+
+          {:operator_snapshot, service, node, lines} ->
+            selected_node =
+              case node do
+                value when is_atom(value) ->
+                  value
+
+                value when is_binary(value) ->
+                  Enum.find(cluster.nodes, &(Atom.to_string(&1) == value))
+
+                _value ->
+                  nil
+              end
+
+            :rpc.call(target_node, NixSwarm.API, :operator_snapshot, [
+              service,
+              selected_node,
+              lines
+            ])
+
+          {:logs, service, lines} ->
+            :rpc.call(target_node, NixSwarm.API, :logs, [service, lines])
+
+          {:node_service_logs, node, lines} ->
+            :rpc.call(target_node, NixSwarm.API, :node_service_logs, [node, lines])
+
+          {:cluster_logs, node, lines} ->
+            :rpc.call(target_node, NixSwarm.API, :cluster_logs, [node, lines])
+        end
+
+      case result do
+        {:badrpc, reason} -> {:error, reason}
+        value -> {:ok, value}
+      end
+    end
+
+    NixSwarm.Remote.options!(target: Atom.to_string(target_node), query_fun: query_fun)
   end
 
   def unit_state(root, node_name, unit) do

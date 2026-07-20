@@ -1,251 +1,93 @@
 # Nix-Swarm
 
-Nix-Swarm is a **TUI-first, leaderless NixOS orchestrator** for small clusters. Every node runs the same OTP runtime, computes the same placement from shared Nix config, and only starts or stops its own local systemd units.
+Nix-Swarm is a code-first orchestrator for systemd services on small NixOS clusters. Nix owns desired state, systemd owns processes and resources, and the BEAM owns membership, deterministic placement, supervision, and reconciliation.
 
-Nix-Swarm is for **Nix + systemd + distributed Erlang**. It is **not** a container platform and **not** a storage orchestrator.
+It is intentionally not a container runtime, storage system, overlay network, or general-purpose scheduler.
 
+## What it provides
 
-![Nix-Swarm dashboard](docs/screenshots/dashboard.png)
+- declarative nodes, replicas, labels, constraints, preferred nodes, and draining
+- leaderless placement and failover between configured BEAM peers
+- idempotent systemd reconciliation and durable local observations in DETS
+- native NixOS deployment, canaries, health-gated batches, and rollback
+- a read-only TUI for status, placement, metrics, and bounded journald logs
+- unprivileged agents with exact systemd-unit authorization
+- SSH operator access through a restricted local Unix socket; operators never receive the BEAM cookie
 
-## Features
+## Install
 
-- **Operator TUI** for dashboard, topology map, machines, services, logs, rollout, dry-run, and apply workflows
-- **Declarative Nix config** split into cluster, machine, and service files
-- **Leaderless failover** with no central scheduler
-- **Systemd-native runtime** instead of containers
-- **Cluster + per-machine/service metrics**
-- **Built-in config editing** from the TUI, with your system editor and return-to-TUI flow
-- **One-command bootstrap**: add a machine to `cluster.nix`, run `swarm cluster ensure`, and it SSHes in, sets up the flake, syncs source, copies the cookie, and rebuilds
-
-## Security model
-
-Nix-Swarm uses distributed Erlang for node-to-node RPC. Authentication is based on a shared Erlang cookie; traffic is not TLS-encrypted by Nix-Swarm itself.
-
-- Run Nix-Swarm only on trusted networks or through your own VPN/private overlay.
-- Restrict TCP `4369` (EPMD) and the Nix-Swarm distribution port (`4370` by default) with firewall rules.
-- Generate a strong cookie once, store it outside the Nix store, and distribute it securely to every managed node and operator workstation.
-- Keep cookie files readable only by the owning root/nix-swarm context:
+Run without installing:
 
 ```bash
-install -m 600 -o root -g root /path/to/generated.cookie /etc/nixos/nix-swarm/secrets/nix-swarm.cookie
+nix run github:ITM007/nix-swarm -- --help
 ```
 
-The packaged operator first checks `~/.config/nix-swarm/secrets/{nix-swarm.cookie,swarm.cookie}` for a local operator cookie, then falls back to `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` when it is readable. You can still override that with `NIX_SWARM_COOKIE_FILE` or `NIX_SWARM_COOKIE`.
-
-On first launch, the packaged operator also seeds a full editable working tree under `~/.config/nix-swarm`. That tree includes public-safe `cluster/`, `machines/`, `cluster/services/`, and `secrets/.gitignore` examples you can customize without modifying the installed package, and you can commit that working tree to Git while keeping secrets out of version control.
-
-## Add Nix-Swarm to a NixOS system
-
-By default, use the flake directly from the Git repository so your lock file can track the latest `main` revision. Flake-based rebuilds use the revision recorded in `flake.lock`, so move to the newest upstream commit with `nix flake update --update-input nix-swarm` when you want to refresh. If you want a specific release instead, pin the input with `?ref=refs/tags/vX.Y.Z`.
-
-The flake publishes these package outputs on each supported Linux system:
-
-| Output | Use |
-|---|---|
-| `packages.<system>.operator` | Operator workstation package exposing `swarm` and compatibility `nix-swarm` |
-| `packages.<system>.cluster` | Managed-node runtime package exposing `nix-swarmd` |
-| `packages.<system>.default` / `packages.<system>.nix-swarm` | Compatibility package containing both operator and cluster entrypoints |
-
-### Operator workstation
-
-Add Nix-Swarm as a flake input and install the dedicated operator package, which exposes `swarm` as the operator command:
-
-```nix
-{
-  inputs.nix-swarm.url = "git+https://github.com/ITM007/nix-swarm?ref=main";
-
-  outputs = { self, nixpkgs, nix-swarm, ... }: {
-    nixosConfigurations.operator = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      modules = [
-        ({ pkgs, ... }: {
-          environment.systemPackages = [
-            nix-swarm.packages.${pkgs.system}.operator
-          ];
-        })
-      ];
-    };
-  };
-}
-```
-
-If your workstation is not itself a managed Nix-Swarm node, place the shared cookie at `~/.config/nix-swarm/secrets/swarm.cookie` (or export it through `NIX_SWARM_COOKIE_FILE`) before launching:
+Install the operator:
 
 ```bash
-install -Dm600 /path/to/nix-swarm.cookie ~/.config/nix-swarm/secrets/swarm.cookie
-swarm
+nix profile add github:ITM007/nix-swarm#operator
 ```
 
-### Managed cluster node
+The first `nix-swarm` launch creates a starter flake at `~/.config/nix-swarm`. You can also copy [`examples/starter`](examples/starter) into a Git repository.
 
-Import the module and point `services.nix-swarm.package` at the dedicated cluster package:
+## Start a cluster
 
-```nix
-{ inputs, pkgs, ... }:
-{
-  imports = [
-    inputs.nix-swarm.nixosModules.default
-    ./cluster/cluster.nix
-  ];
-
-  services.nix-swarm = {
-    enable = true;
-    package = inputs.nix-swarm.packages.${pkgs.system}.cluster;
-    nodeName = "nix-swarm@example-node-a.local";
-    cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
-    openFirewall = true;
-    firewallInterfaces = [ "eth0" ];
-  };
-}
-```
-
-Published GitHub releases also attach prebuilt Nix binary-cache tarballs for the `operator` and `cluster` packages on each supported Linux system.
-
-## Launch
+From the starter directory:
 
 ```bash
-swarm
+# Replace the placeholder with this node's real hardware configuration.
+ssh root@node-a nixos-generate-config --show-hardware-config \
+  > machines/hardware-configuration.nix
+
+nix flake lock
+nix-swarm cluster plan --source .
+nix-swarm cluster init --source . --yes
+nix-swarm cluster doctor --source . --target nix-swarm@node-a
+nix-swarm --source . --target nix-swarm@node-a
 ```
 
-`swarm` prefers `NIX_SWARM_TARGET` when it is set. Otherwise it uses the first peer from `~/.config/nix-swarm/cluster/cluster.nix`. Pass `--target NODE` any time you want to override that default for one launch.
+`cluster init` creates one strong local cookie, installs it on the configured root SSH hosts with mode `0400`, evaluates every NixOS closure, and activates the cluster. Use declarative secret provisioning instead if root SSH is unavailable.
 
-Useful launch options:
+## Normal workflow
 
-- `--name nix-swarmctl@operator-lan.example` if longname auto-detection picks the wrong local address
-- `--cookie-file /path/to/nix-swarm.cookie` to read the cookie from a specific file for one launch
-- `--source /path/to/source-root` to make apply/update/edit actions use a specific checkout or seeded config root
-- `--cluster-file`, `--machines-dir`, `--services-dir`, `--remote-path`, `--nixos-dir` for path overrides
-
-From a local checkout during development:
+Edit Nix, review, then apply:
 
 ```bash
-mix run -e 'NixSwarm.CLI.main(System.argv())' -- --target nix-swarm@example-node-a.local
+nix-swarm cluster plan --source .
+nix-swarm cluster apply --source . --yes
 ```
 
-## Bootstrapping remote machines
-
-Add a machine to `~/.config/nix-swarm/cluster/cluster.nix` with a `deployHost`, then run:
+Update the application input and roll it across the cluster:
 
 ```bash
-swarm cluster ensure
+nix-swarm cluster upgrade --source . --yes
 ```
 
-This connects to every `deployHost` in the cluster config, checks whether `nix-swarmd` is running, and bootstraps any machine that isn't set up — it creates the NixOS flake skeleton, syncs the swarm source, copies the shared cookie, and rebuilds. Use `--force` to update machines that are already running.
+Update only the local operator profile:
 
-## Starter configs
-
-The repository keeps tracked starter files under `examples/config/`. The packaged operator mirrors them into `~/.config/nix-swarm/` on first launch, where you edit the live copy.
-
-That seeded tree also includes `~/.config/nix-swarm/nix/nix-swarm/module.nix` as a local bridge back to the packaged NixOS module, so the starter machine files can import it directly without needing a separate flake input inside the working tree.
-
-### `~/.config/nix-swarm/machines/example-node-a.nix`
-
-```nix
-{ ... }:
-{
-  imports = [
-    ../nix/nix-swarm/module.nix
-    ../cluster/cluster.nix
-  ];
-
-  services.nix-swarm = {
-    enable = true;
-    nodeName = "nix-swarm@example-node-a.local";
-    cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
-    openFirewall = true;
-    firewallInterfaces = [ "eth0" ];
-  };
-}
+```bash
+nix profile upgrade operator
 ```
 
-### `~/.config/nix-swarm/cluster/cluster.nix`
+Rollback uses the previous NixOS generation:
 
-```nix
-{ ... }:
-{
-  imports = [
-    ./services/gitea.nix
-  ];
-
-  services.nix-swarm = {
-    peers = [
-      "nix-swarm@example-node-a.local"
-      "nix-swarm@example-node-b.local"
-    ];
-
-    nodes = {
-      "nix-swarm@example-node-a.local" = {
-        labels = [ "gitea" "ingress" ];
-        deployHost = "example-node-a.local";
-      };
-
-      "nix-swarm@example-node-b.local" = {
-        labels = [ "gitea" "ingress" ];
-        deployHost = "example-node-b.local";
-      };
-    };
-
-    services.gitea = {
-      constraints = [ "gitea" ];
-      preferredNodes = [ "nix-swarm@example-node-a.local" ];
-      settings = {
-        domain = "gitea.example.internal";
-        httpPort = 3003;
-      };
-    };
-
-    ingress.sites.gitea = {
-      domain = "gitea.example.internal";
-      service = "gitea";
-      ports = [ 3003 ];
-      default = true;
-    };
-  };
-}
+```bash
+nix-swarm cluster rollback --source . --yes
 ```
 
-### `~/.config/nix-swarm/cluster/services/gitea.nix`
+## Network and trust model
 
-```nix
-{ lib, ... }:
-{
-  networking.firewall.allowedTCPPorts = [ 3003 ];
+Agents use distributed Erlang on TCP `4369` and fixed port `4370`. Keep those ports closed on public/LAN interfaces and expose them only through a trusted encrypted overlay such as WireGuard or Tailscale. The NixOS module refuses an unscoped `openFirewall = true`.
 
-  services.gitea.enable = true;
-  services.gitea.stateDir = "/var/lib/gitea";
-  services.gitea.settings.server.HTTP_PORT = 3003;
+Operators need only SSH. Set `operatorUsers = [ "alice" ];` on each node, then use `--ssh-host alice@node-a`; root also works. The TUI cannot mutate the cluster.
 
-  systemd.services.gitea.wantedBy = lib.mkForce [];
-}
-```
+Service `settings` are public metadata rendered into the Nix store. Never put credentials there; use native systemd credentials or a NixOS secret-management module.
 
-## More documentation
+## Documentation
 
 - [Getting started](docs/GETTING_STARTED.md)
-- [Configuration reference](docs/CONFIG_REFERENCE.md)
-- [Operations guide](docs/OPERATIONS.md)
-- [Security policy](SECURITY.md)
-- [Security model](docs/SECURITY.md)
-
-## Troubleshooting
-
-- **Cannot connect to the target:** confirm `nix-swarmd` is running, the cookie matches, and TCP `4369` plus `4370` are reachable from the operator machine. Run `swarm cluster ensure` to bootstrap a machine that is defined in `cluster.nix` but not yet set up.
-- **Longname target cannot reach the operator:** relaunch with `--name nix-swarmctl@LAN_IP` so the target can resolve and connect back to the control node. The operator's distribution port must also be reachable from managed nodes (TCP `4370` by default).
-- **"Invalid challenge reply":** the Erlang cookie does not match between operator and target. Verify the cookie file content is identical on both machines. Use a simple alphanumeric cookie or a base64 value (supported since v0.4.1).
-- **Apply/update hangs on SSH:** pre-populate `known_hosts`, ensure passwordless root or passwordless sudo works, and verify deploy hosts in `~/.config/nix-swarm/cluster/cluster.nix`.
-- **Mixed live versions after an update:** check the **Machines** or **Dashboard** views. Nix-Swarm marks version mismatches as an available update and keeps the rollout pending until the targeted nodes converge to one version.
-- **Cookie errors:** prefer `NIX_SWARM_COOKIE_FILE`; avoid `--cookie` because command-line arguments can be visible in process listings. Base64 cookies (with `+`, `/`, `=`) are supported since v0.4.1.
-
-## More Screenshots
-![Nix-Swarm map view](docs/screenshots/map.png)
-
-![Nix-Swarm machines view](docs/screenshots/machines.png)
-
-![Nix-Swarm services view](docs/screenshots/services.png)
-
-![Nix-Swarm logs view](docs/screenshots/logs.png)
-
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+- [Configuration](docs/CONFIG_REFERENCE.md)
+- [Operations](docs/OPERATIONS.md)
+- [Security](docs/SECURITY.md)
+- [Development and tests](docs/DEVELOPMENT.md)
+- [Product scope](docs/SWARM_PARITY.md)
