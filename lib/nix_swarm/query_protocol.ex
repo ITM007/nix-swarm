@@ -94,7 +94,7 @@ defmodule NixSwarm.QueryProtocol do
   def decode_request(_payload), do: {:error, :request_too_large}
 
   def encode_response(response) do
-    binary = :erlang.term_to_binary(response, [:deterministic])
+    binary = response |> wire_encode() |> :erlang.term_to_binary([:deterministic])
 
     if byte_size(binary) <= @max_response_bytes do
       {:ok, Base.url_encode64(binary, padding: false)}
@@ -106,10 +106,21 @@ defmodule NixSwarm.QueryProtocol do
   def decode_response(encoded) when is_binary(encoded) do
     with {:ok, binary} <- Base.url_decode64(String.trim(encoded), padding: false),
          true <- byte_size(binary) <= @max_response_bytes do
-      {:ok, :erlang.binary_to_term(binary, [:safe])}
+      {:ok, binary |> :erlang.binary_to_term([:safe]) |> wire_decode()}
     else
       _ -> {:error, :invalid_response}
     end
+  rescue
+    ArgumentError -> {:error, :invalid_response}
+  end
+
+  @doc false
+  def encode_local_response(response),
+    do: response |> wire_encode() |> :erlang.term_to_binary([:deterministic])
+
+  @doc false
+  def decode_local_response(binary) when is_binary(binary) do
+    {:ok, binary |> :erlang.binary_to_term([:safe]) |> wire_decode()}
   rescue
     ArgumentError -> {:error, :invalid_response}
   end
@@ -146,4 +157,40 @@ defmodule NixSwarm.QueryProtocol do
       _ -> {:error, :invalid_field}
     end
   end
+
+  defp wire_encode(value) when is_atom(value) do
+    name = Atom.to_string(value)
+
+    if String.contains?(name, "@") and
+         String.match?(name, ~r/\A[A-Za-z0-9][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9_.-]*\z/) do
+      {:nix_swarm_node, name}
+    else
+      value
+    end
+  end
+
+  defp wire_encode(value) when is_map(value) do
+    Map.new(value, fn {key, item} -> {wire_encode(key), wire_encode(item)} end)
+  end
+
+  defp wire_encode(value) when is_tuple(value) do
+    value |> Tuple.to_list() |> Enum.map(&wire_encode/1) |> List.to_tuple()
+  end
+
+  defp wire_encode(value) when is_list(value), do: Enum.map(value, &wire_encode/1)
+  defp wire_encode(value), do: value
+
+  defp wire_decode({:nix_swarm_node, value}) when is_binary(value),
+    do: NixSwarm.NodeName.to_node!(value)
+
+  defp wire_decode(value) when is_map(value) do
+    Map.new(value, fn {key, item} -> {wire_decode(key), wire_decode(item)} end)
+  end
+
+  defp wire_decode(value) when is_tuple(value) do
+    value |> Tuple.to_list() |> Enum.map(&wire_decode/1) |> List.to_tuple()
+  end
+
+  defp wire_decode(value) when is_list(value), do: Enum.map(value, &wire_decode/1)
+  defp wire_decode(value), do: value
 end

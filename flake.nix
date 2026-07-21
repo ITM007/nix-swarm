@@ -216,9 +216,10 @@
             }
           '';
 
-          operatorSmoke = pkgs.runCommand "nix-swarm-operator-smoke" {
-            nativeBuildInputs = [ pkgs.nix ];
-          } ''
+          operatorSmoke = pkgs.runCommand "nix-swarm-operator-smoke"
+            {
+              nativeBuildInputs = [ pkgs.nix ];
+            } ''
             set -eu
             export HOME="$TMPDIR/home"
             export NIX_SWARM_SOURCE="$TMPDIR/config"

@@ -114,12 +114,12 @@ defmodule NixSwarm.QueryServer do
         {:error, reason} -> {:error, reason}
       end
 
-    binary = :erlang.term_to_binary(response, [:deterministic])
+    binary = QueryProtocol.encode_local_response(response)
 
     if byte_size(binary) <= QueryProtocol.max_response_bytes() do
       :gen_tcp.send(socket, binary)
     else
-      :gen_tcp.send(socket, :erlang.term_to_binary({:error, :response_too_large}))
+      :gen_tcp.send(socket, QueryProtocol.encode_local_response({:error, :response_too_large}))
     end
   after
     :gen_tcp.close(socket)

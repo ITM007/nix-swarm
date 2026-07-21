@@ -32,6 +32,14 @@ defmodule NixSwarmSecurityTest do
     assert {:error, :unsupported_request} = QueryProtocol.decode_request("reconcile")
     assert {:error, :invalid_response} = QueryProtocol.decode_response("not-base64!")
 
+    response = {:ok, %{live_nodes: [:"new-node@release-test"]}}
+
+    assert {:ok, ^response} =
+             response
+             |> QueryProtocol.encode_response()
+             |> elem(1)
+             |> QueryProtocol.decode_response()
+
     for operation <- [:node_service_logs, :cluster_logs] do
       assert {:ok, node_request} =
                QueryProtocol.encode_request({operation, :"node-a@test", 10})

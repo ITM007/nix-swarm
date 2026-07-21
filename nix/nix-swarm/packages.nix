@@ -1,15 +1,12 @@
 { pkgs, usePrebuiltNifs ? true }:
+assert pkgs.stdenv.hostPlatform.system == "x86_64-linux";
 let
   lib = pkgs.lib;
   beamPackages = pkgs.beamPackages.extend (_final: previous: {
     elixir = previous.elixir_1_20;
   });
   version = lib.strings.removeSuffix "\n" (builtins.readFile ../../VERSION);
-  nifTarget =
-    if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
-      "aarch64-unknown-linux-gnu"
-    else
-      "x86_64-unknown-linux-gnu";
+  nifTarget = "x86_64-unknown-linux-gnu";
 
   mixDepsHash =
     if lib.versionAtLeast beamPackages.elixir.version "1.18.0" then
@@ -50,17 +47,10 @@ let
           "libex_ratatui-v0.11.1-nif-2.17-${nifTarget}.so.tar.gz"
         ];
 
-        artifactHashes =
-          if pkgs.stdenv.hostPlatform.system == "aarch64-linux" then
-            [
-              "sha256-0SmRgwrYhaDD49zV0dfTTh74ip8gqqeSQT81uphd0zw="
-              "sha256-BgU7vyEWn7/gF9vBGTdrkxRBCL4SvKz3gzqEEIlFGoA="
-            ]
-          else
-            [
-              "sha256-iDPYcEke1dboz2HkUQBbntn/e/Z/F5L7zzjywAnjWtM="
-              "sha256-7VSGObPnmSmiIF7PkqGg/s0hN9/G4bpcaaNA3WpP90E="
-            ];
+        artifactHashes = [
+          "sha256-iDPYcEke1dboz2HkUQBbntn/e/Z/F5L7zzjywAnjWtM="
+          "sha256-7VSGObPnmSmiIF7PkqGg/s0hN9/G4bpcaaNA3WpP90E="
+        ];
 
         artifacts = [
           (pkgs.fetchurl {

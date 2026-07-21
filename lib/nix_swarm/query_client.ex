@@ -18,12 +18,7 @@ defmodule NixSwarm.QueryClient do
       try do
         with :ok <- :gen_tcp.send(socket, payload),
              {:ok, binary} <- :gen_tcp.recv(socket, 0, timeout) do
-          # This socket is local, permission-gated, and served by the agent on
-          # the same machine. Agent responses contain configured Erlang node
-          # atoms that are not necessarily loaded in the short-lived operator
-          # helper, so the SSH-facing protocol remains safe-decoded while this
-          # trusted local transport uses the original term representation.
-          {:ok, :erlang.binary_to_term(binary)}
+          QueryProtocol.decode_local_response(binary)
         end
       after
         :gen_tcp.close(socket)
