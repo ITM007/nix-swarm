@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+secrets_dir="$root_dir/docker/nixos/secrets"
+
+if docker info >/dev/null 2>&1; then
+  docker_cmd=(docker)
+elif sudo -n docker info >/dev/null 2>&1; then
+  docker_cmd=(sudo -n docker)
+else
+  echo "Docker is unavailable; grant access to the Docker socket or configure noninteractive sudo" >&2
+  exit 1
+fi
+
+compose=("${docker_cmd[@]}" compose --project-directory "$root_dir" -f "$root_dir/docker-compose.yml")
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/docker-stack <command>
+
+Commands:
+  build   Build the three NixOS systemd images and load them into Docker
+  up      Build images, start the nodes, seed SSH trust, and start operator
+  down    Stop and remove the stack (preserves named state volumes)
+  reset   Stop the stack and remove its named state volumes
+  status  Show Compose and Nix-Swarm service status
+  logs    Follow node logs
+  shell   Open a root shell in node-a
+  query   Run a read-only operator query through the operator container
+EOF
+}
+
+ensure_secrets() {
+  mkdir -p "$secrets_dir"
+
+  if [[ ! -s "$secrets_dir/nix-swarm.cookie" ]]; then
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$secrets_dir/nix-swarm.cookie"
+  fi
+  chmod 0400 "$secrets_dir/nix-swarm.cookie"
+
+  if [[ ! -s "$secrets_dir/id_ed25519" ]]; then
+    command -v ssh-keygen >/dev/null 2>&1 || {
+      echo "ssh-keygen is required to generate the development SSH key" >&2
+      exit 1
+    }
+    ssh-keygen -q -t ed25519 -N "" -f "$secrets_dir/id_ed25519"
+  fi
+  chmod 0600 "$secrets_dir/id_ed25519"
+  chmod 0644 "$secrets_dir/id_ed25519.pub"
+
+  touch "$secrets_dir/known_hosts"
+  chmod 0644 "$secrets_dir/known_hosts"
+}
+
+build_images() {
+  ensure_secrets
+
+  for node in node-a node-b node-c; do
+    echo "Building NixOS image for $node..."
+    nix build "$root_dir/docker/nixos#$node" --out-link "$root_dir/result-docker-$node"
+    "${docker_cmd[@]}" load < "$root_dir/result-docker-$node"
+  done
+}
+
+wait_for_nodes() {
+  for node in node-a node-b node-c; do
+    echo "Waiting for $node..."
+    for _attempt in $(seq 1 60); do
+      if "${compose[@]}" exec -T "$node" \
+        /run/current-system/sw/bin/systemctl is-active --quiet nix-swarmd.service \
+        && "${compose[@]}" exec -T "$node" \
+          /run/current-system/sw/bin/systemctl is-active --quiet sshd.socket; then
+        break
+      fi
+      sleep 2
+    done
+
+    "${compose[@]}" exec -T "$node" \
+      /run/current-system/sw/bin/systemctl is-active --quiet nix-swarmd.service
+  done
+}
+
+seed_operator_known_hosts() {
+  : > "$secrets_dir/known_hosts"
+  "${compose[@]}" exec -T operator \
+    /run/current-system/sw/bin/sh -lc \
+    'ssh-keyscan -H node-a node-b node-c >> /root/.ssh/known_hosts'
+}
+
+up() {
+  build_images
+  "${compose[@]}" up -d node-a node-b node-c
+  wait_for_nodes
+  "${compose[@]}" up -d operator
+  seed_operator_known_hosts
+
+  cat <<'EOF'
+
+Nix-Swarm Docker integration stack is ready.
+
+Try:
+  scripts/docker-stack status
+  scripts/docker-stack query cluster-status
+  docker compose exec node-a systemctl status demo@0.service
+  docker compose exec node-a nix-swarm-query Y2x1c3Rlci1tZW1iZXJz
+EOF
+}
+
+status() {
+  "${compose[@]}" ps
+  echo
+  for node in node-a node-b node-c; do
+    echo "== $node =="
+    "${compose[@]}" exec -T "$node" \
+      /run/current-system/sw/bin/systemctl --no-pager --plain --full status nix-swarmd.service || true
+  done
+}
+
+query() {
+  case "${1:-cluster-status}" in
+    cluster-status)
+      ;;
+    cluster-members)
+      ;;
+    *)
+      echo "unknown query: ${1:-} (use cluster-status or cluster-members)" >&2
+      exit 2
+      ;;
+  esac
+
+  "${compose[@]}" exec -T operator \
+    /run/current-system/sw/bin/nix-swarm cluster status \
+    --target "nix-swarm@node-a" --ssh-host "root@node-a"
+}
+
+case "${1:-}" in
+  build)
+    build_images
+    ;;
+  up)
+    up
+    ;;
+  down)
+    "${compose[@]}" down
+    ;;
+  reset)
+    "${compose[@]}" down -v
+    ;;
+  status)
+    status
+    ;;
+  logs)
+    "${compose[@]}" logs -f --tail=100 node-a node-b node-c
+    ;;
+  shell)
+    "${compose[@]}" exec node-a /run/current-system/sw/bin/bash
+    ;;
+  query)
+    query "${2:-cluster-status}"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

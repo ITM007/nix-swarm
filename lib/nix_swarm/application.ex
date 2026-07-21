@@ -8,7 +8,10 @@ defmodule NixSwarm.Application do
     children = children(role())
 
     require Logger
-    Logger.info("Starting NixSwarm supervision tree", children: length(children))
+
+    unless System.get_env("NIX_SWARM_QUERY_MODE") == "1" do
+      Logger.info("Starting NixSwarm supervision tree", children: length(children))
+    end
 
     opts = [strategy: :rest_for_one, name: NixSwarm.Supervisor]
     Supervisor.start_link(children, opts)

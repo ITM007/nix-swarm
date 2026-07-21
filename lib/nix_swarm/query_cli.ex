@@ -13,7 +13,7 @@ defmodule NixSwarm.QueryCLI do
 
     case QueryProtocol.encode_response(result) do
       {:ok, encoded} ->
-        IO.write(encoded)
+        IO.puts(encoded)
 
       {:error, reason} ->
         IO.puts(:stderr, "query failed: #{inspect(reason)}")

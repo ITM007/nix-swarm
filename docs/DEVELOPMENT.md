@@ -45,6 +45,9 @@ code keep the aggregate lower.
 5. The NixOS VM test boots an unprivileged agent under the hardened systemd unit, waits for
    `Type=notify` readiness, verifies its DETS state, and observes a managed unit
    being reconciled to running.
+6. The Docker systemd integration harness builds three x86_64 NixOS images and
+   runs independent systemd/BEAM nodes for local membership, query, and failure
+   recovery experiments. See [Docker systemd integration harness](DOCKER.md).
 
 Tests that modify application environment, OS environment, the running OTP
 application, or executable search paths must use `async: false` and restore the

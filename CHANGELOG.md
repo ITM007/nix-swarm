@@ -49,6 +49,7 @@ All notable changes to this project will be documented in this file.
 - Packaged operator and query wrappers now start the application supervision tree before evaluating CLI commands; help and version handling avoids deployment-source side effects.
 - Deployment manifests are exported under the standard `lib.nixSwarm.deploymentManifest` flake output, and CI evaluates the complete flake checks on x86_64 Linux.
 - Release checks now target x86_64 Linux only; the NixOS VM test exercises systemd watchdog survival, the restricted query helper, and durable agent state.
+- Added a three-node x86_64 NixOS/Docker Compose integration harness with systemd-managed demo workloads, SSH query access, persistent node state, and documented node failure/rejoin exercises.
 
 ### Removed
 
@@ -69,6 +70,11 @@ All notable changes to this project will be documented in this file.
 - Credential rotation restores the local cookie when coordinated remote rotation fails, and SSH preflight distinguishes a missing credential from an unreachable host.
 - Packaged deployment commands no longer crash because `NixSwarm.TaskSupervisor` was not started.
 - The systemd watchdog now sends the supported `WATCHDOG=1` notification, and local operator queries handle dynamic node atoms safely.
+- Packaged SSH query helpers now preload the safe response atoms and keep machine-readable output free of runtime startup noise.
+- Packaged query helpers now terminate their machine-readable response before runtime shutdown diagnostics can append to it.
+- The packaged operator launcher now loads the restricted-query protocol before safe response decoding.
+- Cluster status output no longer duplicates the `v` prefix in node release labels.
+- The Docker demo workload now uses a fixed per-node HTTP port so all published node ports are directly testable.
 - Autoscaler sample aggregation, target clamping, membership invalidation, and stale-decision rejection have deterministic coverage.
 
 ## [0.4.1] - 2026-06-18

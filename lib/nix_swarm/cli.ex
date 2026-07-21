@@ -292,7 +292,7 @@ defmodule NixSwarm.CLI do
           Enum.each(members.live_nodes, fn node ->
             node_status = Enum.find(status.nodes, fn {n, _} -> n == node end)
             version = if node_status, do: elem(node_status, 1)[:release_version] || "?", else: "?"
-            IO.puts("  #{node}  v#{version}")
+            IO.puts("  #{node}  #{version}")
           end)
 
           IO.puts("")

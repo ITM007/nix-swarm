@@ -1,0 +1,126 @@
+name: nix-swarm-integration
+
+services:
+  node-a:
+    image: nix-swarm/nixos-node-a:dev
+    hostname: node-a
+    privileged: true
+    init: false
+    stop_signal: SIGRTMIN+3
+    restart: unless-stopped
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - ./docker/nixos/secrets/nix-swarm.cookie:/etc/nix-swarm-cookie-source:ro
+      - ./docker/nixos/secrets/id_ed25519.pub:/etc/nix-swarm-authorized_keys:ro
+      - nix-swarm-node-a-state:/var/lib/nix-swarm
+    ports:
+      - "2221:22"
+      - "8081:8080"
+      - "43691:4369"
+      - "43701:4370"
+    networks:
+      swarm:
+        ipv4_address: 172.30.0.11
+    healthcheck:
+      test: ["CMD-SHELL", "systemctl is-active --quiet nix-swarmd.service && systemctl is-active --quiet sshd.socket"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  node-b:
+    image: nix-swarm/nixos-node-b:dev
+    hostname: node-b
+    privileged: true
+    init: false
+    stop_signal: SIGRTMIN+3
+    restart: unless-stopped
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - ./docker/nixos/secrets/nix-swarm.cookie:/etc/nix-swarm-cookie-source:ro
+      - ./docker/nixos/secrets/id_ed25519.pub:/etc/nix-swarm-authorized_keys:ro
+      - nix-swarm-node-b-state:/var/lib/nix-swarm
+    ports:
+      - "2222:22"
+      - "8082:8080"
+      - "43692:4369"
+      - "43702:4370"
+    networks:
+      swarm:
+        ipv4_address: 172.30.0.12
+    healthcheck:
+      test: ["CMD-SHELL", "systemctl is-active --quiet nix-swarmd.service && systemctl is-active --quiet sshd.socket"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  node-c:
+    image: nix-swarm/nixos-node-c:dev
+    hostname: node-c
+    privileged: true
+    init: false
+    stop_signal: SIGRTMIN+3
+    restart: unless-stopped
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - ./docker/nixos/secrets/nix-swarm.cookie:/etc/nix-swarm-cookie-source:ro
+      - ./docker/nixos/secrets/id_ed25519.pub:/etc/nix-swarm-authorized_keys:ro
+      - nix-swarm-node-c-state:/var/lib/nix-swarm
+    ports:
+      - "2223:22"
+      - "8083:8080"
+      - "43693:4369"
+      - "43703:4370"
+    networks:
+      swarm:
+        ipv4_address: 172.30.0.13
+    healthcheck:
+      test: ["CMD-SHELL", "systemctl is-active --quiet nix-swarmd.service && systemctl is-active --quiet sshd.socket"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  operator:
+    image: nix-swarm/nixos-node-a:dev
+    hostname: operator
+    command: ["/run/current-system/sw/bin/nixos-operator-command", "/run/current-system/sw/bin/sleep", "infinity"]
+    environment:
+      NIX_SWARM_ROLE: operator
+      NIX_SWARM_QUERY_MODE: "1"
+      ELIXIR_ERL_OPTIONS: "+fnu"
+      PATH: /run/current-system/sw/bin:/bin:/usr/bin
+    depends_on:
+      node-a:
+        condition: service_healthy
+      node-b:
+        condition: service_healthy
+      node-c:
+        condition: service_healthy
+    volumes:
+      - ./docker/nixos/secrets/id_ed25519:/etc/nix-swarm-operator-key:ro
+      - ./docker/nixos/secrets/known_hosts:/root/.ssh/known_hosts
+    networks:
+      - swarm
+
+networks:
+  swarm:
+    name: nix-swarm-integration
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  nix-swarm-node-a-state:
+  nix-swarm-node-b-state:
+  nix-swarm-node-c-state:
