@@ -25,6 +25,9 @@ All notable changes to this project will be documented in this file.
 - Operator query commands for cluster overview, membership, snapshots, and bounded service logs over the restricted socket API.
 - v1.0 migration and release-gate documentation, including the supported stateless-workload boundary and partition behavior.
 - Packaged operator smoke coverage for help, version, and deployment-plan entry points on x86_64 Linux.
+- A three-node x86_64 NixOS/Docker Compose integration harness with systemd-managed demo workloads, SSH query access, persistent node state, and documented node failure/rejoin exercises.
+- A packaged starter configuration with a minimal flake, example machine, service, and hardware stubs for new deployments.
+- Release, migration, parity, operations, security, Docker, and development documentation covering the hardened v1.0 readiness path.
 
 ### Changed
 
@@ -49,7 +52,7 @@ All notable changes to this project will be documented in this file.
 - Packaged operator and query wrappers now start the application supervision tree before evaluating CLI commands; help and version handling avoids deployment-source side effects.
 - Deployment manifests are exported under the standard `lib.nixSwarm.deploymentManifest` flake output, and CI evaluates the complete flake checks on x86_64 Linux.
 - Release checks now target x86_64 Linux only; the NixOS VM test exercises systemd watchdog survival, the restricted query helper, and durable agent state.
-- Added a three-node x86_64 NixOS/Docker Compose integration harness with systemd-managed demo workloads, SSH query access, persistent node state, and documented node failure/rejoin exercises.
+- Public README, contributing, security, getting-started, and configuration-reference docs now describe the code-reviewed deployment model and x86_64-only support boundary.
 
 ### Removed
 
