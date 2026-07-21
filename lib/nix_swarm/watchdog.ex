@@ -43,7 +43,10 @@ defmodule NixSwarm.Watchdog do
   end
 
   defp notify_watchdog do
-    _ = sd_notify(["--watchdog", "--status=Nix-Swarm agent healthy"])
+    # `systemd-notify` accepts arbitrary sd_notify assignments as positional
+    # arguments. It has `--ready` and `--stopping` convenience flags, but no
+    # `--watchdog` option on supported systemd releases.
+    _ = sd_notify(["WATCHDOG=1", "--status=Nix-Swarm agent healthy"])
   end
 
   defp sd_notify(args) do

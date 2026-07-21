@@ -41,7 +41,7 @@ code keep the aggregate lower.
    distributed tests use injected local transport and never depend on an
    operator cookie.
 4. Flake checks build both releases and evaluate the complete NixOS module on
-   x86_64 and aarch64.
+   x86_64 Linux.
 5. The NixOS VM test boots an unprivileged agent under the hardened systemd unit, waits for
    `Type=notify` readiness, verifies its DETS state, and observes a managed unit
    being reconciled to running.

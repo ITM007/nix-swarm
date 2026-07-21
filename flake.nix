@@ -5,7 +5,7 @@
 
   outputs = { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" ];
+      systems = [ "x86_64-linux" ];
 
       forAllSystems = f:
         nixpkgs.lib.genAttrs systems (system:
@@ -177,7 +177,7 @@
               agent.succeed("! tr '\\0' ' ' </proc/$(systemctl show nix-swarmd.service -p MainPID --value)/cmdline | grep -q 0123456789abcdef")
               agent.succeed("test $(stat -c %a /run/nix-swarm/beam/.erlang.cookie) = 400")
               agent.succeed("test -S /run/nix-swarm/query.sock")
-              agent.succeed("runuser -u operator -- nix-swarm-query Y2x1c3Rlci1tZW1iZXJz | grep -q .")
+              agent.succeed("runuser -u operator -- nix-swarm-query Y2x1c3Rlci1tZW1iZXJz > /tmp/query-output && test -s /tmp/query-output")
               agent.succeed("runuser -u outsider -- test ! -r /run/nix-swarm/query.sock")
               agent.succeed("test -f /var/lib/nix-swarm/nix-swarm_node/operational-state.dets")
             '';

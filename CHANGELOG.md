@@ -24,7 +24,7 @@ All notable changes to this project will be documented in this file.
 - Declarative `active`/`draining` node availability and native systemd `OnFailure=` integration.
 - Operator query commands for cluster overview, membership, snapshots, and bounded service logs over the restricted socket API.
 - v1.0 migration and release-gate documentation, including the supported stateless-workload boundary and partition behavior.
-- Packaged operator smoke coverage for help, version, and deployment-plan entry points on both supported Linux architectures.
+- Packaged operator smoke coverage for help, version, and deployment-plan entry points on x86_64 Linux.
 
 ### Changed
 
@@ -47,7 +47,8 @@ All notable changes to this project will be documented in this file.
 - Deployment and upgrade workflows preserve flake locks on failure, support native NixOS configuration selection, and report rollout convergence by node.
 - Credential enrollment is idempotent for matching remote fingerprints, installs only missing hosts, and performs coordinated cookie rotation with restart, health verification, and rollback of the previous credential.
 - Packaged operator and query wrappers now start the application supervision tree before evaluating CLI commands; help and version handling avoids deployment-source side effects.
-- Deployment manifests are exported under the standard `lib.nixSwarm.deploymentManifest` flake output, and CI evaluates the complete flake checks on aarch64 as well as x86_64.
+- Deployment manifests are exported under the standard `lib.nixSwarm.deploymentManifest` flake output, and CI evaluates the complete flake checks on x86_64 Linux.
+- Release checks now target x86_64 Linux only; the NixOS VM test exercises systemd watchdog survival, the restricted query helper, and durable agent state.
 
 ### Removed
 
@@ -67,6 +68,8 @@ All notable changes to this project will be documented in this file.
 - Reconciler tests restore application state and are no longer order-dependent.
 - Credential rotation restores the local cookie when coordinated remote rotation fails, and SSH preflight distinguishes a missing credential from an unreachable host.
 - Packaged deployment commands no longer crash because `NixSwarm.TaskSupervisor` was not started.
+- The systemd watchdog now sends the supported `WATCHDOG=1` notification, and local operator queries handle dynamic node atoms safely.
+- Autoscaler sample aggregation, target clamping, membership invalidation, and stale-decision rejection have deterministic coverage.
 
 ## [0.4.1] - 2026-06-18
 

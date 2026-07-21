@@ -245,7 +245,8 @@ defmodule NixSwarm.Autoscaler do
     end
   end
 
-  defp aggregate_sample(snapshots, service_name) do
+  @doc false
+  def aggregate_sample(snapshots, service_name) do
     samples =
       snapshots
       |> Enum.flat_map(fn snapshot ->
@@ -266,6 +267,23 @@ defmodule NixSwarm.Autoscaler do
         total_units = Enum.sum(Enum.map(values, &elem(&1, 1)))
         Enum.sum(Enum.map(values, fn {value, count} -> value * count end)) / total_units
     end
+  end
+
+  @doc false
+  def valid_decision?(
+        decision,
+        service,
+        config_digest,
+        placement_nodes,
+        config,
+        now_ms \\ System.system_time(:millisecond)
+      ) do
+    service != nil and service.autoscaling.enabled and
+      decision.config_digest == config_digest and
+      decision.owner == Placement.scaler_owner(service, placement_nodes, config.nodes) and
+      decision.membership_fingerprint == membership_fingerprint(placement_nodes) and
+      decision.expires_at_ms >= now_ms and
+      decision.target in service.autoscaling.min_replicas..service.autoscaling.max_replicas
   end
 
   defp track_direction(state, service, utilization, now_ms) do
@@ -369,12 +387,13 @@ defmodule NixSwarm.Autoscaler do
     placement_nodes = NixSwarm.Cluster.placement_nodes()
 
     valid? =
-      service != nil and service.autoscaling.enabled and
-        decision.config_digest == state.config_digest and
-        decision.owner == Placement.scaler_owner(service, placement_nodes, config.nodes) and
-        decision.membership_fingerprint == membership_fingerprint(placement_nodes) and
-        decision.expires_at_ms >= System.system_time(:millisecond) and
-        decision.target in service.autoscaling.min_replicas..service.autoscaling.max_replicas
+      valid_decision?(
+        decision,
+        service,
+        state.config_digest,
+        placement_nodes,
+        config
+      )
 
     if valid?,
       do: apply_decision(state, decision, System.monotonic_time(:millisecond)),
@@ -448,7 +467,8 @@ defmodule NixSwarm.Autoscaler do
 
   defp initial_targets(config), do: normalize_targets(config, %{})
 
-  defp normalize_targets(config, targets) do
+  @doc false
+  def normalize_targets(config, targets) do
     config.services
     |> Enum.filter(& &1.autoscaling.enabled)
     |> Map.new(fn service ->
@@ -462,7 +482,8 @@ defmodule NixSwarm.Autoscaler do
     end)
   end
 
-  defp membership_fingerprint(nodes) do
+  @doc false
+  def membership_fingerprint(nodes) do
     nodes
     |> Enum.sort()
     |> :erlang.term_to_binary([:deterministic])

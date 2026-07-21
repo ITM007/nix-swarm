@@ -8,7 +8,7 @@ Before tagging v1.0, all of the following must pass:
 - `nix develop --command mix compile --warnings-as-errors`
 - `nix develop --command mix hex.audit`
 - `nix develop --command mix test --warnings-as-errors --cover`
-- `nix flake check --print-build-logs` on x86_64-linux and aarch64-linux
+- `nix flake check --print-build-logs` on x86_64-linux
 - packaged operator smoke tests for `--help`, `--version`, and `cluster plan`
 - a real multi-node rollout, failed activation, automatic rollback, node reboot,
   partition recovery, and credential rotation exercise

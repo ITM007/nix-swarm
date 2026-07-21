@@ -42,12 +42,12 @@ defmodule NixSwarmWatchdogTest do
     assert {:ok, pid} = NixSwarm.Watchdog.start_link()
     send(pid, :ping)
 
-    wait_until(fn -> File.exists?(log) and File.read!(log) =~ "--watchdog" end)
+    wait_until(fn -> File.exists?(log) and File.read!(log) =~ "WATCHDOG=1" end)
     GenServer.stop(pid)
 
     output = File.read!(log)
     assert output =~ "--ready"
-    assert output =~ "--watchdog"
+    assert output =~ "WATCHDOG=1"
     assert output =~ "--stopping"
   end
 
