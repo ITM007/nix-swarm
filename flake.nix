@@ -26,7 +26,7 @@
           inherit deployment;
         };
 
-      nixSwarm.deploymentManifest = {
+      lib.nixSwarm.deploymentManifest = {
         schemaVersion = 1;
         nodes = {
           "nix-swarm@example-node-a.local" = {
@@ -191,6 +191,63 @@
             pkgs.runCommand "nix-swarm-starter-syntax" { } ''
               touch "$out"
             '';
+
+          planFixture = pkgs.writeTextDir "flake.nix" ''
+            {
+              inputs.fixture.url = "path:${pkgs.path}";
+
+              outputs = { fixture, ... }:
+                {
+                  nixosConfigurations.node-a.config.system.build.toplevel = fixture.outPath;
+                  lib.nixSwarm.deploymentManifest = {
+                    schemaVersion = 1;
+                    nodes."nix-swarm@node-a.test" = {
+                      availability = "active";
+                      deployHost = "root@node-a.test";
+                      nixosConfiguration = "node-a";
+                    };
+                    deployment = {
+                      healthTimeoutSec = 120;
+                      stableSamples = 2;
+                      autoRollback = true;
+                    };
+                  };
+                };
+            }
+          '';
+
+          operatorSmoke = pkgs.runCommand "nix-swarm-operator-smoke" {
+            nativeBuildInputs = [ pkgs.nix ];
+          } ''
+            set -eu
+            export HOME="$TMPDIR/home"
+            export NIX_SWARM_SOURCE="$TMPDIR/config"
+            export NIX_CONFIG="experimental-features = nix-command flakes"
+            export ELIXIR_ERL_OPTIONS="+fnu"
+            mkdir -p "$HOME"
+            mkdir -p "$TMPDIR/config"
+            cp ${planFixture}/flake.nix "$TMPDIR/config/flake.nix"
+            ${nixSwarm.operator}/bin/nix-swarm --help > "$TMPDIR/help"
+            ${nixSwarm.operator}/bin/nix-swarm --version > "$TMPDIR/version"
+            ${nixSwarm.operator}/bin/nix-swarm cluster plan --source "$TMPDIR/config" > "$TMPDIR/plan"
+            grep -q "read-only operator TUI" "$TMPDIR/help" || {
+              cat "$TMPDIR/help"
+              exit 1
+            }
+            grep -Eq 'v?[0-9]+\.[0-9]+\.[0-9]+' "$TMPDIR/version" || {
+              cat "$TMPDIR/version"
+              exit 1
+            }
+            grep -q "NixOS deployment plan" "$TMPDIR/plan" || {
+              cat "$TMPDIR/plan"
+              exit 1
+            }
+            grep -q "nixos-rebuild" "$TMPDIR/plan" || {
+              cat "$TMPDIR/plan"
+              exit 1
+            }
+            touch "$out"
+          '';
         in
         {
           operator-package = nixSwarm.operator;
@@ -198,6 +255,7 @@
           nixos-module = testNode.config.system.build.toplevel;
           nixos-vm = vmTest;
           starter-syntax = starterSyntax;
+          operator-smoke = operatorSmoke;
         });
 
       nixosModules = {

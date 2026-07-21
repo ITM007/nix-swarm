@@ -20,7 +20,7 @@
     in
     {
       inherit nixosConfigurations;
-      nixSwarm.deploymentManifest = {
+      lib.nixSwarm.deploymentManifest = {
         schemaVersion = 1;
         nodes."nix-swarm@node-a" = {
           availability = "active";

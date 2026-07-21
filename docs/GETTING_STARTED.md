@@ -58,7 +58,7 @@ nix-swarm service add --source . --name worker --template custom --replicas 2
 
 Each placement entry needs a matching NixOS/systemd unit. `service add` creates one self-contained module with the placement declaration and `%{service}@%{slot}.service`; import that generated file from `cluster.nix`. The command never rewrites an existing Nix module.
 
-For additional nodes, add a `nixosConfigurations` output, a machine module, matching `peers`/`nodes` entries, and keep `nixSwarm.deploymentManifest` generated from those configurations. Run BEAM traffic only over a private overlay:
+For additional nodes, add a `nixosConfigurations` output, a machine module, matching `peers`/`nodes` entries, and keep `lib.nixSwarm.deploymentManifest` generated from those configurations. Run BEAM traffic only over a private overlay:
 
 ```nix
 services.nix-swarm = {

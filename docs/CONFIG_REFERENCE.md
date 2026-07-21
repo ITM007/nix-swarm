@@ -107,7 +107,7 @@ let
   nixosConfigurations = { /* normal nixosSystem outputs */ };
 in {
   inherit nixosConfigurations;
-  nixSwarm.deploymentManifest =
+  lib.nixSwarm.deploymentManifest =
     nix-swarm.lib.mkDeploymentManifest nixosConfigurations;
 };
 ```

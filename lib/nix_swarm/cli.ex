@@ -45,7 +45,14 @@ defmodule NixSwarm.CLI do
   def run(argv, tui_runner \\ &NixSwarm.TUI.run/1, dependencies \\ []) do
     {opts, args, invalid} = OptionParser.parse(argv, strict: @strict_opts)
     validate_parse_result!(opts, invalid)
-    opts = apply_launch_defaults(opts)
+    # Help and version must remain side-effect free. In particular, resolving a
+    # default SSH host can evaluate a flake, which requires the operator
+    # supervision tree in packaged `eval` invocations.
+    opts =
+      if Keyword.get(opts, :help, false) or Keyword.get(opts, :version, false),
+        do: opts,
+        else: apply_launch_defaults(opts)
+
     plan_fun = Keyword.get(dependencies, :plan_fun, &NixSwarm.Deploy.run/1)
     deploy_fun = Keyword.get(dependencies, :deploy_fun, &NixSwarm.Deploy.run/1)
     rollback_fun = Keyword.get(dependencies, :rollback_fun, &NixSwarm.Deploy.rollback/1)
@@ -65,7 +72,10 @@ defmodule NixSwarm.CLI do
       args == ["cluster", "ensure"] ->
         require_confirmation!(opts, "cluster ensure")
         IO.puts("Ensuring cluster nodes are running nix-swarmd...\n")
-        IO.puts("After bootstrap, preview and confirm deployments explicitly from the TUI.\n")
+
+        IO.puts(
+          "After bootstrap, review the plan and apply future changes from the code checkout.\n"
+        )
 
         result = ensure_fun.(deploy_options(opts, false))
 

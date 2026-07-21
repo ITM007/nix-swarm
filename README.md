@@ -91,3 +91,5 @@ Service `settings` are public metadata rendered into the Nix store. Never put cr
 - [Security](docs/SECURITY.md)
 - [Development and tests](docs/DEVELOPMENT.md)
 - [Product scope](docs/SWARM_PARITY.md)
+- [Migration to v1.0](docs/MIGRATING_TO_1.0.md)
+- [Release and support policy](docs/RELEASE.md)

@@ -23,6 +23,8 @@ All notable changes to this project will be documented in this file.
 - Code-first `cluster plan`, `cluster apply`, `cluster rollback`, and `cluster doctor` workflows.
 - Declarative `active`/`draining` node availability and native systemd `OnFailure=` integration.
 - Operator query commands for cluster overview, membership, snapshots, and bounded service logs over the restricted socket API.
+- v1.0 migration and release-gate documentation, including the supported stateless-workload boundary and partition behavior.
+- Packaged operator smoke coverage for help, version, and deployment-plan entry points on both supported Linux architectures.
 
 ### Changed
 
@@ -43,6 +45,9 @@ All notable changes to this project will be documented in this file.
 - Runtime desired-state overrides were replaced by durable, node-local operational observations.
 - Configuration loading now has a supervised ETS snapshot owner, generation/digest tracking, and explicit runtime validation.
 - Deployment and upgrade workflows preserve flake locks on failure, support native NixOS configuration selection, and report rollout convergence by node.
+- Credential enrollment is idempotent for matching remote fingerprints, installs only missing hosts, and performs coordinated cookie rotation with restart, health verification, and rollback of the previous credential.
+- Packaged operator and query wrappers now start the application supervision tree before evaluating CLI commands; help and version handling avoids deployment-source side effects.
+- Deployment manifests are exported under the standard `lib.nixSwarm.deploymentManifest` flake output, and CI evaluates the complete flake checks on aarch64 as well as x86_64.
 
 ### Removed
 
@@ -60,6 +65,8 @@ All notable changes to this project will be documented in this file.
 - Age encryption no longer passes an unsupported stdin option to `System.cmd/3`, and temporary plaintext input is mode `0600` and removed after encryption.
 - Generated web and custom NixOS service templates correctly bind their `pkgs` argument.
 - Reconciler tests restore application state and are no longer order-dependent.
+- Credential rotation restores the local cookie when coordinated remote rotation fails, and SSH preflight distinguishes a missing credential from an unreachable host.
+- Packaged deployment commands no longer crash because `NixSwarm.TaskSupervisor` was not started.
 
 ## [0.4.1] - 2026-06-18
 

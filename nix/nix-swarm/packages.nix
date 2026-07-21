@@ -119,7 +119,7 @@ let
     export NIX_SWARM_SOURCE="$config_root"
     export NIX_SWARM_ROLE=operator
 
-    exec ${release}/bin/nix_swarm eval 'NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
+    exec ${release}/bin/nix_swarm eval 'Application.ensure_all_started(:nix_swarm); NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
   '';
 
   daemonWrapper = pkgs.writeShellScript "nix-swarmd" ''
@@ -135,7 +135,7 @@ let
 
   queryWrapper = pkgs.writeShellScript "nix-swarm-query" ''
     export NIX_SWARM_ROLE=operator
-    exec ${release}/bin/nix_swarm eval 'NixSwarm.QueryCLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
+    exec ${release}/bin/nix_swarm eval 'Application.ensure_all_started(:nix_swarm); NixSwarm.QueryCLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
   '';
 
   mkPackage =

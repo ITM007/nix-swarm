@@ -55,4 +55,8 @@ Then use `--ssh-host alice@node-a`. Query operations are logged in the agent's j
 
 ## Cookie rotation
 
-Block BEAM ports, replace the cookie on every peer, and restart the agents as one maintenance operation. Mixed cookies partition the cluster; separate partitions can temporarily run duplicate stateless replicas.
+The credential command performs rotation as one coordinated maintenance
+operation: it stages the new cookie, stops every agent, replaces the cookie,
+restarts every agent, and restores the previous cookie if the operation fails.
+Keep BEAM ports restricted during rotation. Mixed cookies partition the cluster;
+separate partitions can temporarily run duplicate stateless replicas.

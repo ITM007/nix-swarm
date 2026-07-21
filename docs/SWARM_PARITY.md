@@ -28,6 +28,8 @@ In impact-to-effort order:
    cgroup accounting, and `OnFailure=` notifications.
 9. Restricted SSH-to-Unix-socket operator queries without a BEAM cookie.
 10. Private-network deployment using normal firewall and VPN facilities.
+11. Optional bounded CPU autoscaling for stateless services; scaling decisions
+    are temporary observations and never override Nix-declared capacity.
 
 ## Deliberate exclusions
 
@@ -35,10 +37,17 @@ In impact-to-effort order:
 - no ad-hoc service start/stop state
 - no Mnesia, custom SQL database, or distributed secret store
 - no overlay network, routing mesh, container runtime, or volume orchestration
-- no autoscaler, dynamic bin-packer, preemption, or multi-tenant scheduler
+- no dynamic bin-packer, preemption, or multi-tenant scheduler
 - no custom logging, monitoring, notification, or PKI stack
 - no consensus dependency unless real users require automatic controller HA
 
 If automatic manager failover becomes necessary, a small three-node Raft log is
 the next appropriate addition. It should remain optional and must not replace
 Nix as the source of desired configuration.
+
+## Partition and stateful-workload boundary
+
+Nix-Swarm is leaderless and does not provide quorum, fencing, or single-writer
+guarantees during a network partition. A partition can temporarily run duplicate
+stateless replicas. Stateful services and databases must provide their own
+replication, locking, storage, and split-brain protection outside Nix-Swarm.

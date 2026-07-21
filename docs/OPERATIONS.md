@@ -29,7 +29,14 @@ nix-swarm cluster credentials --source . --yes
 nix-swarm cluster credentials --source . --rotate-credentials --yes
 ```
 
-The first command is enrollment and refuses to overwrite an existing remote cookie. Rotation requires the explicit second form. Prefer provisioning `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` through an existing sops-nix or agenix setup.
+Enrollment is idempotent when the remote fingerprint already matches. It installs
+only missing credentials and refuses to overwrite a different remote cookie.
+Rotation generates a new local cookie, stages it on every host, stops all agents,
+switches the credentials, restarts the agents, verifies they are active, and
+restores the previous credential if the coordinated operation fails. Use rotation
+as a maintenance operation and keep BEAM ports restricted during it. Prefer
+provisioning `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` through an existing
+sops-nix or agenix setup.
 
 ## Update Nix-Swarm everywhere
 

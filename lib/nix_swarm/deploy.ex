@@ -145,7 +145,7 @@ defmodule NixSwarm.Deploy do
 
           :error ->
             raise ArgumentError,
-                  "deployment host #{host} is missing from nixSwarm.deploymentManifest"
+                  "deployment host #{host} is missing from lib.nixSwarm.deploymentManifest"
         end
       end)
 
@@ -267,10 +267,11 @@ defmodule NixSwarm.Deploy do
     cond do
       version != 1 ->
         raise ArgumentError,
-              "unsupported nixSwarm.deploymentManifest schemaVersion: #{inspect(version)}"
+              "unsupported lib.nixSwarm.deploymentManifest schemaVersion: #{inspect(version)}"
 
       not is_map(nodes) or map_size(nodes) == 0 ->
-        raise ArgumentError, "nixSwarm.deploymentManifest.nodes must be a non-empty attribute set"
+        raise ArgumentError,
+              "lib.nixSwarm.deploymentManifest.nodes must be a non-empty attribute set"
 
       true ->
         manifest
@@ -278,7 +279,7 @@ defmodule NixSwarm.Deploy do
   end
 
   defp manifest_installable(flake) do
-    "#{deployment_flake_ref(flake)}#nixSwarm.deploymentManifest"
+    "#{deployment_flake_ref(flake)}#lib.nixSwarm.deploymentManifest"
   end
 
   defp deployment_flake_ref(flake) do
