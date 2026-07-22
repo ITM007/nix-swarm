@@ -38,7 +38,7 @@
           })
         peerNames);
 
-      mkNode = { nodeName, hostname }:
+      mkNode = { nodeName, hostname, hardened ? false }:
         nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
@@ -63,7 +63,14 @@
                 boot.isContainer = true;
                 system.stateVersion = "25.11";
                 networking.hostName = hostname;
-                networking.firewall.enable = false;
+                users.allowNoPasswordLogin = hardened;
+                users.users.root = lib.mkIf hardened {
+                  hashedPassword = "!";
+                };
+                networking.firewall = {
+                  enable = false;
+                  allowedTCPPorts = lib.optionals hardened [ 22 8080 ];
+                };
 
                 environment.systemPackages = [ operatorPackage operatorCommand ];
                 environment.pathsToLink = [ "/share/nix-swarm" ];
@@ -122,9 +129,12 @@
 
                 services.nix-swarm = {
                   enable = true;
+                  hardened = hardened;
                   package = clusterPackage;
                   nodeName = nodeName;
                   cookieFile = "/etc/nix-swarm.cookie";
+                  openFirewall = hardened;
+                  firewallInterfaces = lib.optional hardened "eth0";
                   peers = peerNames;
                   nodes = nodeMetadata;
 
@@ -147,9 +157,10 @@
           ];
         };
 
-      mkImage = { nodeName, hostname }:
+      mkImage = { nodeName, hostname, hardened ? false }:
         let
-          machine = mkNode { inherit nodeName hostname; };
+          machine = mkNode { inherit nodeName hostname hardened; };
+          imageTag = if hardened then "hardened" else "dev";
           entrypoint = pkgs.writeShellScript "nixos-docker-entrypoint-${hostname}" ''
             ${pkgs.coreutils}/bin/mkdir -p /run
             ${pkgs.coreutils}/bin/ln -sfn ${machine.config.system.build.toplevel} /run/current-system
@@ -163,7 +174,7 @@
         in
         pkgs.dockerTools.buildLayeredImage {
           name = "nix-swarm/nixos-${hostname}";
-          tag = "dev";
+          tag = imageTag;
           contents = [ machine.config.system.build.toplevel ];
           extraCommands = ''
             if [ -L etc ]; then
@@ -198,6 +209,21 @@
         node-c = mkImage {
           nodeName = "nix-swarm@node-c";
           hostname = "node-c";
+        };
+        node-a-hardened = mkImage {
+          nodeName = "nix-swarm@node-a";
+          hostname = "node-a";
+          hardened = true;
+        };
+        node-b-hardened = mkImage {
+          nodeName = "nix-swarm@node-b";
+          hostname = "node-b";
+          hardened = true;
+        };
+        node-c-hardened = mkImage {
+          nodeName = "nix-swarm@node-c";
+          hostname = "node-c";
+          hardened = true;
         };
       };
     };

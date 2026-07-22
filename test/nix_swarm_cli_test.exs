@@ -62,6 +62,26 @@ defmodule NixSwarmCLITest do
     assert message =~ "repeat with --yes"
   end
 
+  test "rebuild requires an explicit confirmation flag" do
+    assert {:error, message} = NixSwarm.CLI.run(["cluster", "rebuild"])
+    assert message =~ "cluster rebuild changes machines"
+    assert message =~ "repeat with --yes"
+  end
+
+  test "json is rejected for commands that do not define a json output contract" do
+    assert {:error, message} = NixSwarm.CLI.run(["service", "list", "--json"])
+    assert message =~ "--json is supported only for cluster status"
+  end
+
+  test "local service listing does not resolve deployment metadata" do
+    stderr =
+      capture_io(:stderr, fn ->
+        assert :ok == NixSwarm.CLI.run(["service", "list"])
+      end)
+
+    assert stderr == ""
+  end
+
   test "plan renders the code-defined Nix deployment without mutation" do
     source = Path.expand("..", __DIR__)
 

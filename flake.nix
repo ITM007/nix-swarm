@@ -187,6 +187,7 @@
             assert builtins.isAttrs (import ./examples/starter/flake.nix);
             assert builtins.isFunction (import ./examples/starter/cluster.nix);
             assert builtins.isFunction (import ./examples/starter/machines/node-a.nix);
+            assert builtins.isFunction (import ./examples/starter/machines/hardened-node.nix);
             assert builtins.isFunction (import ./examples/starter/services/example-web.nix);
             pkgs.runCommand "nix-swarm-starter-syntax" { } ''
               touch "$out"
@@ -262,6 +263,10 @@
       nixosModules = {
         nix-swarm = import ./nix/nix-swarm/module.nix;
         default = self.nixosModules.nix-swarm;
+        hardened = {
+          imports = [ self.nixosModules.nix-swarm ];
+          services.nix-swarm.hardened = true;
+        };
       };
     };
 }

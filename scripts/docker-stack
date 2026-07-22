@@ -3,6 +3,36 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 secrets_dir="$root_dir/docker/nixos/secrets"
+profile="${NIX_SWARM_DOCKER_PROFILE:-standard}"
+
+case "${1:-}" in
+  --profile)
+    profile="${2:-}"
+    shift 2
+    ;;
+  --profile=*)
+    profile="${1#*=}"
+    shift
+    ;;
+esac
+
+case "$profile" in
+  standard)
+    image_tag="dev"
+    package_suffix=""
+    ;;
+  hardened)
+    image_tag="hardened"
+    package_suffix="-hardened"
+    ;;
+  *)
+    echo "unknown Docker profile: $profile (use standard or hardened)" >&2
+    exit 2
+    ;;
+esac
+
+export NIX_SWARM_DOCKER_PROFILE="$profile"
+export NIX_SWARM_DOCKER_IMAGE_TAG="$image_tag"
 
 if docker info >/dev/null 2>&1; then
   docker_cmd=(docker)
@@ -16,8 +46,8 @@ fi
 compose=("${docker_cmd[@]}" compose --project-directory "$root_dir" -f "$root_dir/docker-compose.yml")
 
 usage() {
-  cat <<'EOF'
-Usage: scripts/docker-stack <command>
+  cat <<EOF
+Usage: scripts/docker-stack [--profile standard|hardened] <command>
 
 Commands:
   build   Build the three NixOS systemd images and load them into Docker
@@ -57,9 +87,10 @@ build_images() {
   ensure_secrets
 
   for node in node-a node-b node-c; do
-    echo "Building NixOS image for $node..."
-    nix build "$root_dir/docker/nixos#$node" --out-link "$root_dir/result-docker-$node"
-    "${docker_cmd[@]}" load < "$root_dir/result-docker-$node"
+    echo "Building $profile NixOS image for $node..."
+    nix build "$root_dir/docker/nixos#${node}${package_suffix}" \
+      --out-link "$root_dir/result-docker-$node-$profile"
+    "${docker_cmd[@]}" load < "$root_dir/result-docker-$node-$profile"
   done
 }
 
@@ -95,9 +126,10 @@ up() {
   "${compose[@]}" up -d operator
   seed_operator_known_hosts
 
-  cat <<'EOF'
+  cat <<EOF
 
 Nix-Swarm Docker integration stack is ready.
+Profile: $profile
 
 Try:
   scripts/docker-stack status
@@ -120,8 +152,10 @@ status() {
 query() {
   case "${1:-cluster-status}" in
     cluster-status)
+      query_command=(cluster status)
       ;;
     cluster-members)
+      query_command=(cluster members)
       ;;
     *)
       echo "unknown query: ${1:-} (use cluster-status or cluster-members)" >&2
@@ -130,7 +164,7 @@ query() {
   esac
 
   "${compose[@]}" exec -T operator \
-    /run/current-system/sw/bin/nix-swarm cluster status \
+    /run/current-system/sw/bin/nix-swarm "${query_command[@]}" \
     --target "nix-swarm@node-a" --ssh-host "root@node-a"
 }
 

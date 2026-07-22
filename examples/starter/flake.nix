@@ -8,14 +8,20 @@
 
   outputs = inputs@{ nixpkgs, nix-swarm, ... }:
     let
-      nixosConfigurations.node-a = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        specialArgs = { inherit inputs; };
-        modules = [
-          nix-swarm.nixosModules.default
-          ./cluster.nix
-          ./machines/node-a.nix
-        ];
+      mkNode = machine:
+        nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = { inherit inputs; };
+          modules = [
+            nix-swarm.nixosModules.default
+            ./cluster.nix
+            machine
+          ];
+        };
+
+      nixosConfigurations = {
+        node-a = mkNode ./machines/node-a.nix;
+        node-a-hardened = mkNode ./machines/hardened-node.nix;
       };
     in
     {

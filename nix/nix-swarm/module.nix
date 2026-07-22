@@ -312,10 +312,16 @@ let
   ];
 in
 {
-  imports = [ ./ingress.nix ];
+  imports = [ ./hardened.nix ./ingress.nix ];
 
   options.services.nix-swarm = {
     enable = mkEnableOption "the Nix-Swarm leaderless cluster runtime";
+
+    hardened = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Enable the minimal hardened NixOS host baseline for this node. Deployment keys, overlay networking, and the cookie remain machine-specific.";
+    };
 
     package = mkOption {
       type = types.package;

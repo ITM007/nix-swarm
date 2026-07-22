@@ -97,7 +97,7 @@ let
     });
 
   cliWrapper = pkgs.writeShellScript "swarm" ''
-    export ELIXIR_ERL_OPTIONS="+fnu"
+    export ELIXIR_ERL_OPTIONS="+fnu -os_mon start_cpu_sup false -os_mon start_memsup false"
     template_root="$(cd "$(dirname "$0")/../share/nix-swarm/template" && pwd)"
     config_root="''${NIX_SWARM_SOURCE:-$HOME/.config/nix-swarm}"
 
@@ -110,7 +110,12 @@ let
     export NIX_SWARM_SOURCE="$config_root"
     export NIX_SWARM_ROLE=operator
 
-    exec ${release}/bin/nix_swarm eval 'Enum.each([NixSwarm.API, NixSwarm.Autoscaler, NixSwarm.Cluster, NixSwarm.ClusterLogs, NixSwarm.Config, NixSwarm.Executor, NixSwarm.NodeName, NixSwarm.OperationalState, NixSwarm.Placement, NixSwarm.QueryProtocol, NixSwarm.Reconciler, NixSwarm.RPC, NixSwarm.Service], fn module -> Code.ensure_loaded!(module) end); Application.ensure_all_started(:nix_swarm); NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@"
+    stderr_file="$(mktemp)"
+    trap 'rm -f "$stderr_file"' EXIT
+    ${release}/bin/nix_swarm eval 'Enum.each([NixSwarm.API, NixSwarm.Autoscaler, NixSwarm.Cluster, NixSwarm.ClusterLogs, NixSwarm.Config, NixSwarm.Executor, NixSwarm.JSON, NixSwarm.NodeName, NixSwarm.OperationalState, NixSwarm.Placement, NixSwarm.QueryProtocol, NixSwarm.Reconciler, NixSwarm.RPC, NixSwarm.Service], fn module -> Code.ensure_loaded!(module) end); Application.ensure_all_started(:nix_swarm); NixSwarm.CLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@" 2>"$stderr_file"
+    status=$?
+    ${pkgs.gnugrep}/bin/grep -vE '^\[os_mon\] (memory supervisor port|cpu supervisor port) \((memsup|cpu_sup)\): Erlang has closed$' "$stderr_file" >&2 || true
+    exit "$status"
   '';
 
   daemonWrapper = pkgs.writeShellScript "nix-swarmd" ''
@@ -128,7 +133,7 @@ let
     export ELIXIR_ERL_OPTIONS="+fnu"
     export NIX_SWARM_QUERY_MODE=1
     export NIX_SWARM_ROLE=operator
-    output="$(${release}/bin/nix_swarm eval 'Enum.each([NixSwarm.API, NixSwarm.Autoscaler, NixSwarm.Cluster, NixSwarm.ClusterLogs, NixSwarm.Config, NixSwarm.Executor, NixSwarm.NodeName, NixSwarm.OperationalState, NixSwarm.Placement, NixSwarm.Reconciler, NixSwarm.RPC, NixSwarm.Service], fn module -> Code.ensure_loaded!(module) end); Application.ensure_all_started(:nix_swarm); NixSwarm.QueryCLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@" 2>&1)"
+    output="$(${release}/bin/nix_swarm eval 'Enum.each([NixSwarm.API, NixSwarm.Autoscaler, NixSwarm.Cluster, NixSwarm.ClusterLogs, NixSwarm.Config, NixSwarm.Executor, NixSwarm.JSON, NixSwarm.NodeName, NixSwarm.OperationalState, NixSwarm.Placement, NixSwarm.Reconciler, NixSwarm.RPC, NixSwarm.Service], fn module -> Code.ensure_loaded!(module) end); Application.ensure_all_started(:nix_swarm); NixSwarm.QueryCLI.main(System.argv() |> Enum.reject(&(&1 == "--")))' -- "$@" 2>&1)"
     status=$?
 
     if [ "$status" -ne 0 ]; then

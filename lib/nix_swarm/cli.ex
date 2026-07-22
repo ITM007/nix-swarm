@@ -51,7 +51,9 @@ defmodule NixSwarm.CLI do
     opts =
       if Keyword.get(opts, :help, false) or Keyword.get(opts, :version, false),
         do: opts,
-        else: apply_launch_defaults(opts)
+        else: maybe_apply_launch_defaults(args, opts)
+
+    validate_json_scope!(args, opts)
 
     plan_fun = Keyword.get(dependencies, :plan_fun, &NixSwarm.Deploy.run/1)
     deploy_fun = Keyword.get(dependencies, :deploy_fun, &NixSwarm.Deploy.run/1)
@@ -248,30 +250,23 @@ defmodule NixSwarm.CLI do
         :ok
 
       args == ["service", "logs"] ->
-        service_name = Keyword.fetch!(opts, :name)
+        service_name = opts |> Keyword.fetch!(:name) |> String.trim()
         lines = Keyword.get(opts, :lines, 50)
         remote_opts = Keyword.take(opts, [:target, :ssh_host])
 
         with {:ok, target_node} <- connect_remote(remote_opts),
+             overview <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_overview, []),
+             :ok <- validate_service_name(overview, service_name),
              logs <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :logs, [service_name, lines]) do
-          Enum.each(logs, fn {node, entries} ->
-            IO.puts("=== #{node} ===")
-
-            if is_list(entries) do
-              Enum.each(entries, fn
-                %{logs: log_text} -> IO.puts(log_text)
-                other -> IO.inspect(other)
-              end)
-            else
-              IO.puts(inspect(entries))
-            end
-          end)
+          if Keyword.get(opts, :json, false) do
+            print_json!(%{service: service_name, logs: logs})
+          else
+            print_service_logs(logs)
+          end
 
           :ok
         else
-          {:error, msg} ->
-            IO.puts(:stderr, "error: #{msg}")
-            {:error, msg}
+          {:error, msg} -> {:error, msg}
         end
 
       args == ["cluster", "status"] ->
@@ -279,57 +274,37 @@ defmodule NixSwarm.CLI do
 
         with {:ok, target_node} <- connect_remote(remote_opts),
              overview <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_overview, []) do
-          members = overview.members
-          status = overview.status
-
-          IO.puts("Cluster status — #{members.queried_node}")
-          IO.puts("")
-
-          IO.puts(
-            "Nodes (#{length(members.live_nodes)} live, #{length(members.configured_nodes)} configured):"
-          )
-
-          Enum.each(members.live_nodes, fn node ->
-            node_status = Enum.find(status.nodes, fn {n, _} -> n == node end)
-            version = if node_status, do: elem(node_status, 1)[:release_version] || "?", else: "?"
-            IO.puts("  #{node}  #{version}")
-          end)
-
-          IO.puts("")
-          IO.puts("Services:")
-
-          Enum.each(status.placements, fn {svc, slots} ->
-            owners = slots |> Enum.map(& &1.owner) |> Enum.reject(&is_nil/1) |> Enum.uniq()
-
-            IO.puts(
-              "  #{svc}  #{length(slots)} replicas on #{Enum.map_join(owners, ", ", &Atom.to_string/1)}"
-            )
-          end)
-
-          IO.puts("")
-          diagnostics = Enum.filter(status.placement_diagnostics || [], &(&1.severity != :ok))
-
-          if diagnostics != [] do
-            IO.puts("Warnings/errors:")
-
-            Enum.each(diagnostics, fn d ->
-              IO.puts("  [#{d.severity}] #{d.message}")
-            end)
-          end
+          if Keyword.get(opts, :json, false),
+            do: print_json!(overview),
+            else: print_cluster_status(overview)
 
           :ok
         else
-          {:error, msg} ->
-            IO.puts(:stderr, "error: #{msg}")
-            {:error, msg}
+          {:error, msg} -> {:error, msg}
+        end
+
+      args == ["cluster", "members"] ->
+        remote_opts = Keyword.take(opts, [:target, :ssh_host])
+
+        with {:ok, target_node} <- connect_remote(remote_opts),
+             members <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_members, []) do
+          if Keyword.get(opts, :json, false),
+            do: print_json!(members),
+            else: print_cluster_members(members)
+
+          :ok
+        else
+          {:error, msg} -> {:error, msg}
         end
 
       args == ["debug", "state"] ->
         {:error, "debug state is intentionally unavailable through the read-only operator API"}
 
       args == ["cluster", "rebuild"] ->
+        require_confirmation!(opts, "cluster rebuild")
+
         result =
-          NixSwarm.Cluster.Rebuild.run(Keyword.take(opts, [:source, :cluster_file, :flake]))
+          NixSwarm.Cluster.Rebuild.run(deploy_options(opts, false))
 
         if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
 
@@ -365,6 +340,20 @@ defmodule NixSwarm.CLI do
     validate_integer_range!(opts, :replicas, "--replicas", 0, 128)
   end
 
+  defp validate_json_scope!(args, opts) do
+    cond do
+      not Keyword.get(opts, :json, false) ->
+        :ok
+
+      args in [["cluster", "status"], ["cluster", "members"], ["service", "logs"]] ->
+        :ok
+
+      true ->
+        raise ArgumentError,
+              "--json is supported only for cluster status, cluster members, and service logs"
+    end
+  end
+
   defp validate_integer_range!(opts, key, label, minimum, maximum) do
     case Keyword.get(opts, key) do
       nil -> :ok
@@ -379,6 +368,21 @@ defmodule NixSwarm.CLI do
     opts
     |> maybe_put_default_target(config_paths)
     |> maybe_put_default_ssh_host(config_paths)
+  end
+
+  defp maybe_apply_launch_defaults(args, opts) do
+    if requires_remote_options?(args), do: apply_launch_defaults(opts), else: opts
+  end
+
+  defp requires_remote_options?(args) do
+    args in [
+      [],
+      ["tui"],
+      ["cluster", "doctor"],
+      ["cluster", "members"],
+      ["cluster", "status"],
+      ["service", "logs"]
+    ]
   end
 
   defp config_paths(opts) do
@@ -466,6 +470,94 @@ defmodule NixSwarm.CLI do
     unless Keyword.get(opts, :yes, false) do
       raise ArgumentError,
             "#{command} changes machines; inspect `nix-swarm cluster plan` first, then repeat with --yes"
+    end
+  end
+
+  defp validate_service_name(overview, service_name) do
+    known? =
+      overview
+      |> get_in([:status, :placements])
+      |> Map.keys()
+      |> Enum.any?(&(to_string(&1) == service_name))
+
+    if known? do
+      :ok
+    else
+      configured =
+        overview
+        |> get_in([:status, :placements])
+        |> Map.keys()
+        |> Enum.map_join(", ", &to_string/1)
+
+      {:error,
+       "unknown service #{inspect(service_name)}; configured services: #{configured || "none"}"}
+    end
+  end
+
+  defp print_json!(value), do: IO.puts(NixSwarm.JSON.encode!(value))
+
+  defp print_service_logs(logs) do
+    Enum.each(logs, fn {node, entries} ->
+      IO.puts("=== #{node} ===")
+
+      if is_list(entries) do
+        Enum.each(entries, fn
+          %{logs: log_text} -> IO.puts(log_text)
+          other -> IO.inspect(other)
+        end)
+      else
+        IO.puts(inspect(entries))
+      end
+    end)
+  end
+
+  defp print_cluster_members(members) do
+    IO.puts("Cluster members — #{members.queried_node}")
+    IO.puts("")
+    IO.puts("Live nodes (#{length(members.live_nodes)}):")
+    Enum.each(members.live_nodes, &IO.puts("  #{&1}"))
+    IO.puts("")
+    IO.puts("Configured nodes (#{length(members.configured_nodes)}):")
+    Enum.each(members.configured_nodes, &IO.puts("  #{&1}"))
+  end
+
+  defp print_cluster_status(overview) do
+    members = overview.members
+    status = overview.status
+
+    IO.puts("Cluster status — #{members.queried_node}")
+    IO.puts("")
+
+    IO.puts(
+      "Nodes (#{length(members.live_nodes)} live, #{length(members.configured_nodes)} configured):"
+    )
+
+    Enum.each(members.live_nodes, fn node ->
+      node_status = Enum.find(status.nodes, fn {n, _} -> n == node end)
+      version = if node_status, do: elem(node_status, 1)[:release_version] || "?", else: "?"
+      IO.puts("  #{node}  #{version}")
+    end)
+
+    IO.puts("")
+    IO.puts("Services:")
+
+    Enum.each(status.placements, fn {svc, slots} ->
+      owners = slots |> Enum.map(& &1.owner) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+      IO.puts(
+        "  #{svc}  #{length(slots)} replicas on #{Enum.map_join(owners, ", ", &Atom.to_string/1)}"
+      )
+    end)
+
+    IO.puts("")
+    diagnostics = Enum.filter(status.placement_diagnostics || [], &(&1.severity != :ok))
+
+    if diagnostics != [] do
+      IO.puts("Warnings/errors:")
+
+      Enum.each(diagnostics, fn d ->
+        IO.puts("  [#{d.severity}] #{d.message}")
+      end)
     end
   end
 

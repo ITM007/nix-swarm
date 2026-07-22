@@ -2,7 +2,7 @@ name: nix-swarm-integration
 
 services:
   node-a:
-    image: nix-swarm/nixos-node-a:dev
+    image: nix-swarm/nixos-node-a:${NIX_SWARM_DOCKER_IMAGE_TAG:-dev}
     hostname: node-a
     privileged: true
     init: false
@@ -32,7 +32,7 @@ services:
       start_period: 15s
 
   node-b:
-    image: nix-swarm/nixos-node-b:dev
+    image: nix-swarm/nixos-node-b:${NIX_SWARM_DOCKER_IMAGE_TAG:-dev}
     hostname: node-b
     privileged: true
     init: false
@@ -62,7 +62,7 @@ services:
       start_period: 15s
 
   node-c:
-    image: nix-swarm/nixos-node-c:dev
+    image: nix-swarm/nixos-node-c:${NIX_SWARM_DOCKER_IMAGE_TAG:-dev}
     hostname: node-c
     privileged: true
     init: false
@@ -92,7 +92,7 @@ services:
       start_period: 15s
 
   operator:
-    image: nix-swarm/nixos-node-a:dev
+    image: nix-swarm/nixos-node-a:${NIX_SWARM_DOCKER_IMAGE_TAG:-dev}
     hostname: operator
     command: ["/run/current-system/sw/bin/nixos-operator-command", "/run/current-system/sw/bin/sleep", "infinity"]
     environment:

@@ -48,6 +48,13 @@ nix-swarm --source . --target nix-swarm@node-a
 
 `cluster init` creates one strong local cookie, installs it on the configured root SSH hosts with mode `0400`, evaluates every NixOS closure, and activates the cluster. Use declarative secret provisioning instead if root SSH is unavailable.
 
+The starter flake also exposes `nixosConfigurations.<node>-hardened` and the
+flake exposes `nixosModules.hardened`. Select the hardened machine output in
+your deployment manifest when you want the minimal hardened host baseline. It
+requires a real hardware configuration, deployment public key, private
+overlay interface, and separately provisioned cookie; review the profile's
+resource limits against the node workload before rollout.
+
 ## Normal workflow
 
 Edit Nix, review, then apply:
@@ -90,6 +97,7 @@ Service `settings` are public metadata rendered into the Nix store. Never put cr
 - [Operations](docs/OPERATIONS.md)
 - [Security](docs/SECURITY.md)
 - [Development and tests](docs/DEVELOPMENT.md)
+- [End-to-end testing listing](docs/TESTING.md)
 - [Docker systemd integration harness](docs/DOCKER.md)
 - [Product scope](docs/SWARM_PARITY.md)
 - [Migration to v1.0](docs/MIGRATING_TO_1.0.md)

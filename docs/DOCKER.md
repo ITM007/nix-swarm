@@ -27,6 +27,19 @@ repository and expect a first build to download NixOS and BEAM dependencies.
 ./scripts/docker-stack up
 ```
 
+The standard image is the default. To exercise the opt-in hardened NixOS
+profile, use the same harness with `--profile hardened`:
+
+```bash
+./scripts/docker-stack --profile hardened up
+./scripts/docker-stack --profile hardened query cluster-status
+```
+
+The profile builds `node-a-hardened`, `node-b-hardened`, and
+`node-c-hardened`, enables the host hardening module, and scopes the test
+firewall to SSH, HTTP, and the Docker `eth0` peer interface. It is still a
+privileged container test and does not emulate a separate production kernel.
+
 The first run creates ignored development-only material under
 `docker/nixos/secrets/`: an Erlang cookie, an SSH key pair, and an SSH
 `known_hosts` file. The same cookie is mounted into all three nodes, while the
@@ -70,6 +83,10 @@ state volumes as well as the containers.
 - DETS operational state on persistent Docker volumes
 - node loss and rejoin behavior
 - x86_64 package/image assembly from the current checkout
+- the opt-in hardened profile's firewall, AppArmor/audit configuration, and
+  minimal default package set when started with `--profile hardened` (the
+  Docker container can load the configuration, but native AppArmor and auditd
+  activation require host kernel support)
 
 ## What it does not validate
 
