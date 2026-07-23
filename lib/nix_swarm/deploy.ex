@@ -687,7 +687,8 @@ defmodule NixSwarm.Deploy do
 
     if final_batch? do
       common_health and Map.get(status, :config_consistent?, false) and
-        owned_units_healthy?(status)
+        owned_units_healthy?(status) and
+        reconciliation_healthy?(status)
     else
       common_health
     end
@@ -724,6 +725,23 @@ defmodule NixSwarm.Deploy do
     else
       _ -> false
     end
+  end
+
+  defp reconciliation_healthy?(status) do
+    status
+    |> Map.get(:nodes, [])
+    |> Enum.all?(fn {_node, node_status} ->
+      case Map.get(node_status, :operational_state) do
+        nil ->
+          true
+
+        state ->
+          (is_nil(Map.get(state, :config_digest)) and is_nil(Map.get(state, :reconciled_at))) or
+            (Map.get(state, :config_digest) == Map.get(node_status, :config_digest) and
+               not is_nil(Map.get(state, :reconciled_at)) and
+               Map.get(state, :failed_results, 0) == 0)
+      end
+    end)
   end
 
   defp owned_units_healthy?(status) do
@@ -792,7 +810,7 @@ defmodule NixSwarm.Deploy do
   defp validate_configuration!(configuration) do
     configuration = to_string(configuration || "")
 
-    if String.match?(configuration, ~r/^[A-Za-z0-9][A-Za-z0-9._-]*$/) do
+    if String.match?(configuration, ~r/^[A-Za-z0-9][A-Za-z0-9_-]*$/) do
       configuration
     else
       raise ArgumentError, "invalid NixOS configuration name: #{inspect(configuration)}"

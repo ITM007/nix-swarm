@@ -115,6 +115,7 @@ let
     builtins.concatLists
       (mapAttrsToList
         (name: serviceCfg:
+          # Keep the validated slot namespace authorized across replica reductions and zero-replica transitions.
           builtins.genList
             (index:
               builtins.replaceStrings
@@ -122,7 +123,7 @@ let
                 [ name (toString index) ]
                 (effectiveUnitTemplate name serviceCfg)
             )
-            (effectiveMaxReplicas serviceCfg)
+            128
         )
         cfg.services) ++ cfg.extraManagedUnits;
 

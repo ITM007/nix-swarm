@@ -138,6 +138,7 @@ defmodule NixSwarm.Autoscaler do
       %{
         state
         | membership_fingerprint: fingerprint,
+          targets: initial_targets(NixSwarm.Config.current()),
           previous_counters: %{},
           local_samples: %{},
           trends: %{},
@@ -447,12 +448,18 @@ defmodule NixSwarm.Autoscaler do
           decision.owner == Placement.scaler_owner(service, placement_nodes, config.nodes)
       end)
 
-    targets =
-      valid
-      |> Map.new(fn {service, decision} -> {service, decision.target} end)
-      |> then(&Map.merge(normalize_targets(config, state.targets), &1))
+    targets = targets_after_decisions(config, valid)
 
     %{state | decisions: valid, targets: targets}
+  end
+
+  @doc false
+
+  def targets_after_decisions(config, decisions) when is_map(config) and is_map(decisions) do
+    decision_targets =
+      Map.new(decisions, fn {service, decision} -> {service, decision.target} end)
+
+    Map.merge(initial_targets(config), decision_targets)
   end
 
   defp restored_targets(config, digest) do

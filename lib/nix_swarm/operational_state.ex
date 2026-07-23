@@ -73,7 +73,8 @@ defmodule NixSwarm.OperationalState do
       assignments: snapshot |> Map.get(:assignments, []) |> length(),
       autoscaling_targets: Map.get(snapshot, :autoscaling_targets, %{}),
       membership: Map.get(snapshot, :membership, %{}),
-      result_count: snapshot |> Map.get(:results, []) |> length()
+      result_count: snapshot |> Map.get(:results, []) |> length(),
+      failed_results: failed_results(snapshot)
     }
 
     {:reply, metadata, state}
@@ -101,6 +102,15 @@ defmodule NixSwarm.OperationalState do
       :ok = persist(snapshot)
       {:reply, :ok, %{state | snapshot: snapshot, last_reconciled_at: reconciled_at}}
     end
+  end
+
+  defp failed_results(snapshot) do
+    snapshot
+    |> Map.get(:results, [])
+    |> Enum.count(fn
+      {_unit, :ok} -> false
+      _ -> true
+    end)
   end
 
   defp summarize_results(results) do
