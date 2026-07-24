@@ -36,6 +36,22 @@ jobs:
 
       - name: Run release checks
         run: nix flake check --print-build-logs
+
+      - name: Run BEAM release checks
+        run: |
+          nix develop --command mix format --check-formatted
+          nix develop --command mix compile --warnings-as-errors
+          nix develop --command mix hex.audit
+          nix develop --command mix test --warnings-as-errors --cover
+
+      - name: Verify release tag matches VERSION
+        run: |
+          expected="v$(tr -d '\n' < VERSION)"
+          if [ "${TAG_NAME}" != "${expected}" ]; then
+            echo "release tag ${TAG_NAME} does not match ${expected}" >&2
+            exit 1
+          fi
+
       - name: Build operator and cluster packages
         run: |
           nix build --out-link result-operator .#packages.${{ matrix.system }}.operator

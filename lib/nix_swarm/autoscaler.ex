@@ -456,10 +456,14 @@ defmodule NixSwarm.Autoscaler do
   @doc false
 
   def targets_after_decisions(config, decisions) when is_map(config) and is_map(decisions) do
-    decision_targets =
-      Map.new(decisions, fn {service, decision} -> {service, decision.target} end)
+    configured_targets = initial_targets(config)
 
-    Map.merge(initial_targets(config), decision_targets)
+    decision_targets =
+      decisions
+      |> Enum.filter(&Map.has_key?(configured_targets, elem(&1, 0)))
+      |> Map.new(fn {service, decision} -> {service, decision.target} end)
+
+    Map.merge(configured_targets, decision_targets)
   end
 
   defp restored_targets(config, digest) do

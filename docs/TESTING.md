@@ -43,6 +43,7 @@ nix flake check --print-build-logs
 nix build .#checks.x86_64-linux.nixos-vm --no-link --print-build-logs
 nix build .#checks.x86_64-linux.operator-smoke --no-link --print-build-logs
 nix build .#checks.x86_64-linux.starter-syntax --no-link --print-build-logs
+MIX_ENV=test nix develop --command mix run --no-start scripts/verify_cluster.exs
 ```
 
 Observed on 2026-07-22:

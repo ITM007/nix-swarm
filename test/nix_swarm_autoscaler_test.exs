@@ -100,6 +100,25 @@ defmodule NixSwarmAutoscalerTest do
     assert Autoscaler.normalize_targets(config, %{"api" => 0}) == %{"api" => 1}
   end
 
+  test "invalidated decisions cannot retain targets for removed services" do
+    config =
+      NixSwarm.Config.normalize(%{
+        services: [
+          %{
+            name: "api",
+            replicas: 2,
+            autoscaling: %{enable: true, minReplicas: 1, maxReplicas: 4}
+          }
+        ]
+      })
+
+    assert Autoscaler.targets_after_decisions(config, %{}) == %{"api" => 2}
+
+    assert Autoscaler.targets_after_decisions(config, %{
+             "removed" => %{target: 4}
+           }) == %{"api" => 2}
+  end
+
   test "decision validation rejects stale, foreign, and out-of-range decisions" do
     node = :"nix-swarm@autoscaler-test"
 

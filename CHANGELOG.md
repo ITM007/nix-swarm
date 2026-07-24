@@ -31,6 +31,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Release artifacts now run the full BEAM/Nix validation gate and reject tags
+  that do not match `VERSION`.
+- Direct API log requests clamp line counts and use the executor timeout path
+  for `nix-swarmd` logs instead of invoking `journalctl` without a command
+  timeout.
 - The agent runs unprivileged with an exact Nix-generated polkit unit allowlist and systemd resource limits.
 - Release cookies are provisioned as private runtime files and no longer appear in process arguments or environment variables.
 - Intermediate rollout batches require reachable peers and healthy updated-node units; the final gate requires one config digest and all owned units healthy.
@@ -63,6 +68,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Autoscaler target reconstruction now drops decisions for services removed
+  from the current configuration instead of retaining stale targets.
 - Restored the rollout coordinator and injected TUI update function removed by the v0.5 work-in-progress.
 - Restored executor input validation, configured adapters, command timeouts, and normalized status contracts.
 - Invalid deployment validation now aborts before any target is changed.

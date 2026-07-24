@@ -10,8 +10,14 @@ Before tagging v1.0, all of the following must pass:
 - `nix develop --command mix test --warnings-as-errors --cover`
 - `nix flake check --print-build-logs` on x86_64-linux
 - packaged operator smoke tests for `--help`, `--version`, and `cluster plan`
+- `MIX_ENV=test nix develop --command mix run --no-start scripts/verify_cluster.exs`
 - a real multi-node rollout, failed activation, automatic rollback, node reboot,
   partition recovery, and credential rotation exercise
+
+The release workflow also verifies that the release tag exactly matches the
+repository `VERSION` file before building artifacts. Keep `VERSION` unchanged
+on development and release-candidate branches; update it only in the release
+commit that creates the matching tag.
 
 The supported v1.0 workload is stateless or externally backed systemd services
 on NixOS. Nix-Swarm does not provide consensus, fencing, volumes, a routing

@@ -403,4 +403,51 @@ defmodule NixSwarmDeployTest do
     refute NixSwarm.Deploy.healthy_overview?(unreachable, false)
     refute NixSwarm.Deploy.healthy_overview?(%{}, false)
   end
+
+  test "final health gate rejects stale or failed reconciliation state" do
+    node = :"nix-swarm@node-a"
+    digest = "config-digest"
+
+    base = %{
+      members: %{live_nodes: [node], configured_nodes: [node]},
+      status: %{
+        queried_node: node,
+        config_consistent?: true,
+        placement_diagnostics: [],
+        placements: %{},
+        nodes: [
+          {node,
+           %{
+             config_digest: digest,
+             services: [],
+             operational_state: %{
+               config_digest: digest,
+               reconciled_at: 1_000,
+               failed_results: 0
+             }
+           }}
+        ]
+      }
+    }
+
+    assert NixSwarm.Deploy.healthy_overview?(base, true)
+
+    failed =
+      put_in(
+        base,
+        [:status, :nodes, Access.at(0), Access.elem(1), :operational_state, :failed_results],
+        1
+      )
+
+    refute NixSwarm.Deploy.healthy_overview?(failed, true)
+
+    stale =
+      put_in(
+        base,
+        [:status, :nodes, Access.at(0), Access.elem(1), :operational_state, :config_digest],
+        "old-digest"
+      )
+
+    refute NixSwarm.Deploy.healthy_overview?(stale, true)
+  end
 end

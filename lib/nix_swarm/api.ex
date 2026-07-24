@@ -14,6 +14,7 @@ defmodule NixSwarm.API do
   alias NixSwarm.Reconciler
 
   @version_cache_key {__MODULE__, :version}
+  @max_log_lines 1_000
   @source_version_digest (
                            source_root = Path.expand("../..", __DIR__)
 
@@ -200,6 +201,7 @@ defmodule NixSwarm.API do
   @doc "Fetches service logs from owning nodes."
   def logs(service_name, lines \\ 50) do
     service_name = to_string(service_name)
+    lines = normalize_log_lines(lines)
 
     NixSwarm.Cluster.live_nodes()
     |> owners_for(service_name)
@@ -215,10 +217,11 @@ defmodule NixSwarm.API do
   def node_service_logs(node_name, lines \\ 50) do
     node_name
     |> normalize_target_node()
-    |> rpc(__MODULE__, :local_node_service_logs, [lines])
+    |> rpc(__MODULE__, :local_node_service_logs, [normalize_log_lines(lines)])
   end
 
   def local_node_service_logs(lines) do
+    lines = normalize_log_lines(lines)
     config = NixSwarm.Config.current()
     placement_nodes = NixSwarm.Cluster.placement_nodes()
 
@@ -248,19 +251,17 @@ defmodule NixSwarm.API do
   def cluster_logs(node_name, lines \\ 50) do
     node_name
     |> normalize_target_node()
-    |> rpc(__MODULE__, :local_cluster_logs, [lines])
+    |> rpc(__MODULE__, :local_cluster_logs, [normalize_log_lines(lines)])
   end
 
   def local_cluster_logs(lines) do
+    lines = normalize_log_lines(lines)
+
     case NixSwarm.Config.runtime().executor.adapter do
       :systemd ->
-        case System.cmd(
-               "journalctl",
-               ["-u", "nix-swarmd", "-n", Integer.to_string(lines), "--no-pager"],
-               stderr_to_stdout: true
-             ) do
-          {output, 0} -> output |> sanitize_cluster_logs() |> String.trim()
-          {output, _status} -> output |> sanitize_cluster_logs() |> String.trim()
+        case Executor.unit_logs("nix-swarmd.service", lines) do
+          {:ok, output} -> output |> sanitize_cluster_logs() |> String.trim()
+          {:error, reason} -> reason |> inspect() |> sanitize_cluster_logs() |> String.trim()
         end
 
       _ ->
@@ -269,6 +270,7 @@ defmodule NixSwarm.API do
   end
 
   def local_logs(service_name, lines) do
+    lines = normalize_log_lines(lines)
     config = NixSwarm.Config.current()
     placement_nodes = NixSwarm.Cluster.placement_nodes()
 
@@ -448,6 +450,12 @@ defmodule NixSwarm.API do
       "target node"
     )
   end
+
+  defp normalize_log_lines(lines) when is_integer(lines) do
+    lines |> max(1) |> min(@max_log_lines)
+  end
+
+  defp normalize_log_lines(_lines), do: 50
 
   defp local_unit_status(unit) do
     case Executor.unit_status(unit) do
