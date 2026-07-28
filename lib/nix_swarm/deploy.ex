@@ -102,12 +102,39 @@ defmodule NixSwarm.Deploy do
     validate_source_and_flake!(source, flake)
     manifest = deployment_manifest(flake, opts, timeout_ms)
     target_hosts = hosts_from_options(opts, manifest)
-    canary_hosts = parse_hosts(Keyword.get(opts, :canary_hosts, []))
-    max_unavailable = positive_rollout_width!(Keyword.get(opts, :max_unavailable, 1))
-    target_hosts = order_hosts(target_hosts, canary_hosts)
     dry_run = Keyword.get(opts, :dry_run, false)
     health_check = Keyword.get(opts, :health_check, true) != false
     deployment_policy = manifest_value(manifest, "deployment") || %{}
+
+    declared_canary_nodes =
+      deployment_policy
+      |> manifest_value("canaryNodes")
+      |> List.wrap()
+      |> Enum.map(&to_string/1)
+
+    manifest_targets = deployment_targets_from_manifest(manifest)
+
+    declared_canary_hosts =
+      manifest_targets
+      |> Enum.filter(&(&1.node in declared_canary_nodes))
+      |> Enum.map(& &1.host)
+
+    canary_hosts =
+      case Keyword.fetch(opts, :canary_hosts) do
+        {:ok, value} -> parse_hosts(value)
+        :error -> declared_canary_hosts
+      end
+
+    max_unavailable =
+      positive_rollout_width!(
+        Keyword.get(
+          opts,
+          :max_unavailable,
+          manifest_value(deployment_policy, "maxUnavailable") || 1
+        )
+      )
+
+    target_hosts = order_hosts(target_hosts, canary_hosts)
 
     health_timeout_sec =
       positive_integer!(

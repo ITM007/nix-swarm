@@ -1,22 +1,13 @@
 { ... }:
 {
-  imports = [ ./services/example-web.nix ];
-
   services.nix-swarm = {
-    peers = [ "nix-swarm@node-a" ];
+    peers = [ "nix-swarm@node-c" ];
 
-    nodes."nix-swarm@node-a" = {
+    nodes."nix-swarm@node-c" = {
       labels = [ "apps" ];
-      deployHost = "root@node-a";
-      nixosConfiguration = "node-a";
-    };
-
-    services = {
-      example-web = {
-        replicas = 1;
-        constraints = [ "apps" ];
-        settings.port = 8080;
-      };
+      availability = "active";
+      deployHost = "root@node-c";
+      nixosConfiguration = "node-c";
     };
   };
 }

@@ -726,6 +726,15 @@ Add explicit checks/messages for unknown host key, failed key auth, interactive 
 12. Run `nix flake check --no-write-lock-file --print-build-logs` and the hardened Docker profile.
 13. Commit: `feat: add hardened nixos-anywhere node template`.
 
+**Phase 1 implementation evidence (2026-07-28):**
+
+- Added the reusable `examples/starter/disko/uefi-single-disk-ext4.nix` layout and `node-c` machine wrapper.
+- Added the hardened reusable NixOS profile and provisioning documentation.
+- Evaluated a fully substituted `node-c` target with the local Nix-Swarm module override; hostname, hardened mode, node name, cookie path, and SSH policy all evaluated as expected.
+- Built the fully substituted `node-c` NixOS system closure successfully without mutating a disk.
+- `mix format --check-formatted`, warnings-as-errors compilation, `mix test` (`212 passed`), and `nix flake check --no-build --no-write-lock-file` passed remotely.
+- Docker evidence was not available because Docker is unavailable on the local and remote development hosts; the Docker scenarios remain a later Phase 6 gate.
+
 ### Task 13: Add `.nix`-only machine scaffolding
 
 **Objective:** Reduce boilerplate while keeping reviewed Nix as the only input.

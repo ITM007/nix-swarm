@@ -307,6 +307,14 @@ let
       message = "services.nix-swarm.deployment.stableSamples must not exceed healthTimeoutSec";
     }
     {
+      assertion = cfg.deployment.maxUnavailable >= 1 && cfg.deployment.maxUnavailable <= 128;
+      message = "services.nix-swarm.deployment.maxUnavailable must be between 1 and 128";
+    }
+    {
+      assertion = all (node: builtins.hasAttr node cfg.nodes && elem node cfg.peers) cfg.deployment.canaryNodes;
+      message = "services.nix-swarm.deployment.canaryNodes must reference configured peer nodes";
+    }
+    {
       assertion = all (service: service.readiness.timeoutSec <= cfg.deployment.healthTimeoutSec) (builtins.attrValues cfg.services);
       message = "service readiness.timeoutSec values must not exceed deployment.healthTimeoutSec";
     }
@@ -555,6 +563,18 @@ in
         type = types.bool;
         default = true;
         description = "Automatically roll back every host attempted by a failed deployment.";
+      };
+
+      canaryNodes = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "Peer node names deployed one at a time before the remaining rollout batches.";
+      };
+
+      maxUnavailable = mkOption {
+        type = types.int;
+        default = 1;
+        description = "Maximum number of non-canary deployment targets updated concurrently.";
       };
     };
 

@@ -159,12 +159,14 @@ defmodule NixSwarmDeployTest do
            ]
   end
 
-  test "the packaged starter plans its declared root SSH target" do
+  test "the packaged starter plans its declared SSH targets and rollout policy" do
     source = Path.expand("../examples/starter", __DIR__)
     plan = NixSwarm.Deploy.plan(source: source, dry_run: true)
 
-    assert plan.hosts == ["root@node-a"]
-    assert plan.configurations == %{"root@node-a" => "node-a"}
+    assert plan.hosts == ["root@node-c"]
+    assert plan.configurations == %{"root@node-c" => "node-c"}
+    assert plan.canary_hosts == ["root@node-c"]
+    assert plan.max_unavailable == 1
   end
 
   test "plan orders canaries first and preserves bounded rollout batches" do

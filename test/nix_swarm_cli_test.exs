@@ -264,7 +264,7 @@ defmodule NixSwarmCLITest do
 
     assert :ok == NixSwarm.CLI.run(["--source", source], runner)
     assert_receive {:launched, opts}
-    assert Keyword.get(opts, :target) == "nix-swarm@node-a"
-    assert Keyword.get(opts, :ssh_host) == "root@node-a"
+    assert Keyword.get(opts, :target) == "nix-swarm@node-c"
+    assert Keyword.get(opts, :ssh_host) == "root@node-c"
   end
 end

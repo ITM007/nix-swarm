@@ -121,6 +121,13 @@
                     labels = [ "test" ];
                     deployHost = "root@node-a.test";
                   };
+                  deployment = {
+                    canaryNodes = [ "nix-swarm@node-a.test" ];
+                    maxUnavailable = 2;
+                    healthTimeoutSec = 120;
+                    stableSamples = 2;
+                    autoRollback = true;
+                  };
                   services.example.unitTemplate = "example.service";
                 };
               })
@@ -188,6 +195,9 @@
             assert builtins.isFunction (import ./examples/starter/cluster.nix);
             assert builtins.isFunction (import ./examples/starter/machines/node-a.nix);
             assert builtins.isFunction (import ./examples/starter/machines/hardened-node.nix);
+            assert builtins.isFunction (import ./examples/starter/machines/node-c/default.nix);
+            assert builtins.isFunction (import ./examples/starter/machines/node-c/disko.nix);
+            assert builtins.isFunction (import ./examples/starter/profiles/nix-swarm-node.nix);
             assert builtins.isFunction (import ./examples/starter/services/example-web.nix);
             pkgs.runCommand "nix-swarm-starter-syntax" { } ''
               touch "$out"
