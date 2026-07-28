@@ -403,16 +403,7 @@ defmodule NixSwarm.CLI do
     ]
   end
 
-  defp config_paths(opts) do
-    defaults = ConfigFiles.defaults(Keyword.get(opts, :source))
-
-    ConfigFiles.normalize_paths(%{
-      source: defaults.source,
-      cluster_file: Keyword.get(opts, :cluster_file, defaults.cluster_file),
-      machines_dir: Keyword.get(opts, :machines_dir, defaults.machines_dir),
-      services_dir: Keyword.get(opts, :services_dir, defaults.services_dir)
-    })
-  end
+  defp config_paths(opts), do: NixSwarm.OperatorContext.paths(opts)
 
   defp maybe_put_default_target(opts, config_paths) do
     cond do
@@ -458,7 +449,7 @@ defmodule NixSwarm.CLI do
 
   defp connect_remote(opts) when is_list(opts) do
     try do
-      target_node = NixSwarm.Remote.connect!(opts)
+      target_node = opts |> NixSwarm.OperatorContext.remote() |> NixSwarm.Remote.connect!()
       {:ok, target_node}
     rescue
       e in [NixSwarm.Remote.Error, ArgumentError, RuntimeError] ->

@@ -35,30 +35,9 @@ defmodule NixSwarm.TUI do
   def run(opts) do
     with_terminal_logging_suppressed(fn ->
       ensure_runtime_supported!()
-      remote = Remote.options!(opts)
-
-      config_paths =
-        ConfigFiles.defaults(Keyword.get(opts, :source))
-        |> Map.merge(%{
-          cluster_file:
-            Keyword.get(
-              opts,
-              :cluster_file,
-              ConfigFiles.defaults(Keyword.get(opts, :source)).cluster_file
-            ),
-          machines_dir:
-            Keyword.get(
-              opts,
-              :machines_dir,
-              ConfigFiles.defaults(Keyword.get(opts, :source)).machines_dir
-            ),
-          services_dir:
-            Keyword.get(
-              opts,
-              :services_dir,
-              ConfigFiles.defaults(Keyword.get(opts, :source)).services_dir
-            )
-        })
+      context = NixSwarm.OperatorContext.from_opts(opts)
+      remote = context.remote || raise ArgumentError, "missing required --target for TUI"
+      config_paths = context.paths
 
       # Establish connection in the main process before starting the UI
       # This ensures net_kernel is tied to the long-running main process

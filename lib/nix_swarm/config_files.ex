@@ -64,6 +64,16 @@ defmodule NixSwarm.ConfigFiles do
     }
   end
 
+  def generated_path_allowed?(path) when is_binary(path) do
+    expanded = Path.expand(path)
+
+    Path.extname(expanded) == ".nix" and
+      not String.contains?(expanded, "/secrets/") and
+      not String.contains?(Path.basename(expanded), "..")
+  end
+
+  def generated_path_allowed?(_path), do: false
+
   def system_editor do
     System.get_env("VISUAL") || System.get_env("EDITOR") || "vi"
   end

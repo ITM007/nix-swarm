@@ -491,6 +491,15 @@ TUI.
 generated files are only `.nix`; Docker doctor/status output identifies all
 supported failure classes.
 
+**Phase 5 implementation evidence (2026-07-28):**
+
+- Added `NixSwarm.OperatorContext` as the shared ephemeral normalization layer for source, cluster/machine/service paths, target, SSH host, and read-only mode; CLI and TUI now consume the same context.
+- Added actionable remote diagnostic classification for SSH/host-key, noninteractive privilege, architecture, disk, non-NixOS, missing query helper, and protocol incompatibility failures, with remediation text and no secret material.
+- Added `ConfigFiles.generated_path_allowed?/1` and regression coverage proving generated machine/service artifacts are `.nix` only and cannot target secrets or non-Nix extensions.
+- Extended operations documentation with the supported diagnostic classes and read-only TUI/apply boundary.
+- Remote verification passed: full `mix test` (`241 passed`), formatting, warnings-as-errors compilation, and `nix flake check --no-build --no-write-lock-file`.
+- Docker evidence remains unavailable because Docker is not installed on the local or remote host; live doctor/status failure-matrix acceptance remains an environment-dependent release gate.
+
 ### Phase 6 — Hardening and release evidence
 
 **Task:** 15 plus final documentation/version cleanup.

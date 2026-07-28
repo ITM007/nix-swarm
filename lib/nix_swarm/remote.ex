@@ -63,13 +63,15 @@ defmodule NixSwarm.Remote do
         Map.merge(remote, %{
           target_node: remote,
           connect_result: true,
-          remote_probe: %{cluster_members: %{status: :ok, value: members}}
+          remote_probe: %{cluster_members: %{status: :ok, value: members}},
+          failure: nil
         })
 
       {:error, reason} ->
         Map.merge(remote, %{
           target_node: remote,
           connect_result: false,
+          failure: reason,
           remote_probe: %{cluster_members: %{status: :error, detail: inspect(reason)}}
         })
     end
@@ -138,6 +140,14 @@ defmodule NixSwarm.Remote do
     end
   end
 
+  def diagnostic_for_failure(remote, reason) when is_map(remote) do
+    Map.merge(remote, %{
+      connect_result: false,
+      failure: reason,
+      remote_probe: %{failure: %{status: :error, reason: reason}}
+    })
+  end
+
   def doctor_context_rows(diagnostic) do
     [
       ["cluster target", diagnostic.target],
@@ -156,6 +166,10 @@ defmodule NixSwarm.Remote do
     ]
   end
 
+  def diagnostic_checks(%{connect_result: false, failure: reason}) do
+    [%{label: "bootstrap/upgrade diagnosis", status: :error, detail: failure_detail(reason)}]
+  end
+
   def diagnostic_checks(diagnostic) do
     [
       %{
@@ -168,6 +182,10 @@ defmodule NixSwarm.Remote do
 
   def connection_solutions(%{connect_result: true}) do
     ["The target is ready for read-only status, metrics, and bounded log queries."]
+  end
+
+  def connection_solutions(%{connect_result: false, failure: reason}) do
+    [failure_fix(reason)]
   end
 
   def connection_solutions(diagnostic) do
@@ -325,6 +343,43 @@ defmodule NixSwarm.Remote do
       fail("--ssh-host contains unsupported characters")
     end
   end
+
+  defp failure_detail({:ssh_failed, _status, _output}), do: "SSH authentication/host-key failure"
+  defp failure_detail(:permission_denied), do: "operator query permission failure"
+  defp failure_detail(:ssh_failed), do: "SSH authentication/host-key failure"
+  defp failure_detail(:sudo_interactive), do: "noninteractive privilege failure"
+  defp failure_detail(:wrong_architecture), do: "architecture mismatch"
+  defp failure_detail(:low_disk), do: "insufficient disk space"
+  defp failure_detail(:non_nixos), do: "not a NixOS target"
+  defp failure_detail(:missing_query), do: "query helper is unavailable"
+  defp failure_detail(:protocol_incompatible), do: "query protocol is incompatible"
+  defp failure_detail(reason), do: "remote check failed: #{inspect(reason)}"
+
+  defp failure_fix({:ssh_failed, _status, _output}),
+    do: "Verify SSH authentication and pinned known_hosts entries before retrying."
+
+  defp failure_fix(:permission_denied),
+    do: "Add the SSH user to the Nix-Swarm operator group or use root SSH."
+
+  defp failure_fix(:ssh_failed),
+    do: "Verify SSH authentication and pinned known_hosts entries before retrying."
+
+  defp failure_fix(:sudo_interactive),
+    do: "Configure passwordless sudo or root SSH for noninteractive deployment."
+
+  defp failure_fix(:wrong_architecture),
+    do: "Build a closure for the target architecture before applying."
+
+  defp failure_fix(:low_disk), do: "free disk space on the target and retry the preflight."
+  defp failure_fix(:non_nixos), do: "Install or provision NixOS before running cluster apply."
+
+  defp failure_fix(:missing_query),
+    do: "Install nix-swarm-query on the target and verify its SSH command path."
+
+  defp failure_fix(:protocol_incompatible),
+    do: "Upgrade the operator or agent so their query protocol versions are compatible."
+
+  defp failure_fix(reason), do: "Resolve the reported remote check: #{inspect(reason)}."
 
   defp format_check_line(%{label: label, status: status, detail: detail}) do
     status = if status == :ok, do: "ok", else: "fail"

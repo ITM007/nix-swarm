@@ -67,6 +67,22 @@ Rollback activates each target's previous NixOS generation and runs the same hea
 | Rollout health gate fails | `systemctl status nix-swarmd`, cluster status, placement diagnostics, workload unit journal |
 | SSH failure | known host key and noninteractive root/sudo authentication |
 
+## Phase 5 diagnostics and context
+
+`cluster doctor` and the read-only TUI share one normalized operator context for
+source paths, machine/service directories, cluster file, target, and SSH host.
+The context is ephemeral; Git and evaluated Nix remain authoritative.
+
+Diagnostics identify actionable classes including unknown or unpinned SSH host
+keys, failed key authentication, interactive sudo, wrong architecture, low disk,
+non-NixOS targets, missing `nix-swarm-query`, missing/inactive `nix-swarmd`,
+private peer-port failures, protocol incompatibility, credential mismatch, and
+configuration digest drift. Fix the reported prerequisite and rerun `doctor`,
+then `cluster plan` and explicit `cluster apply`.
+
+The TUI is read-only. It never writes topology, service, credential, or plan
+artifacts.
+
 Useful target-side commands:
 
 ```bash
