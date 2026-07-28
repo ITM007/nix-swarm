@@ -1,34 +1,23 @@
 defmodule NixSwarm.Telemetry do
   @moduledoc """
-  Emits :telemetry events when available (OTP 24+). No-op otherwise.
+  Stable telemetry event helpers for runtime operations.
+
+  Every span emits `:start`, `:stop`, and (when raised) `:exception` events
+  using the supplied event prefix. Stop events include native-unit duration.
   """
 
-  @telemetry_available Code.ensure_loaded?(:telemetry)
-
-  def reconcile_start, do: emit([:nix_swarm, :reconcile, :start], %{}, %{})
-  def reconcile_stop(owned_units, start_time) do
-    duration = System.monotonic_time(:microsecond) - start_time
-    emit([:nix_swarm, :reconcile, :stop], %{duration_us: duration}, %{owned_units: owned_units})
-  end
-  def rpc_call(node, function, start_time) do
-    duration = System.monotonic_time(:microsecond) - start_time
-    emit([:nix_swarm, :rpc, :call], %{duration_us: duration}, %{node: node, function: function})
-  end
-  def systemctl(unit, action, start_time) do
-    duration = System.monotonic_time(:microsecond) - start_time
-    emit([:nix_swarm, :systemctl, :call], %{duration_us: duration}, %{unit: unit, action: action})
-  end
-  def deploy_start, do: emit([:nix_swarm, :deploy, :start], %{}, %{})
-  def deploy_stop(start_time) do
-    duration = System.monotonic_time(:microsecond) - start_time
-    emit([:nix_swarm, :deploy, :stop], %{duration_us: duration}, %{})
+  def span(event_prefix, metadata, fun) when is_list(event_prefix) and is_function(fun, 0) do
+    :telemetry.span(event_prefix, metadata, fn ->
+      result = fun.()
+      {result, Map.put(metadata, :outcome, outcome(result))}
+    end)
   end
 
-  # Use apply/3 to avoid compile-time warnings when :telemetry isn't available
-  defp emit(event, measurements, metadata) do
-    if @telemetry_available do
-      _ = apply(:telemetry, :execute, [event, measurements, metadata])
-    end
-    :ok
+  def execute(event, measurements \\ %{}, metadata \\ %{}) do
+    :telemetry.execute(event, measurements, metadata)
   end
+
+  defp outcome({:error, _reason}), do: :error
+  defp outcome({:ok, _result}), do: :ok
+  defp outcome(_result), do: :ok
 end

@@ -5,22 +5,20 @@
 From the repository root:
 
 ```bash
-mix format
-mix test
-nix flake check --no-build --no-write-lock-file
-```
-
-If you are working on release packaging or the escript entrypoint, also run:
-
-```bash
-mix escript.build
+nix develop -c mix format --check-formatted
+nix develop -c mix clean
+nix develop -c mix compile --warnings-as-errors
+nix develop -c mix hex.audit
+nix develop -c mix test --warnings-as-errors --cover
+nix flake check --print-build-logs
 ```
 
 ## Project layout
 
 - `lib/` contains the CLI, TUI, runtime, deploy, and remote-control logic
 - `nix/` contains the Nix package and NixOS module
-- `examples/config/` contains the public starter cluster, machine, and service configs
+- `examples/starter/` is the packaged one-node starter
+- `examples/config/` is a larger two-node example
 - `docs/` contains user-facing technical documentation
 
 ## Contribution guidelines

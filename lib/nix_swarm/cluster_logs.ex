@@ -19,9 +19,19 @@ defmodule NixSwarm.ClusterLogs do
   def sanitize(output) do
     output
     |> to_string()
+    |> terminal_safe()
     |> String.split("\n", trim: true)
     |> Enum.reject(&benign_line?/1)
     |> Enum.join("\n")
+  end
+
+  @doc "Removes terminal escape sequences and control characters from untrusted output."
+  def terminal_safe(output) do
+    output
+    |> to_string()
+    |> String.replace(~r/\x1B\][^\x07]*(?:\x07|\x1B\\)/, "")
+    |> String.replace(~r/\x1B\[[0-?]*[ -\/]*[@-~]/, "")
+    |> String.replace(~r/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]/, "")
   end
 
   def benign_line?(line) do

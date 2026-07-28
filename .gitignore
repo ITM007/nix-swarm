@@ -49,4 +49,6 @@ nix-swarm-*.tar
 # Local editable Nix-Swarm cluster state.
 /cluster/
 /machines/
+/secrets/*.cookie
+/secrets/*.key
 reasonix.toml

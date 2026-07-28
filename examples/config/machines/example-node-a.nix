@@ -10,6 +10,7 @@
     nodeName = "nix-swarm@example-node-a.local";
     cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
     openFirewall = true;
-    firewallInterfaces = [ "eth0" ];
+    # Example only: replace wg0 with your private overlay interface.
+    firewallInterfaces = [ "wg0" ];
   };
 }

@@ -1,5 +1,5 @@
 defmodule NixSwarmApiTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias NixSwarm.API
 
@@ -14,6 +14,35 @@ defmodule NixSwarmApiTest do
       v1 = API.version()
       v2 = API.version()
       assert v1 == v2
+    end
+  end
+
+  describe "read-only operator surface" do
+    test "returns local and cluster projections without mutating desired state" do
+      local = API.local_status()
+      cluster = API.cluster_status()
+      members = API.cluster_members()
+      overview = API.cluster_overview()
+
+      assert local.node == Node.self()
+      assert local.availability in [:active, :draining]
+      assert is_binary(local.config_digest)
+      assert is_map(local.operational_state)
+      assert cluster.queried_node == Node.self()
+      assert is_map(cluster.placements)
+      assert is_list(cluster.placement_diagnostics)
+      assert members.queried_node == Node.self()
+      assert overview.members == members
+      assert overview.status.queried_node == cluster.queried_node
+      assert is_map(overview.ingress)
+    end
+
+    test "reads local systemd-backed logs and status projections" do
+      assert is_list(API.local_node_service_logs(10))
+      assert is_binary(API.local_cluster_logs(10))
+      assert API.local_logs("not-configured", 10) == []
+      assert API.logs("not-configured", 10) == []
+      assert is_map(API.ingress_info())
     end
   end
 
@@ -60,7 +89,7 @@ defmodule NixSwarmApiTest do
     test "cpu has valid fields" do
       metrics = API.node_metrics()
       assert is_number(metrics.cpu.used)
-      assert is_integer(metrics.cpu.total) or is_number(metrics.cpu.total)
+      assert is_number(metrics.cpu.total)
       assert is_integer(metrics.cpu.pct)
       assert metrics.cpu.pct >= 0 and metrics.cpu.pct <= 100
     end

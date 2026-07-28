@@ -1,37 +1,81 @@
 defmodule NixSwarmRemoteTest do
   use ExUnit.Case, async: true
 
-  test "rpc falls back to legacy Swarm.API for cluster overview" do
-    node = :"swarm@example-node-a.local"
-
-    rpc_fun = fn
-      ^node, NixSwarm.API, :cluster_overview, [], 5_000 ->
-        {:badrpc, {:EXIT, {:undef, [{NixSwarm.API, :cluster_overview, [], []}]}}}
-
-      ^node, Swarm.API, :cluster_overview, [], 5_000 ->
-        %{
-          members: %{live_nodes: [node]},
-          status: %{queried_node: node, live_nodes: [node], placements: %{}, nodes: []}
-        }
+  test "remote options derive an SSH host and reject operator cookies" do
+    assert_raise NixSwarm.Remote.Error, ~r/missing required --target/, fn ->
+      NixSwarm.Remote.options!([])
     end
 
-    overview = NixSwarm.Remote.rpc!(node, NixSwarm.API, :cluster_overview, [], rpc_fun)
+    remote = NixSwarm.Remote.options!(target: "nix-swarm@node-a.example")
+    assert remote.ssh_host == "node-a.example"
 
-    assert overview.members.live_nodes == [node]
-    assert overview.status.queried_node == node
+    overridden =
+      NixSwarm.Remote.options!(
+        target: "nix-swarm@node-a.example",
+        ssh_host: "operator@10.0.0.10"
+      )
+
+    assert overridden.ssh_host == "operator@10.0.0.10"
+
+    assert_raise NixSwarm.Remote.Error, ~r/cookie options were removed/, fn ->
+      NixSwarm.Remote.options!(target: "nix-swarm@node-a.example", cookie: "secret")
+    end
+
+    assert_raise NixSwarm.Remote.Error, ~r/unsupported characters/, fn ->
+      NixSwarm.Remote.options!(target: "nix-swarm@node-a.example\nowned")
+    end
   end
 
-  test "function_exported? checks the legacy Swarm.API fallback" do
-    node = :"swarm@example-node-a.local"
+  test "RPC accepts only the fixed read-only query surface" do
+    remote = %{target: "nix-swarm@node", ssh_host: "node"}
 
-    rpc_fun = fn
-      ^node, :erlang, :function_exported, [NixSwarm.API, :cluster_logs, 2], 5_000 -> false
-      ^node, :erlang, :function_exported, [Swarm.API, :cluster_logs, 2], 5_000 -> true
-      ^node, :erlang, :function_exported, [NixSwarm.API, :local_cluster_logs, 1], 5_000 -> false
-      ^node, :erlang, :function_exported, [Swarm.API, :local_cluster_logs, 1], 5_000 -> true
+    query_fun = fn ^remote, request -> {:ok, request} end
+
+    assert NixSwarm.Remote.rpc!(
+             remote,
+             NixSwarm.API,
+             :cluster_overview,
+             [],
+             query_fun
+           ) == :cluster_overview
+
+    assert NixSwarm.Remote.rpc!(remote, NixSwarm.API, :logs, ["api", 25], query_fun) ==
+             {:logs, "api", 25}
+
+    assert_raise NixSwarm.Remote.Error, ~r/not read-only or allowlisted/, fn ->
+      NixSwarm.Remote.rpc!(remote, :erlang, :halt, [], query_fun)
     end
 
-    assert NixSwarm.Remote.function_exported?(node, NixSwarm.API, :cluster_logs, 2, rpc_fun)
-    assert NixSwarm.Remote.function_exported?(node, NixSwarm.API, :local_cluster_logs, 1, rpc_fun)
+    refute NixSwarm.Remote.function_exported?(remote, NixSwarm.API, :reconcile_cluster, 0)
+    assert NixSwarm.Remote.function_exported?(remote, NixSwarm.API, :cluster_logs, 2)
+  end
+
+  test "doctor reports restricted-query success and failure" do
+    remote =
+      NixSwarm.Remote.options!(
+        target: "nix-swarm@node-a.example",
+        ssh_host: "operator@node-a.example"
+      )
+
+    healthy =
+      NixSwarm.Remote.diagnose_connection(remote,
+        query_fun: fn _remote, :cluster_members ->
+          {:ok, %{live_nodes: [:"nix-swarm@node-a.example"]}}
+        end
+      )
+
+    assert NixSwarm.Remote.connected?(healthy)
+    assert length(NixSwarm.Remote.doctor_context_rows(healthy)) == 3
+    assert Enum.all?(NixSwarm.Remote.diagnostic_checks(healthy), &(&1.status == :ok))
+    assert NixSwarm.Remote.format_doctor_report(healthy) =~ "restricted Nix-Swarm query API"
+
+    failed =
+      NixSwarm.Remote.diagnose_connection(remote,
+        query_fun: fn _remote, :cluster_members -> {:error, :permission_denied} end
+      )
+
+    refute NixSwarm.Remote.connected?(failed)
+    assert NixSwarm.Remote.format_connection_error(failed) =~ "unable to query"
+    assert NixSwarm.Remote.format_doctor_report(failed) =~ "Issues were detected"
   end
 end

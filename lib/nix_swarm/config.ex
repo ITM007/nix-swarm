@@ -6,46 +6,65 @@ defmodule NixSwarm.Config do
 
   @default_runtime %{
     connect_interval_ms: 500,
-    reconcile_interval_ms: 500,
+    reconcile_interval_ms: 5_000,
+    autoscale_interval_ms: 10_000,
+    failure_grace_ms: 10_000,
+    recovery_stabilization_ms: 30_000,
     command_timeout_ms: 5_000,
     executor: %{adapter: :fake, root: Path.join(System.tmp_dir!(), "nix-swarm")},
     generation: "dev"
   }
 
   def current do
-    case :persistent_term.get({__MODULE__, :config}, nil) do
-      nil ->
-        config = load_current()
-        :persistent_term.put({__MODULE__, :config}, config)
-        config
-      config ->
-        config
+    case Application.get_env(:nix_swarm, :cluster_config) do
+      nil -> server_snapshot() || load_current!()
+      raw -> normalize(raw)
     end
   end
 
   def invalidate_cache do
-    :persistent_term.erase({__MODULE__, :config})
-    :persistent_term.erase({__MODULE__, :peers})
+    if Process.whereis(NixSwarm.Config.Server) do
+      NixSwarm.Config.Server.reload()
+    else
+      :ok
+    end
   end
 
-  defp load_current do
-    raw =
-      Application.get_env(:nix_swarm, :cluster_config) ||
-        load_config_for_current() ||
-        %{}
-
-    normalize(raw)
+  def digest do
+    case Application.get_env(:nix_swarm, :cluster_config) do
+      nil -> server_digest() || digest_for(current())
+      raw -> raw |> normalize() |> digest_for()
+    end
   end
 
-  defp load_config_for_current do
+  def load_current do
     path =
       Application.get_env(:nix_swarm, :config_path) || System.get_env("NIX_SWARM_CONFIG_PATH")
 
     case load_from_path(path) do
-      {:ok, terms} -> terms
-      {:error, _reason} -> nil
-      nil -> nil
+      {:ok, terms} -> {:ok, normalize(terms)}
+      {:error, reason} -> {:error, reason}
+      nil -> {:ok, normalize(%{})}
     end
+  end
+
+  def validate(config) do
+    errors =
+      []
+      |> validate_runtime(config.runtime)
+      |> validate_services(config.services)
+
+    case Enum.reverse(errors) do
+      [] -> :ok
+      messages -> {:error, Enum.join(messages, "; ")}
+    end
+  end
+
+  def digest_for(config) do
+    config
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   def peers do
@@ -116,7 +135,22 @@ defmodule NixSwarm.Config do
         |> NixSwarm.fetch_value(:deploy_host, NixSwarm.fetch_value(attrs, :deployHost))
         |> normalize_optional_string()
 
-      {normalize_node_name(node_name), %{labels: labels, deploy_host: deploy_host}}
+      nixos_configuration =
+        attrs
+        |> NixSwarm.fetch_value(
+          :nixos_configuration,
+          NixSwarm.fetch_value(attrs, :nixosConfiguration)
+        )
+        |> normalize_optional_string()
+
+      {normalize_node_name(node_name),
+       %{
+         labels: labels,
+         availability:
+           normalize_availability(NixSwarm.fetch_value(attrs, :availability, :active)),
+         deploy_host: deploy_host,
+         nixos_configuration: nixos_configuration
+       }}
     end)
   end
 
@@ -134,6 +168,21 @@ defmodule NixSwarm.Config do
         normalize_integer(
           NixSwarm.fetch_value(raw_runtime, :reconcile_interval_ms),
           @default_runtime.reconcile_interval_ms
+        ),
+      autoscale_interval_ms:
+        normalize_integer(
+          NixSwarm.fetch_value(raw_runtime, :autoscale_interval_ms),
+          @default_runtime.autoscale_interval_ms
+        ),
+      failure_grace_ms:
+        normalize_integer(
+          NixSwarm.fetch_value(raw_runtime, :failure_grace_ms),
+          @default_runtime.failure_grace_ms
+        ),
+      recovery_stabilization_ms:
+        normalize_integer(
+          NixSwarm.fetch_value(raw_runtime, :recovery_stabilization_ms),
+          @default_runtime.recovery_stabilization_ms
         ),
       command_timeout_ms:
         normalize_integer(
@@ -191,6 +240,11 @@ defmodule NixSwarm.Config do
   defp normalize_optional_string(""), do: nil
   defp normalize_optional_string(value), do: to_string(value)
 
+  defp normalize_availability(value) when value in [:active, "active"], do: :active
+  defp normalize_availability(value) when value in [:draining, "draining"], do: :draining
+  defp normalize_availability(value) when value in [:maintenance, "maintenance"], do: :maintenance
+  defp normalize_availability(_value), do: :active
+
   defp normalize_ingress(raw_sites) do
     %{
       sites:
@@ -218,4 +272,152 @@ defmodule NixSwarm.Config do
         end)
     }
   end
+
+  defp load_current! do
+    case load_current() do
+      {:ok, config} -> config
+      {:error, reason} -> raise RuntimeError, reason
+    end
+  end
+
+  defp server_snapshot do
+    case :ets.whereis(NixSwarm.Config.Server.table()) do
+      :undefined -> nil
+      _table -> lookup_snapshot(:config)
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp server_digest do
+    case :ets.whereis(NixSwarm.Config.Server.table()) do
+      :undefined -> nil
+      _table -> lookup_snapshot(:digest)
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp lookup_snapshot(key) do
+    case :ets.lookup(NixSwarm.Config.Server.table(), key) do
+      [{^key, value}] -> value
+      [] -> nil
+    end
+  end
+
+  defp validate_runtime(errors, runtime) do
+    [
+      :connect_interval_ms,
+      :reconcile_interval_ms,
+      :autoscale_interval_ms,
+      :failure_grace_ms,
+      :recovery_stabilization_ms,
+      :command_timeout_ms
+    ]
+    |> Enum.reduce(errors, fn key, acc ->
+      minimum = 100
+      maximum = if key == :command_timeout_ms, do: 300_000, else: 3_600_000
+
+      case Map.fetch!(runtime, key) do
+        value when is_integer(value) and value >= minimum and value <= maximum ->
+          acc
+
+        value ->
+          [
+            "runtime.#{key} must be between #{minimum} and #{maximum}, got #{inspect(value)}"
+            | acc
+          ]
+      end
+    end)
+  end
+
+  defp validate_services(errors, services) do
+    names = Enum.map(services, & &1.name)
+
+    errors =
+      names
+      |> Enum.frequencies()
+      |> Enum.reduce(errors, fn
+        {name, count}, acc when count > 1 -> ["duplicate service name #{inspect(name)}" | acc]
+        {_name, _count}, acc -> acc
+      end)
+
+    Enum.reduce(services, errors, fn service, acc ->
+      acc
+      |> maybe_error(service.name == "", "service names must not be empty")
+      |> maybe_error(
+        service.replicas < 0 or service.replicas > 128,
+        "service #{service.name} replicas must be between 0 and 128"
+      )
+      |> maybe_error(
+        Service.capacity_replicas(service) > 1 and
+          not String.contains?(service.unit_template, "%{slot}"),
+        "service #{service.name} unit template must contain %{slot} for multiple replicas"
+      )
+      |> maybe_error(
+        Enum.any?(Service.slots(service, Service.capacity_replicas(service)), fn slot ->
+          NixSwarm.Executor.validate_unit_name(Service.unit_name(service, slot)) != :ok
+        end),
+        "service #{service.name} renders an unsafe systemd unit name"
+      )
+      |> validate_service_limits(service)
+    end)
+  end
+
+  defp validate_service_limits(errors, service) do
+    autoscaling = service.autoscaling
+    capacity = Service.capacity_replicas(service)
+
+    errors
+    |> maybe_error(
+      service.max_replicas_per_node != nil and
+        (service.max_replicas_per_node < 1 or service.max_replicas_per_node > 128),
+      "service #{service.name} max_replicas_per_node must be between 1 and 128"
+    )
+    |> maybe_error(
+      service.readiness.timeout_sec < 1 or service.readiness.timeout_sec > 3_600,
+      "service #{service.name} readiness.timeout_sec must be between 1 and 3600"
+    )
+    |> maybe_error(
+      service.readiness.stable_samples < 1 or service.readiness.stable_samples > 60,
+      "service #{service.name} readiness.stable_samples must be between 1 and 60"
+    )
+    |> maybe_error(
+      autoscaling.enabled and
+        (autoscaling.min_replicas < 0 or autoscaling.min_replicas > service.replicas),
+      "service #{service.name} autoscaling.min_replicas must be between 0 and replicas"
+    )
+    |> maybe_error(
+      autoscaling.enabled and
+        (autoscaling.max_replicas < service.replicas or autoscaling.max_replicas > 128),
+      "service #{service.name} autoscaling.max_replicas must be between replicas and 128"
+    )
+    |> maybe_error(
+      autoscaling.enabled and autoscaling.cpu_target_percent not in 1..100,
+      "service #{service.name} autoscaling.cpu_target_percent must be between 1 and 100"
+    )
+    |> maybe_error(
+      autoscaling.enabled and autoscaling.sample_window_sec not in 1..3_600,
+      "service #{service.name} autoscaling.sample_window_sec must be between 1 and 3600"
+    )
+    |> maybe_error(
+      autoscaling.enabled and autoscaling.scale_up_cooldown_sec not in 0..86_400,
+      "service #{service.name} autoscaling.scale_up_cooldown_sec must be between 0 and 86400"
+    )
+    |> maybe_error(
+      autoscaling.enabled and autoscaling.scale_down_cooldown_sec not in 0..86_400,
+      "service #{service.name} autoscaling.scale_down_cooldown_sec must be between 0 and 86400"
+    )
+    |> maybe_error(
+      autoscaling.enabled and autoscaling.max_step not in 1..128,
+      "service #{service.name} autoscaling.max_step must be between 1 and 128"
+    )
+    |> maybe_error(
+      capacity > 1 and not String.contains?(service.unit_template, "%{slot}"),
+      "service #{service.name} autoscaling capacity requires a %{slot} unit template"
+    )
+  end
+
+  defp maybe_error(errors, true, message), do: [message | errors]
+  defp maybe_error(errors, false, _message), do: errors
 end

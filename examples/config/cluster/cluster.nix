@@ -13,12 +13,14 @@
     nodes = {
       "nix-swarm@example-node-a.local" = {
         labels = [ "ingress" "apps" ];
-        deployHost = "example-node-a.local";
+        deployHost = "root@example-node-a.local";
+        nixosConfiguration = "example-node-a";
       };
 
       "nix-swarm@example-node-b.local" = {
         labels = [ "apps" ];
-        deployHost = "example-node-b.local";
+        deployHost = "root@example-node-b.local";
+        nixosConfiguration = "example-node-b";
       };
     };
 
@@ -29,7 +31,6 @@
           "nix-swarm@example-node-a.local"
           "nix-swarm@example-node-b.local"
         ];
-        healthcheck = "curl -fsS http://127.0.0.1:8080/health || exit 1";
         settings = {
           docs = "Replace this example service with your own unit definitions.";
         };

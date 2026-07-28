@@ -1,3 +1,3 @@
 { pkgs }:
 
-(import ./packages.nix { inherit pkgs; }).combined
+(import ./packages.nix { inherit pkgs; }).cluster

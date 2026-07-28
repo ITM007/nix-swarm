@@ -197,6 +197,24 @@ defmodule NixSwarmPlacementTest do
     assert owners == [:"node-b@127.0.0.1", :"node-a@127.0.0.1"]
   end
 
+  test "declaratively draining a node removes it from placement" do
+    node_a = :"node-a@127.0.0.1"
+    node_b = :"node-b@127.0.0.1"
+
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [node_a, node_b],
+        nodes: %{
+          node_a => %{labels: ["apps"], availability: :draining},
+          node_b => %{labels: ["apps"], availability: :active}
+        },
+        services: [%{name: "api", replicas: 1, constraints: ["apps"]}]
+      })
+
+    assert [%{owner: ^node_b}] = NixSwarm.Placement.plan(config, config.peers)["api"]
+    assert config.nodes[node_a].availability == :draining
+  end
+
   test "zero replicas disables placement without a diagnostic" do
     config =
       NixSwarm.Config.normalize(%{
@@ -325,6 +343,33 @@ defmodule NixSwarmPlacementTest do
     # With 2 eligible nodes and 4 replicas, each node should own 2 slots
     assert Enum.count(owners, &(&1 == :"node-a@127.0.0.1")) == 2
     assert Enum.count(owners, &(&1 == :"node-b@127.0.0.1")) == 2
+  end
+
+  test "autoscaled placement stays inside code-defined per-node capacity" do
+    nodes = [:"node-a@127.0.0.1", :"node-b@127.0.0.1"]
+
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: nodes,
+        nodes: Map.new(nodes, &{&1, %{labels: ["apps"]}}),
+        services: [
+          %{
+            name: "api",
+            replicas: 2,
+            constraints: ["apps"],
+            max_replicas_per_node: 2,
+            autoscaling: %{enable: true, minReplicas: 2, maxReplicas: 5}
+          }
+        ]
+      })
+
+    slots = NixSwarm.Placement.plan(config, nodes, %{"api" => 5})["api"]
+    owners = Enum.map(slots, & &1.owner)
+
+    assert length(slots) == 5
+    assert Enum.count(owners, &(&1 == hd(nodes))) <= 2
+    assert Enum.count(owners, &(&1 == List.last(nodes))) <= 2
+    assert Enum.count(owners, &is_nil/1) == 1
   end
 
   test "diagnostics reports invalid replica count" do

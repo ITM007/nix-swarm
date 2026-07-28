@@ -1,12 +1,17 @@
 defmodule NixSwarm.MixProject do
   use Mix.Project
 
+  @version Path.expand("VERSION", __DIR__) |> File.read!() |> String.trim()
+
   def project do
     [
       app: :nix_swarm,
-      version: "0.5.0",
-      elixir: "~> 1.17",
+      version: @version,
+      elixir: "~> 1.20",
       elixirc_paths: elixirc_paths(Mix.env()),
+      elixirc_options: [infer_signatures: true, module_definition: :interpreted],
+      test_elixirc_options: [infer_signatures: true],
+      test_coverage: [summary: [threshold: 65]],
       start_permanent: Mix.env() == :prod,
       escript: [main_module: NixSwarm.CLI],
       deps: deps()
@@ -15,14 +20,15 @@ defmodule NixSwarm.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :os_mon],
+      extra_applications: [:logger, :os_mon, :crypto, :public_key, :ssl],
       mod: {NixSwarm.Application, []}
     ]
   end
 
   defp deps do
     [
-      {:ex_ratatui, "~> 0.8"}
+      {:ex_ratatui, "~> 0.11.1"},
+      {:telemetry, "~> 1.3"}
     ]
   end
 

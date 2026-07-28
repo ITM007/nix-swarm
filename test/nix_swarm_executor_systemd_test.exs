@@ -3,6 +3,11 @@ defmodule NixSwarmExecutorSystemdTest do
 
   alias NixSwarm.Executor.Systemd
 
+  setup do
+    {:ok, _apps} = Application.ensure_all_started(:nix_swarm)
+    :ok
+  end
+
   test "unit_status maps transitional and failed systemd states" do
     with_fake_systemctl(
       """
@@ -73,6 +78,31 @@ defmodule NixSwarmExecutorSystemdTest do
         assert metrics.disk.used == 0
         assert metrics.network.counter == 123
         assert metrics.started_at_ns == 0
+      end
+    )
+  end
+
+  test "batch_unit_status parses one systemctl response for multiple units" do
+    with_fake_systemctl(
+      """
+      #!/bin/sh
+      cat <<'EOF'
+      Id=alpha.service
+      ActiveState=active
+      SubState=running
+      Result=success
+
+      Id=beta.service
+      ActiveState=failed
+      SubState=failed
+      Result=exit-code
+      EOF
+      """,
+      fn ->
+        assert Systemd.batch_unit_status(["alpha.service", "beta.service"], %{}) == %{
+                 "alpha.service" => {:ok, :running},
+                 "beta.service" => {:ok, :failed}
+               }
       end
     )
   end

@@ -16,46 +16,29 @@ defmodule NixSwarm.Reconciler do
     GenServer.call(__MODULE__, :reconcile_now, 30_000)
   end
 
-  def start_local_service(service_name) do
-    GenServer.call(__MODULE__, {:set_local_service_mode, service_name, :running}, 30_000)
-  end
-
-  def stop_local_service(service_name) do
-    GenServer.call(__MODULE__, {:set_local_service_mode, service_name, :stopped}, 30_000)
-  end
-
-  def restart_local_service(service_name) do
-    GenServer.call(__MODULE__, {:restart_local_service, service_name}, 30_000)
-  end
-
   def local_status do
     if Process.whereis(__MODULE__) do
       GenServer.call(__MODULE__, :local_status, 30_000)
     else
-      build_local_status(%{}, %{})
-    end
-  end
-
-  def local_service_modes do
-    if Process.whereis(__MODULE__) do
-      GenServer.call(__MODULE__, :local_service_modes, 30_000)
-    else
-      %{}
+      build_local_status(%{})
     end
   end
 
   @impl true
   def init(state) do
+    previous_owned_units =
+      NixSwarm.OperationalState.snapshot()
+      |> Map.get(:assignments, [])
+      |> Enum.group_by(& &1.service, & &1.unit)
+      |> Map.new(fn {service, units} -> {service, MapSet.new(units)} end)
+
     state =
       %{
-        service_modes: %{},
-        service_modes_synced?: true,
-        monitoring_nodes?: false,
-        previous_owned_units: %{},
-        healthcheck_results: %{}
+        previous_owned_units: previous_owned_units,
+        healthcheck_results: %{},
+        readiness_counts: %{}
       }
       |> Map.merge(state)
-      |> maybe_enable_node_monitoring()
 
     unless control_node?() do
       schedule_reconcile()
@@ -66,46 +49,17 @@ defmodule NixSwarm.Reconciler do
 
   @impl true
   def handle_call(:reconcile_now, _from, state) do
-    state = maybe_sync_service_modes(state)
     {reply, state} = reconcile(state)
     {:reply, reply, state}
   end
 
   @impl true
   def handle_call(:local_status, _from, state) do
-    state = maybe_sync_service_modes(state)
-    {:reply, build_local_status(state.service_modes, state.healthcheck_results), state}
-  end
-
-  @impl true
-  def handle_call(:local_service_modes, _from, state) do
-    {:reply, state.service_modes, state}
-  end
-
-  @impl true
-  def handle_call({:set_local_service_mode, service_name, desired_state}, _from, state) do
-    service_name = to_string(service_name)
-
-    case find_service(service_name) do
-      nil ->
-        {:reply, {:error, :unknown_service}, state}
-
-      _service ->
-        service_modes = update_service_mode(state.service_modes, service_name, desired_state)
-        next_state = %{state | service_modes: service_modes, service_modes_synced?: true}
-        {reply, next_state} = apply_service_mode(next_state, service_name, desired_state)
-        {:reply, reply, next_state}
-    end
-  end
-
-  @impl true
-  def handle_call({:restart_local_service, service_name}, _from, state) do
-    {:reply, do_restart_local_service(to_string(service_name), state.service_modes), state}
+    {:reply, build_local_status(state.healthcheck_results), state}
   end
 
   @impl true
   def handle_info(:reconcile, state) do
-    state = maybe_sync_service_modes(state)
     {_reply, state} = reconcile(state)
 
     unless control_node?() do
@@ -116,30 +70,25 @@ defmodule NixSwarm.Reconciler do
   end
 
   @impl true
-  def handle_info({:nodeup, node}, state) do
-    if configured_peer?(node) do
-      {:noreply, %{state | service_modes_synced?: false}}
-    else
-      {:noreply, state}
-    end
-  end
+  def handle_info(:membership_changed, state), do: reconcile_without_reschedule(state)
 
   @impl true
-  def handle_info({:nodedown, node}, state) do
-    if configured_peer?(node) do
-      {:noreply, %{state | service_modes_synced?: false}}
-    else
-      {:noreply, state}
-    end
-  end
+  def handle_info(:autoscaling_changed, state), do: reconcile_without_reschedule(state)
 
   defp reconcile(state) do
+    NixSwarm.Telemetry.span(
+      [:nix_swarm, :reconcile],
+      %{node: Node.self(), config_digest: NixSwarm.Config.digest()},
+      fn -> do_reconcile(state) end
+    )
+  end
+
+  defp do_reconcile(state) do
     if control_node?() do
       {
         %{
           owned_units: [],
           results: [],
-          service_modes: state.service_modes,
           skipped: :control_node
         },
         state
@@ -147,19 +96,19 @@ defmodule NixSwarm.Reconciler do
     else
       config = NixSwarm.Config.current()
       live_nodes = NixSwarm.Cluster.live_nodes()
-      owned = Placement.local_units(Node.self(), config, live_nodes)
+      placement_nodes = NixSwarm.Cluster.placement_nodes()
+      owned = Placement.local_units(Node.self(), config, placement_nodes)
 
-      desired_units =
-        owned
-        |> Enum.reject(fn slot ->
-          service_desired_state(state.service_modes, slot.service) == :stopped
-        end)
-        |> Enum.map(& &1.unit)
-        |> MapSet.new()
+      desired_units = owned |> Enum.map(& &1.unit) |> MapSet.new()
 
       previous_owned_units = Map.get(state, :previous_owned_units, %{})
-      known_zero_replica_units = zero_replica_units(config.services, previous_owned_units)
-      all_units = current_units(config.services) ++ known_zero_replica_units
+
+      previously_owned_units =
+        previous_owned_units
+        |> Map.values()
+        |> Enum.flat_map(&MapSet.to_list/1)
+
+      all_units = Enum.uniq(current_units(config.services) ++ previously_owned_units)
 
       # Batch-fetch all unit statuses in one systemctl call
       current_statuses =
@@ -173,9 +122,12 @@ defmodule NixSwarm.Reconciler do
           end
         end
 
+      safe_to_stop? = cluster_config_consistent?(live_nodes)
+
       results =
-        all_units
-        |> Task.async_stream(
+        Task.Supervisor.async_stream_nolink(
+          NixSwarm.TaskSupervisor,
+          all_units,
           fn unit ->
             status = Map.get(current_statuses, unit, :unknown)
 
@@ -183,8 +135,12 @@ defmodule NixSwarm.Reconciler do
               MapSet.member?(desired_units, unit) and restartable_status?(status) ->
                 {unit, Executor.start_unit(unit)}
 
-              not MapSet.member?(desired_units, unit) and stoppable_status?(status) ->
+              not MapSet.member?(desired_units, unit) and stoppable_status?(status) and
+                  safe_to_stop? ->
                 {unit, Executor.stop_unit(unit)}
+
+              not MapSet.member?(desired_units, unit) and stoppable_status?(status) ->
+                {unit, {:error, :config_digest_mismatch}}
 
               true ->
                 {unit, :ok}
@@ -192,35 +148,49 @@ defmodule NixSwarm.Reconciler do
           end,
           max_concurrency: 8,
           timeout: 15_000,
-          on_timeout: :kill_task
+          on_timeout: :kill_task,
+          ordered: true
         )
-        |> Enum.map(fn {:ok, result} -> result end)
+        |> Enum.map(fn
+          {:ok, result} -> result
+          {:exit, reason} -> {:task_error, reason}
+        end)
+
+      {healthcheck, readiness_counts} =
+        systemd_health(config.services, owned, state.readiness_counts)
 
       reply = %{
         owned_units: MapSet.to_list(desired_units),
+        assignments: owned,
         results: results,
-        service_modes: state.service_modes,
-        healthcheck: run_healthchecks(config.services, state)
+        healthcheck: healthcheck,
+        autoscaling_targets: NixSwarm.Autoscaler.targets(),
+        membership: NixSwarm.Cluster.membership(),
+        destructive_changes_allowed?: safe_to_stop?
       }
+
+      :ok = NixSwarm.OperationalState.record_reconcile(reply)
 
       {reply,
        %{
          state
          | previous_owned_units:
              remember_owned_units(previous_owned_units, config.services, owned),
-           healthcheck_results: reply.healthcheck
+           healthcheck_results: healthcheck,
+           readiness_counts: readiness_counts
        }}
     end
   end
 
-  defp build_local_status(service_modes, healthcheck_results) do
+  defp build_local_status(healthcheck_results) do
     config = NixSwarm.Config.current()
-    live_nodes = NixSwarm.Cluster.live_nodes()
-    placement = Placement.plan(config, live_nodes)
+    placement = Placement.plan(config, NixSwarm.Cluster.placement_nodes())
+    targets = NixSwarm.Autoscaler.targets()
 
     Enum.map(config.services, fn service ->
       slots =
         placement[service.name]
+        |> Enum.filter(&(&1.owner == Node.self()))
         |> Enum.map(fn slot ->
           status =
             case Executor.unit_status(slot.unit) do
@@ -233,55 +203,30 @@ defmodule NixSwarm.Reconciler do
           |> Map.put(:metrics, Executor.unit_metrics(slot.unit))
         end)
 
+      desired_replicas =
+        if service.autoscaling.enabled,
+          do: Map.get(targets, service.name, service.replicas),
+          else: service.replicas
+
       %{
         name: service.name,
         ports: service_ports(service),
-        desired_state: service_desired_state(service_modes, service.name),
-        local_owned_slots:
-          slots
-          |> Enum.filter(&(&1.owner == Node.self()))
-          |> Enum.map(& &1.slot),
+        desired_state: if(desired_replicas > 0, do: :running, else: :stopped),
+        configured_replicas: service.replicas,
+        desired_replicas: desired_replicas,
+        autoscaling: service.autoscaling,
+        local_owned_slots: Enum.map(slots, & &1.slot),
         units: slots,
         healthcheck: Map.get(healthcheck_results, service.name)
       }
     end)
   end
 
-  defp do_restart_local_service(service_name, service_modes) do
-    cond do
-      is_nil(find_service(service_name)) ->
-        {:error, :unknown_service}
-
-      service_desired_state(service_modes, service_name) == :stopped ->
-        {:error, :service_stopped}
-
-      true ->
-        config = NixSwarm.Config.current()
-        live_nodes = NixSwarm.Cluster.live_nodes()
-
-        Placement.local_units(Node.self(), config, live_nodes)
-        |> Enum.filter(&(&1.service == service_name))
-        |> Enum.map(fn slot ->
-          {slot.unit, Executor.restart_unit(slot.unit)}
-        end)
-    end
-  end
-
   defp current_units(services) do
     Enum.flat_map(services, fn service ->
-      Enum.map(Service.slots(service), fn slot ->
+      Enum.map(Service.slots(service, Service.capacity_replicas(service)), fn slot ->
         Service.unit_name(service, slot)
       end)
-    end)
-  end
-
-  defp zero_replica_units(services, previous_owned_units) do
-    services
-    |> Enum.filter(&(&1.replicas == 0))
-    |> Enum.flat_map(fn service ->
-      service.name
-      |> then(&Map.get(previous_owned_units, &1, MapSet.new()))
-      |> MapSet.to_list()
     end)
   end
 
@@ -303,101 +248,25 @@ defmodule NixSwarm.Reconciler do
     Process.send_after(self(), :reconcile, NixSwarm.Config.runtime().reconcile_interval_ms)
   end
 
-  defp maybe_enable_node_monitoring(%{monitoring_nodes?: true} = state), do: state
-
-  defp maybe_enable_node_monitoring(state) do
-    if Node.alive?() and not control_node?() do
-      :net_kernel.monitor_nodes(true)
-      %{state | monitoring_nodes?: true}
-    else
-      state
-    end
-  end
-
-  defp maybe_sync_service_modes(%{service_modes: service_modes} = state)
-       when map_size(service_modes) > 0,
-       do: %{state | service_modes_synced?: true}
-
-  defp maybe_sync_service_modes(%{service_modes_synced?: true} = state),
-    do: state
-
-  defp maybe_sync_service_modes(state) do
-    if control_node?() do
-      state
-    else
-      peer_nodes =
-        NixSwarm.Cluster.live_nodes()
-        |> Enum.reject(&(&1 == Node.self()))
-
-      synced_modes =
-        if peer_nodes == [] do
-          %{}
-        else
-          peer_nodes
-          |> Task.async_stream(
-            fn node ->
-              case :rpc.call(node, __MODULE__, :local_service_modes, [], NixSwarm.rpc_timeout_ms()) do
-                modes when is_map(modes) -> modes
-                _ -> %{}
-              end
-            end,
-            max_concurrency: length(peer_nodes),
-            timeout: NixSwarm.rpc_timeout_ms() + 1_000
-          )
-          |> Enum.reduce(%{}, fn
-            {:ok, modes}, acc -> Map.merge(acc, modes)
-            _, acc -> acc
-          end)
-        end
-
-      %{
-        state
-        | service_modes: Map.merge(state.service_modes, synced_modes),
-          service_modes_synced?: true
-      }
-    end
-  end
-
-  defp apply_service_mode(state, service_name, desired_state) do
-    {reconcile_result, state} = reconcile(state)
-
-    reply = %{
-      service: service_name,
-      desired_state: desired_state,
-      reconcile: reconcile_result
-    }
-
-    {reply, state}
-  end
-
-  defp update_service_mode(service_modes, service_name, :running) do
-    Map.delete(service_modes, service_name)
-  end
-
-  defp update_service_mode(service_modes, service_name, :stopped) do
-    Map.put(service_modes, service_name, :stopped)
-  end
-
-  defp service_desired_state(service_modes, service_name) do
-    Map.get(service_modes, service_name, :running)
-  end
-
   defp restartable_status?({:ok, status}), do: status not in [:running, :starting, :restarting]
   defp restartable_status?({:error, _reason}), do: true
 
   defp stoppable_status?({:ok, status}), do: status in [:running, :starting, :restarting]
   defp stoppable_status?({:error, _reason}), do: false
 
-  defp find_service(service_name) do
-    Enum.find(NixSwarm.Config.current().services, &(&1.name == service_name))
+  defp cluster_config_consistent?(live_nodes) do
+    digests =
+      NixSwarm.RPC.multicall(live_nodes, NixSwarm.API, :config_digest, [])
+      |> Enum.map(fn
+        {_node, {:ok, digest}} -> digest
+        {_node, {:error, _reason}} -> :unreachable
+      end)
+
+    :unreachable not in digests and Enum.uniq(digests) == [NixSwarm.Config.digest()]
   end
 
   defp control_node? do
     Node.alive?() and NodeName.control_node?(Node.self())
-  end
-
-  defp configured_peer?(node) do
-    node in NixSwarm.Config.peers()
   end
 
   defp service_ports(service) do
@@ -426,30 +295,44 @@ defmodule NixSwarm.Reconciler do
     |> Enum.sort()
   end
 
-  defp run_healthchecks(services, state) do
-    results = state.healthcheck_results
+  defp systemd_health(services, owned, previous_counts) do
+    {entries, counts} =
+      Enum.map_reduce(services, %{}, fn service, counts_acc ->
+        units =
+          owned
+          |> Enum.filter(&(&1.service == service.name))
+          |> Enum.map(& &1.unit)
 
-    Enum.reduce(services, results, fn service, acc ->
-      case service.healthcheck do
-        nil ->
-          acc
+        statuses = Executor.batch_unit_status(units)
 
-        command when is_binary(command) ->
-          result = run_healthcheck_command(command)
-          Map.put(acc, service.name, result)
+        {unit_counts, counts_acc} =
+          Enum.map_reduce(units, counts_acc, fn unit, acc ->
+            count =
+              if Map.get(statuses, unit) == {:ok, :running},
+                do: Map.get(previous_counts, unit, 0) + 1,
+                else: 0
 
-        _ ->
-          acc
-      end
-    end)
+            {count, Map.put(acc, unit, count)}
+          end)
+
+        entry =
+          {service.name,
+           %{
+             healthy: Enum.all?(unit_counts, &(&1 >= service.readiness.stable_samples)),
+             source: :systemd,
+             timeout_sec: service.readiness.timeout_sec,
+             stable_samples: service.readiness.stable_samples,
+             units: Map.new(units, &{&1, Map.get(statuses, &1, {:ok, :unknown})})
+           }}
+
+        {entry, counts_acc}
+      end)
+
+    {Map.new(entries), counts}
   end
 
-  defp run_healthcheck_command(command) do
-    case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
-      {output, 0} -> %{healthy: true, output: String.trim(output)}
-      {output, status} -> %{healthy: false, exit_status: status, output: String.trim(output)}
-    end
-  rescue
-    error -> %{healthy: false, error: inspect(error)}
+  defp reconcile_without_reschedule(state) do
+    {_reply, state} = reconcile(state)
+    {:noreply, state}
   end
 end

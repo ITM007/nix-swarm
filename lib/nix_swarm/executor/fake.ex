@@ -38,6 +38,10 @@ defmodule NixSwarm.Executor.Fake do
     end
   end
 
+  def batch_unit_status(units, config) do
+    Map.new(units, &{&1, unit_status(&1, config)})
+  end
+
   def unit_logs(unit, lines, config) do
     case File.read(log_file(unit, config)) do
       {:ok, content} ->
@@ -80,13 +84,7 @@ defmodule NixSwarm.Executor.Fake do
     end
   end
 
-  def restart_host(config) do
-    append_machine_log("restart", config)
-  end
-
-  def shutdown_host(config) do
-    append_machine_log("shutdown", config)
-  end
+  def unit_cpu_usage(unit, config), do: unit_metrics(unit, config).cpu.usage_ns
 
   defp transition_unit(unit, action, transient_state, final_state, config) do
     with :ok <- ensure_node_root(config),
@@ -107,23 +105,12 @@ defmodule NixSwarm.Executor.Fake do
     end
   end
 
-  defp append_machine_log(action, config) do
-    with :ok <- ensure_node_root(config) do
-      File.write(
-        machine_log_file(config),
-        "#{DateTime.utc_now() |> DateTime.to_iso8601()} #{action}\n",
-        [:append]
-      )
-    end
-  end
-
   defp ensure_node_root(config) do
     File.mkdir_p(node_root(config))
   end
 
   defp state_file(unit, config), do: Path.join(node_root(config), "#{unit}.state")
   defp log_file(unit, config), do: Path.join(node_root(config), "#{unit}.log")
-  defp machine_log_file(config), do: Path.join(node_root(config), "machine.log")
 
   defp default_metrics,
     do: %{
