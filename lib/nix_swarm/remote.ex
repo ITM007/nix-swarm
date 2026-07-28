@@ -7,6 +7,8 @@ defmodule NixSwarm.Remote do
   @allowed_calls [
     {NixSwarm.API, :cluster_overview, 0},
     {NixSwarm.API, :cluster_members, 0},
+    {NixSwarm.API, :capabilities, 0},
+    {NixSwarm.API, :protocol_version, 0},
     {NixSwarm.API, :operator_snapshot, 3},
     {NixSwarm.API, :logs, 2},
     {NixSwarm.API, :node_service_logs, 2},
@@ -97,6 +99,22 @@ defmodule NixSwarm.Remote do
       {:error, reason} ->
         fail("read-only query #{function}/#{length(args)} failed: #{inspect(reason)}")
     end
+  end
+
+  @doc "Returns remote protocol capabilities through the read-only query path."
+  def capabilities(remote), do: rpc!(remote, NixSwarm.API, :capabilities, [])
+
+  @doc "Returns whether the remote advertises a compatible query protocol."
+  def compatible?(remote) do
+    case capabilities(remote) do
+      %{protocol_version: version} when is_integer(version) ->
+        version == QueryProtocol.protocol_version()
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
   end
 
   @doc false
@@ -206,6 +224,12 @@ defmodule NixSwarm.Remote do
     key = {normalize_module(module), function, length(args)}
 
     case {key, args} do
+      {{NixSwarm.API, :protocol_version, 0}, []} ->
+        :protocol_version
+
+      {{NixSwarm.API, :capabilities, 0}, []} ->
+        :capabilities
+
       {{NixSwarm.API, :cluster_overview, 0}, []} ->
         :cluster_overview
 

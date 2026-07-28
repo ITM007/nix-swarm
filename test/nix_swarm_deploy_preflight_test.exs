@@ -79,6 +79,25 @@ defmodule NixSwarmDeployPreflightTest do
     refute inspect(result) =~ "cookie"
   end
 
+  test "incompatible protocol is a hard blocker" do
+    result =
+      Preflight.classify(target(), %{
+        ssh: %{ok: true},
+        nixos: %{ok: true},
+        privilege: %{ok: true},
+        architecture: %{ok: true},
+        disk: %{ok: true},
+        credential: %{ok: true, state: :present},
+        service: %{ok: true, state: :present},
+        query: %{ok: true},
+        protocol: %{ok: true, state: :incompatible}
+      })
+
+    refute Preflight.ready?(result)
+    assert result.classification == :incompatible
+    assert Enum.any?(result.blockers, &String.contains?(&1, "protocol"))
+  end
+
   test "run uses a bounded injected probe adapter" do
     parent = self()
 

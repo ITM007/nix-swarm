@@ -18,7 +18,8 @@ defmodule NixSwarm.Deploy.Preflight do
     :disk,
     :credential,
     :service,
-    :query
+    :query,
+    :protocol
   ]
 
   @spec run(Target.t() | map(), keyword()) :: Target.t()
@@ -107,6 +108,7 @@ defmodule NixSwarm.Deploy.Preflight do
       :inaccessible
     ])
     |> add_blocker(probes, :query, "installed target query API is incompatible", [:incompatible])
+    |> add_blocker(probes, :protocol, "target query protocol is incompatible", [:incompatible])
   end
 
   defp add_blocker(acc, probes, key, message, states \\ []) do

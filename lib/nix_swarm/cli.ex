@@ -62,6 +62,11 @@ defmodule NixSwarm.CLI do
     credentials_fun = Keyword.get(dependencies, :credentials_fun, &NixSwarm.Credentials.install/1)
     upgrade_fun = Keyword.get(dependencies, :upgrade_fun, &NixSwarm.Upgrade.run/2)
 
+    upgrade_prepare_fun =
+      Keyword.get(dependencies, :upgrade_prepare_fun, fn upgrade_opts ->
+        NixSwarm.Upgrade.prepare(upgrade_opts)
+      end)
+
     cond do
       Keyword.get(opts, :version, false) ->
         IO.puts(NixSwarm.release_label())
@@ -133,6 +138,13 @@ defmodule NixSwarm.CLI do
           "Installed cluster credential #{result.fingerprint} on #{length(result.hosts)} host(s)."
         )
 
+        :ok
+
+      args == ["cluster", "upgrade", "prepare"] ->
+        result = upgrade_prepare_fun.(deploy_options(opts, true))
+        IO.puts("Prepared nix-swarm upgrade for #{result.source}")
+        IO.puts("  validation: #{result.validation}")
+        IO.puts("  flake.lock changed: #{result.lock_changed?}")
         :ok
 
       args == ["cluster", "upgrade"] ->

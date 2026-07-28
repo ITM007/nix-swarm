@@ -468,6 +468,17 @@ protocol/capability negotiation, and closure/config/version drift status.
 versions, incompatible-version rejection before mutation, failed-canary
 rollback, and unchanged unattempted nodes.
 
+**Phase 4 implementation evidence (2026-07-28):**
+
+- Added `NixSwarm.Upgrade.prepare/2`; it updates only the `nix-swarm` flake input, validates the resulting checkout, leaves a successful `flake.lock` change for review, and restores the exact prior lock on validation failure.
+- Added the explicit `cluster upgrade prepare` CLI path; normal deployment remains `cluster apply`.
+- Added query protocol version 2 plus bounded `protocol-version` and `capabilities` operations.
+- Added API capability reporting and remote compatibility helpers.
+- Added desired-versus-observed status with configuration digest, generation, release, drift fields, and synchronization state.
+- Added `docs/UPGRADES.md` documenting prepare/review/apply semantics and fail-closed compatibility behavior.
+- Remote verification passed: full `mix test` (`237 passed`), formatting, warnings-as-errors compilation, and `nix flake check --no-build --no-write-lock-file`.
+- Docker evidence remains unavailable because Docker is not installed on the local or remote host; the mixed-version/canary acceptance matrix remains an environment-dependent release gate.
+
 ### Phase 5 — Operator usability and maintainability
 
 **Tasks:** 11, 13, and 14.

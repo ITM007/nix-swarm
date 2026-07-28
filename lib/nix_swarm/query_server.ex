@@ -125,6 +125,8 @@ defmodule NixSwarm.QueryServer do
     :gen_tcp.close(socket)
   end
 
+  defp execute(:protocol_version), do: {:ok, NixSwarm.QueryProtocol.protocol_version()}
+  defp execute(:capabilities), do: {:ok, NixSwarm.API.capabilities()}
   defp execute(:cluster_overview), do: {:ok, NixSwarm.API.cluster_overview()}
   defp execute(:cluster_members), do: {:ok, NixSwarm.API.cluster_members()}
 

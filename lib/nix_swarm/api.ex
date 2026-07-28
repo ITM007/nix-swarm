@@ -71,6 +71,37 @@ defmodule NixSwarm.API do
     }
   end
 
+  @doc "Returns the supported read-only query protocol and operation capabilities."
+  def capabilities do
+    %{
+      protocol_version: NixSwarm.QueryProtocol.protocol_version(),
+      release: NixSwarm.release_label(),
+      operations: [:cluster_overview, :cluster_members, :protocol_version, :capabilities],
+      response_limit: NixSwarm.QueryProtocol.max_response_bytes()
+    }
+  end
+
+  @doc "Returns desired configuration identity alongside observed runtime state."
+  def desired_observed_state do
+    config = NixSwarm.Config.current()
+    observed = local_status()
+
+    desired = %{
+      config_digest: NixSwarm.Config.digest_for(config),
+      generation: config.runtime.generation,
+      release_version: NixSwarm.release_label()
+    }
+
+    drift =
+      desired
+      |> Enum.flat_map(fn {key, expected} ->
+        actual = Map.get(observed, key)
+        if actual == expected, do: [], else: [%{field: key, desired: expected, observed: actual}]
+      end)
+
+    %{desired: desired, observed: observed, drift: drift, in_sync?: drift == []}
+  end
+
   @doc "Returns the node's build version, cached in :persistent_term."
   def version do
     case :persistent_term.get(@version_cache_key, nil) do
@@ -110,6 +141,7 @@ defmodule NixSwarm.API do
         Placement.diagnostics(config, placement_nodes) ++
           config_consistency_diagnostics(config_digests),
       config_digests: config_digests,
+      desired_observed: desired_observed_state(),
       config_consistent?: config_digests |> Map.values() |> Enum.uniq() |> length() <= 1,
       nodes: nodes
     }

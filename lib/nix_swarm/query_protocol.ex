@@ -1,6 +1,7 @@
 defmodule NixSwarm.QueryProtocol do
   @moduledoc false
 
+  @protocol_version 2
   @max_lines 1_000
   @max_request_bytes 8_192
   @max_response_bytes 4 * 1_024 * 1_024
@@ -16,6 +17,10 @@ defmodule NixSwarm.QueryProtocol do
   def max_request_bytes, do: @max_request_bytes
   def max_response_bytes, do: @max_response_bytes
 
+  def protocol_version, do: @protocol_version
+
+  def encode_request(:protocol_version), do: {:ok, "protocol-version"}
+  def encode_request(:capabilities), do: {:ok, "capabilities"}
   def encode_request(:cluster_overview), do: {:ok, "cluster-overview"}
   def encode_request(:cluster_members), do: {:ok, "cluster-members"}
 
@@ -51,6 +56,12 @@ defmodule NixSwarm.QueryProtocol do
   def decode_request(payload)
       when is_binary(payload) and byte_size(payload) <= @max_request_bytes do
     case String.split(payload, ":", parts: 4) do
+      ["protocol-version"] ->
+        {:ok, :protocol_version}
+
+      ["capabilities"] ->
+        {:ok, :capabilities}
+
       ["cluster-overview"] ->
         {:ok, :cluster_overview}
 
