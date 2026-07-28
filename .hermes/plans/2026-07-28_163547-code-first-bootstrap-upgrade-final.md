@@ -19,7 +19,7 @@
 5. **Exact in-memory apply:** Apply evaluates, builds, presents, confirms, revalidates, and executes one in-memory plan. It never writes a second desired-state artifact.
 6. **Code-defined policy:** Deployment targets, canaries, rollout width, health gates, rollback behavior, node availability, and service placement come from evaluated Nix.
 7. **Native NixOS bootstrap:** Existing NixOS hosts are activated with `nixos-rebuild --target-host`; Nix-Swarm does not implement its own OS installer.
-8. **Turnkey NixOS provisioning profile:** Nix-Swarm ships a maintained, minimal, hardened Disko/NixOS template that can be installed with `nixos-anywhere`; Disko and `nixos-anywhere` still own disk partitioning and OS installation.
+8. **Prepared-NixOS boundary:** Users install and prepare NixOS machines. Nix-Swarm begins at SSH/preflight/bootstrap and does not implement an OS installer, Disko, or `nixos-anywhere`.
 9. **No central runtime controller:** The deployment process may stop after apply; agents continue membership, deterministic placement, and reconciliation independently.
 10. **Safe partial failure:** Build all closures before mutation, deploy new-node bootstrap in the correct order, use canaries and bounded batches, and compensate failed attempted hosts with NixOS generation rollback.
 11. **Git-friendly, not Git-dependent:** Git/CI may review and trigger Nix-Swarm, but repository policy, protected branches, and deployment approvals remain external concerns.
@@ -72,80 +72,26 @@ The target does **not** need:
 
 ### Outside this contract
 
-If the target does not yet run NixOS, use:
+Users must prepare the machine before Nix-Swarm can act. The machine must
+already run NixOS and meet the SSH, privilege, architecture, disk-space,
+private-network, and `.nix` inventory prerequisites above. Installation,
+disk partitioning, hardware generation, bootloader, firmware, encryption, RAID,
+Secure Boot, and storage validation are user-owned and are not Nix-Swarm release
+gates.
+
+`nixos-anywhere` and Disko may remain as optional examples in user-owned
+preparation documentation. They are external tools, are not implemented by
+Nix-Swarm, and must not be described as required product completeness or release
+acceptance. This is not a Nix-Swarm release gate. Once the target is prepared,
+the supported workflow is:
 
 ```bash
-nixos-anywhere --flake .#node-c root@node-c
+nix-swarm cluster plan --source .
 nix-swarm cluster apply --source .
 ```
 
-Nix-Swarm must ship a tested starter profile for this path. The current
-`examples/starter/machines/hardened-node.nix` is a useful hardening example, but
-it is **not yet turnkey** because it imports a pre-existing
-`hardware-configuration.nix`, the starter flake has no Disko input, and there is
-no tested disk layout. The finalized implementation must close that gap.
-
-### Turnkey `nixos-anywhere` profile contract
-
-The repository must provide a complete example such as:
-
-```text
-examples/starter/
-├── flake.nix
-├── cluster.nix
-├── profiles/
-│   └── nix-swarm-node.nix
-└── machines/
-    └── node-c/
-        ├── default.nix
-        └── disko.nix
-```
-
-The generic `profiles/nix-swarm-node.nix` must define the reusable hardened
-baseline. The machine directory must contain only hardware/site-specific values
-and a destructive Disko layout selected deliberately by the operator.
-
-The baseline must include:
-
-- Nix-Swarm enabled with hardened mode and bounded resource limits;
-- a stable node name supplied by the machine module;
-- OpenSSH with public-key-only authentication, no password or keyboard-interactive login, no agent/X11 forwarding, and no unrestricted TCP forwarding;
-- a declared deployment user or root key, with the private key kept outside the repository;
-- explicit, minimal noninteractive deployment privilege when a non-root account is used;
-- firewall default-deny behavior, SSH access, and BEAM ports scoped only to a declared private encrypted interface;
-- no public BEAM exposure and no automatic firewall opening when no private interface is configured;
-- systemd credential wiring that points outside `/nix/store` and causes a clear first-boot failure when the cookie has not yet been enrolled;
-- Nix settings needed for flakes and remote closure deployment, without enabling untrusted users broadly;
-- automatic security updates disabled by default so cluster changes remain explicit through `cluster apply`;
-- journald persistence/retention suitable for diagnosis without unbounded disk use;
-- time synchronization, deterministic hostname, locale/timezone defaults, and a conservative GC policy;
-- no desktop environment, documentation payload, compiler toolchain, Git checkout, or unnecessary network daemon;
-- a supported `system.stateVersion` that the user must consciously set and that upgrades never rewrite;
-- bootloader and filesystem definitions supplied by Disko rather than a generated mutable hardware file.
-
-The initial Disko examples should be intentionally narrow and clearly named:
-
-1. `uefi-single-disk-ext4.nix` as the documented default;
-2. optionally `uefi-single-disk-btrfs.nix` after the first profile is proven.
-
-The operator must set the target disk device explicitly. Do not guess `/dev/sda`
-or `/dev/nvme0n1`, and do not hide that `nixos-anywhere` will destroy the selected
-disk. Disk encryption, RAID, Secure Boot/Lanzaboote, TPM enrollment, static network
-bootstrapping, and cloud-specific storage are separate documented variants, not
-unsafe defaults.
-
-The supported workflow becomes:
-
-```bash
-# Review node-c/default.nix and node-c/disko.nix, especially the disk device,
-# SSH public key, system architecture, stateVersion, and private interface.
-nix flake check
-nixos-anywhere --flake .#node-c root@node-c
-nix-swarm cluster apply --source .
-```
-
-`nixos-anywhere` and Disko remain external tools; Nix-Swarm provides the correct
-configuration and verification, but does not embed or reimplement their engines.
+`cluster apply` is the first Nix-Swarm mutation and begins the
+SSH/preflight/bootstrap/apply boundary.
 
 ---
 
@@ -353,12 +299,9 @@ container backend. This layer owns:
 - standard and hardened NixOS profiles.
 
 Docker shares the host kernel and therefore does not prove firmware, bootloader,
-initrd, Disko disk mutation, native firewall enforcement, or a true
-`nixos-anywhere` installation. The Disko/hardened provisioning template will be
-evaluated and built in Nix during this plan, and the documented
-`nixos-anywhere --flake .#node-c` command will be manually validated on a
-disposable real/virtual machine before a production release. That manual staging
-exercise is deferred evidence, not a third automated harness in this phase.
+initrd, native firewall enforcement, or machine installation. Those are
+user-owned preparation concerns outside Nix-Swarm's release boundary. Release
+verification begins with SSH/preflight/bootstrap/apply on a prepared NixOS target.
 
 ### Per-phase gate
 
@@ -405,9 +348,8 @@ are accepted.
 
 **Tasks:** 1, 2, and 12.
 
-**Deliverable:** one code-defined node inventory and rollout policy plus a
-minimal hardened Disko/NixOS starter that evaluates and builds for
-`nixos-anywhere` without requiring `hardware-configuration.nix`.
+**Deliverable:** one code-defined node inventory and rollout policy plus the
+hardened NixOS configuration artifacts for a user-prepared target.
 
 **Exit criteria:** Nix assertions reject unsafe placeholders, duplicate or
 inconsistent nodes, an unspecified disk, unscoped BEAM firewall exposure, and a
@@ -512,9 +454,9 @@ supported failure classes.
 matrix, reproducible evidence collection, and a release candidate.
 
 **Exit criteria:** both active test layers pass from a clean checkout; all Docker
-resources cleanly reset; Nix evaluation/build gates pass; a manual disposable
-machine run of the documented `nixos-anywhere` command is recorded before the
-feature is advertised as turnkey for bare metal.
+resources cleanly reset; Nix evaluation/build gates pass; prepared-NixOS
+SSH/preflight/bootstrap/apply evidence is recorded. Machine installation remains
+user-owned and is not a release gate.
 
 ### Phase execution rule
 
@@ -741,44 +683,23 @@ Do not require a Git commit and do not read `.git` on agents. Optional provenanc
 
 Add explicit checks/messages for unknown host key, failed key auth, interactive sudo, wrong architecture, low disk, non-NixOS target, missing hardware config evaluation, missing/mismatched credential, absent service, failed readiness, private peer-port reachability, name-resolution mismatch, protocol incompatibility, and mixed config digest.
 
-### Task 12: Ship a turnkey hardened `nixos-anywhere` profile
+### Task 12: Removed — machine provisioning is outside Nix-Swarm
 
-**Objective:** Make a fresh machine provisionable into a minimal, hardened Nix-Swarm-ready NixOS system with one reviewed flake target.
+**Objective:** No nixos-anywhere or Disko implementation. Users prepare NixOS
+machines; Nix-Swarm starts at SSH/preflight/bootstrap/apply.
 
-**Files:**
-- Modify: `examples/starter/flake.nix`
-- Create: `examples/starter/profiles/nix-swarm-node.nix`
-- Create: `examples/starter/machines/node-c/default.nix`
-- Create: `examples/starter/machines/node-c/disko.nix`
-- Create: `examples/starter/disko/uefi-single-disk-ext4.nix`
-- Modify: `examples/starter/README.md`
-- Create: `docs/PROVISIONING.md`
-- Modify: `flake.nix`
-- Modify: NixOS VM and flake checks
+This former provisioning workstream is intentionally removed from release scope.
+The hardened NixOS module and `.nix` starter configuration remain supported, but
+machine installation, disk mutation, and bare-metal acceptance are user-owned
+and non-release-gating. See `docs/BOOTSTRAP.md` and `docs/PROVISIONING.md`.
 
-**Steps:**
-1. Add a pinned Disko flake input following the starter's `nixpkgs` input.
-2. Write a failing flake/VM check that evaluates the `node-c` `nixosConfiguration`, Disko script, Nix-Swarm service, SSH policy, firewall scope, deployment privilege, and credential path.
-3. Extract the current hardened example into a reusable minimal profile without importing a machine-specific `hardware-configuration.nix`.
-4. Add a UEFI/GPT single-disk ext4 Disko function requiring an explicit `device` argument; evaluation must fail on an empty/default device.
-5. Create `node-c/default.nix` containing explicit architecture, hostname, node name, disk selection, deployment public key placeholder, `stateVersion`, private interface, and inventory metadata.
-6. Ensure the installed closure contains `nix-swarmd`, `nix-swarm-query`, SSH, time synchronization, bounded journald, and required Nix tooling—but no source checkout, compiler toolchain, desktop, or unrelated services.
-7. Add assertions that password login is disabled, BEAM ports are not globally exposed, the cookie path is outside `/nix/store`, and a real SSH public key replaces the placeholder before production evaluation.
-8. Document the destructive disk warning and the review checklist before `nixos-anywhere`.
-9. Document first-boot credential behavior: declarative secret provisioning or subsequent missing-only enrollment by `cluster apply`.
-10. Extend flake checks to evaluate the complete Disko script, NixOS closure, SSH policy, firewall scope, package set, and Nix-Swarm service contract without mutating a disk.
-11. Document a manual disposable-machine acceptance procedure for `nixos-anywhere` and mark its evidence as required before a production release, not as a new automated environment in this phase.
-12. Run `nix flake check --no-write-lock-file --print-build-logs` and the hardened Docker profile.
-13. Commit: `feat: add hardened nixos-anywhere node template`.
+**Status:** Removed from the release plan. No provisioning files, Disko input,
+installer wrapper, destructive layout, or bare-metal acceptance gate is required.
+Optional user-owned examples must remain clearly labeled as such.
 
-**Phase 1 implementation evidence (2026-07-28):**
-
-- Added the reusable `examples/starter/disko/uefi-single-disk-ext4.nix` layout and `node-c` machine wrapper.
-- Added the hardened reusable NixOS profile and provisioning documentation.
-- Evaluated a fully substituted `node-c` target with the local Nix-Swarm module override; hostname, hardened mode, node name, cookie path, and SSH policy all evaluated as expected.
-- Built the fully substituted `node-c` NixOS system closure successfully without mutating a disk.
-- `mix format --check-formatted`, warnings-as-errors compilation, `mix test` (`212 passed`), and `nix flake check --no-build --no-write-lock-file` passed remotely.
-- Docker evidence was not available because Docker is unavailable on the local and remote development hosts; the Docker scenarios remain a later Phase 6 gate.
+**Historical note:** The hardened module and starter Nix configuration are still
+validated as Nix-Swarm configuration artifacts; that validation does not claim
+machine installation or `nixos-anywhere`/Disko support.
 
 ### Task 13: Add `.nix`-only machine scaffolding
 
@@ -797,11 +718,12 @@ Add explicit checks/messages for unknown host key, failed key auth, interactive 
 nix-swarm machine create --name node-c --deploy-host root@node-c
 ```
 
-Generate only a machine directory containing `.nix` files based on the hardened
-profile (`machines/node-c/default.nix` and an explicit Disko selection), then
-print a Nix snippet/diff for inventory inclusion. Require the user to replace the
-disk device, SSH public key, architecture, state version, and private interface
-placeholders before evaluation succeeds. Do not automatically rewrite arbitrary
+Generate only a machine directory containing `.nix` files, then print a Nix
+snippet/diff for inventory inclusion. Require the user to provide the hardware,
+architecture, state version, SSH access, and private interface for an already
+running NixOS target. Machine installation and disk tooling remain outside this
+scaffolding command.
+
 Nix source until a parser/formatter-preserving approach is proven. Never generate
 JSON/YAML/TOML.
 
@@ -845,8 +767,7 @@ Extract a presentation-neutral operator context, then incrementally split the 5,
 - deployment process dies while agents continue operating;
 - removal only after draining/maintenance;
 - private-interface firewall assertions.
-- turnkey Disko profile evaluation with an explicit disk device;
-- hardened template evaluation/build with no unsafe placeholders;
+- added hardened NixOS configuration evaluation/build with no unsafe placeholders;
 - public-key-only SSH policy and password-login rejection inside the hardened Docker profile;
 - missing credential fails safely, followed by successful missing-only enrollment and service readiness;
 - installed closure contains no source checkout, secret, development toolchain, or unexpected listening service.
@@ -871,17 +792,14 @@ nix flake check --print-build-logs
 MIX_ENV=test nix develop --command mix run --no-start scripts/verify_cluster.exs
 ```
 
-Then run the standard and hardened Docker/systemd workflows. Do not add Incus or
-LXC. Before a production release that advertises fresh-machine provisioning,
-run the documented `nixos-anywhere` command manually against a disposable
-machine and retain the evidence.
+Then run the standard and hardened Docker/systemd workflows. Machine installation
+and storage validation are user-owned preparation; the release gate begins with
+SSH/preflight/bootstrap/apply on a prepared NixOS target.
 
 ### Release acceptance criteria
 
-- [ ] The `node-c` Disko/NixOS target evaluates and builds in automated Nix checks; before production release, `nixos-anywhere --flake .#node-c root@node-c` is manually proven against a disposable machine after required values are supplied.
-- [ ] The provisioned machine has public-key-only SSH, scoped private-interface cluster ports, minimal services/packages, correct deployment privilege, and no credential in `/nix/store`.
-- [ ] The template refuses unsafe placeholders, an unspecified disk, an unscoped BEAM firewall, and a cookie path in `/nix/store`.
-- [ ] A Docker NixOS/systemd target with no active Nix-Swarm service is added by changing only `.nix` desired state and running one explicit `cluster apply`; native installation remains a documented manual release check.
+- [ ] The prepared NixOS target is reachable with pinned SSH, noninteractive privilege, supported architecture, sufficient disk, trusted private networking, and complete `.nix` inventory.
+- [ ] Nix-Swarm preflight and `cluster apply` activate the target without requiring a source checkout or agent-side provisioning tool.
 - [ ] Built-in enrollment installs a missing credential safely, while mismatches fail closed.
 - [ ] Every closure is built before the first target mutation.
 - [ ] New-node readiness is verified before existing nodes are expanded.
@@ -924,13 +842,12 @@ The repository already has the core product:
 5. Final status does not yet emphasize closure/version/config drift enough for upgrade verification.
 6. Node inventory is duplicated in example flake/cluster structures and can drift.
 7. The TUI and deployment modules are too large for low-risk long-term maintenance.
-8. Real new-node and rolling-upgrade failure scenarios need stronger automated Docker evidence and a documented manual native provisioning check.
-9. The repository has a hardened machine example but no complete Disko-backed, tested `nixos-anywhere` provisioning target.
+8. Real new-node and rolling-upgrade failure scenarios need stronger automated Docker evidence.
+9. Machine installation and storage setup are user-owned preparation, not an onboarding or release-completeness gap.
 
-### Optional features, not blockers
+### Optional preparation examples, not product scope
 
-- Additional Disko variants beyond the supported minimal UEFI single-disk profile.
-- A thin CLI wrapper around `nixos-anywhere`; the documented native command is sufficient initially.
+- User-owned `nixos-anywhere` or Disko workflows, documented only as external preparation examples.
 - Cross-architecture remote builder discovery.
 - Rich placement explanations and config diff commands.
 - Stable machine-readable stdout for CI; this can be transient output and need not create files.
@@ -967,8 +884,8 @@ The following choices are now defaults rather than open design questions:
 7. **New-node ordering:** bootstrap/readiness first, existing-peer rollout second, strict full-cluster convergence last.
 8. **Removal ordering:** active → draining → maintenance → remove from Nix inventory. Direct removal of a live active node is rejected or requires an explicit emergency path.
 9. **Upgrade model:** prepare the pinned input/lock change, review it, then use ordinary apply. Support at least the immediately previous compatible query protocol during a rolling minor upgrade.
-10. **Provisioning scope:** ship one supported `x86_64-linux`, UEFI/GPT, single-disk, ext4 Disko baseline first because it matches the active Docker harness. Additional architectures, storage layouts, encryption, Secure Boot, and cloud variants are deferred until a corresponding test target exists.
-11. **Bare-metal evidence:** evaluate/build automatically now; manually prove `nixos-anywhere` on a disposable target before claiming turnkey production provisioning.
+10. **Provisioning scope:** Users prepare NixOS machines with their chosen installation and storage tooling. Nix-Swarm validates the prepared-host SSH/preflight/bootstrap/apply boundary; it does not implement Disko or `nixos-anywhere`.
+11. **Machine evidence:** Machine installation, storage, firmware, and bare-metal acceptance are user-owned preparation and are not release gates. Release evidence starts at a prepared NixOS target.
 12. **No scope expansion:** no WebUI, container runtime, overlay network, secret store, database, consensus layer, or stateful failover promise.
 
 These decisions are sufficient to begin. Any change to them is a product-scope
@@ -981,7 +898,9 @@ implicitly during coding.
 
 ### Release A — Safe onboarding
 
-Phases 0–3. Deliver an evaluated hardened `nixos-anywhere` template plus one-command apply for existing NixOS nodes, including preflight, missing credential enrollment, two-stage bootstrap, and strict final convergence in the Docker/systemd environment.
+Phases 0–3. Deliver prepared-NixOS SSH/preflight/bootstrap/apply onboarding,
+missing credential enrollment, two-stage bootstrap, and strict final convergence
+in the Docker/systemd environment. Machine installation remains outside scope.
 
 ### Release B — Painless upgrades
 
@@ -989,14 +908,19 @@ Phase 4. Deliver reviewable upgrade preparation, ordinary apply rollout, compati
 
 ### Release C — Operational maturity
 
-Phases 5–6. Deliver richer diagnosis, Nix-only scaffolding, internal maintainability, full Docker failure evidence, and the documented manual native provisioning acceptance run.
+Phases 5–6. Deliver richer diagnosis, Nix-only scaffolding, internal maintainability,
+full Docker failure evidence, and prepared-NixOS runtime verification.
 
-After Release B passes the Docker/systemd three-node add/upgrade/rollback matrix, Nix-Swarm can reasonably be described as **feature-complete for its intentionally narrow scope in the active automated environments**. Before advertising turnkey bare-metal provisioning as production-ready, complete the documented manual `nixos-anywhere` acceptance run. Release C is production-hardening and usability work rather than expansion into a larger orchestration platform.
+After Release B passes the Docker/systemd three-node add/upgrade/rollback matrix,
+Nix-Swarm can reasonably be described as **feature-complete for its intentionally
+narrow prepared-NixOS scope in the active automated environments**. Release C is
+production-hardening and usability work rather than expansion into machine
+installation or a larger orchestration platform.
 
 ---
 
 ## 13. Key product promise
 
-> Provision a fresh machine from the shipped minimal hardened Disko/NixOS profile with `nixos-anywhere --flake .#node-c root@node-c`, then run one explicit `nix-swarm cluster apply`. For an existing NixOS system, declare it in Nix and begin at apply. Nix-Swarm builds the complete closure, enrolls a missing shared credential when authorized, installs itself if absent, joins the node in a safe staged rollout, and proves final convergence.
+> Prepare a machine with NixOS using user-owned installation tooling, declare it in `.nix`, then begin at SSH/preflight/bootstrap with one explicit `nix-swarm cluster apply`. Nix-Swarm builds the complete closure, enrolls a missing shared credential when authorized, installs itself if absent, joins the node in a safe staged rollout, and proves final convergence.
 
 > Upgrade Nix-Swarm by updating its pinned Nix input, reviewing the resulting `flake.lock`, and running the same `cluster apply` workflow. No second configuration language, plan file, central controller, or agent-side source checkout is required.

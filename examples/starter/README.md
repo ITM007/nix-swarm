@@ -1,51 +1,40 @@
 # Hardened Nix-Swarm starter
 
-This starter is a minimal, hardened NixOS profile for provisioning a disposable
-or dedicated x86_64 machine with `nixos-anywhere` and Disko.
+This starter is a hardened **NixOS configuration example** for a machine that
+has already been prepared by its owner. Nix-Swarm does not install NixOS,
+partition disks, or operate `nixos-anywhere` or Disko.
 
-## Before provisioning
+## Prepare the machine first
 
-Review and replace every machine-specific value in:
+Users own the installation method, disk layout, hardware configuration, boot,
+firmware, and network bring-up. `nixos-anywhere` and Disko may be used as
+optional, user-owned preparation examples, but they are not supported Nix-Swarm
+automation or release gates. Review their destructive behavior independently.
 
-```text
-machines/node-c/default.nix
-machines/node-c/disko.nix
-```
+Before handoff, verify:
 
-You must set:
+- the machine is already running NixOS;
+- the SSH host key is reviewed and pinned and public-key authentication works;
+- root SSH or passwordless noninteractive deployment privilege is available;
+- architecture and disk space meet the closure and rollback requirements;
+- peers reach one another on the trusted private network;
+- the deploy host, node name, hardware configuration, and `system.stateVersion`
+  are declared in the `.nix` inventory.
 
-- a real deployment SSH public key;
-- the target's stable `/dev/disk/by-id/...` device;
-- hostname and `nix-swarm@...` node name;
-- the target's original `system.stateVersion`;
-- the private WireGuard/Tailscale interface used for BEAM traffic;
-- the deploy host and cluster inventory metadata.
+## Bootstrap and apply
 
-The Disko target is destructive. It erases the explicitly selected disk. Never
-use `/dev/sda` or `/dev/nvme0n1` by guesswork.
-
-The starter uses one supported baseline: x86_64 Linux, UEFI/GPT, one ext4 root
-partition, and a 1 GiB EFI system partition. Encryption, RAID, Btrfs, Secure
-Boot, TPM enrollment, and cloud-specific storage are separate variants and are
-not silently enabled by this example.
-
-## Provision and join
-
-After reviewing the complete flake:
+From this directory, Nix-Swarm starts at SSH/preflight/bootstrap:
 
 ```bash
 nix flake check
-nixos-anywhere --flake .#node-c root@node-c
-nix-swarm cluster apply --source .
+nix-swarm cluster plan --source .
+nix-swarm cluster apply --source . --yes
 ```
 
-`nixos-anywhere` installs NixOS and the hardened Nix-Swarm profile. The follow-up
-`cluster apply` enrolls a missing shared cookie when authorized, activates the
-complete cluster configuration, and verifies convergence.
-
-The cookie is never stored in the Nix store. Prefer sops-nix, agenix, or systemd
-credentials for established deployments. The built-in enrollment path only
-installs a missing cookie and refuses to overwrite a different existing cookie.
+`cluster apply` is the first Nix-Swarm mutation. It enrolls only a missing
+shared cookie when authorized, activates the complete NixOS configuration, and
+verifies convergence. The cookie is never stored in the Nix store; prefer
+sops-nix, agenix, or systemd credentials for established deployments.
 
 ## Hardened baseline
 
@@ -60,6 +49,6 @@ The profile provides:
 - time synchronization and conservative Nix garbage collection;
 - no desktop, compiler toolchain, Git checkout, or unrelated daemon.
 
-Docker and Nix evaluation checks validate the profile contract. A disposable
-native target must still be used before advertising a production bare-metal
-provisioning result.
+Docker and Nix evaluation checks validate the profile contract. Native machine
+installation and bare-metal acceptance remain user-owned preparation and are
+not required to claim the Nix-Swarm release boundary.

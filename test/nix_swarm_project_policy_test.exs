@@ -21,4 +21,42 @@ defmodule NixSwarmProjectPolicyTest do
     refute function_exported?(NixSwarm.API, :stop_service, 1)
     refute function_exported?(NixSwarm.API, :restart_machine, 1)
   end
+
+  test "canonical onboarding starts with a prepared NixOS machine" do
+    docs = [
+      "README.md",
+      "AGENT.md",
+      "docs/BOOTSTRAP.md",
+      "docs/PROVISIONING.md",
+      "docs/OPERATIONS.md",
+      "docs/TESTING.md",
+      "examples/starter/README.md"
+    ]
+
+    assert Enum.all?(docs, &File.exists?/1), "missing canonical onboarding document"
+    text = docs |> Enum.map(&File.read!/1) |> Enum.join("\\n")
+
+    assert text =~ "already running NixOS"
+
+    for prerequisite <- ["SSH", "privilege", "architecture", "disk", "private network", ".nix"] do
+      assert text =~ prerequisite, "onboarding must name #{prerequisite} as a prerequisite"
+    end
+
+    assert text =~ "cluster apply"
+    assert text =~ "first Nix-Swarm mutation"
+
+    refute Regex.match?(~r/production (?:ready|readiness).*bare.?metal/i, text)
+    refute Regex.match?(~r/(?:release|product) (?:requirement|gate).*nixos-anywhere/i, text)
+    refute Regex.match?(~r/(?:release|product) (?:requirement|gate).*Disko/i, text)
+  end
+
+  test "the old roadmap preserves the prepared-host release boundary" do
+    roadmap = File.read!(".hermes/plans/2026-07-28_163547-code-first-bootstrap-upgrade-final.md")
+
+    assert roadmap =~ "begins at SSH/preflight"
+    assert roadmap =~ "Prepared-NixOS"
+    assert roadmap =~ "not a Nix-Swarm release gate"
+    refute roadmap =~ "Turnkey NixOS provisioning profile"
+    refute roadmap =~ "Nix-Swarm must ship a tested starter profile"
+  end
 end

@@ -32,21 +32,29 @@ The first `nix-swarm` launch creates a starter flake at `~/.config/nix-swarm`. Y
 
 ## Start a cluster
 
-From the starter directory:
+Nix-Swarm starts with a target that is **already running NixOS**. Before using the
+operator, prepare each machine yourself: review and pin its SSH host key, enable
+public-key SSH and root or passwordless noninteractive privilege, confirm the
+supported architecture and enough disk space for Nix closures, connect peers on a
+trusted private network, and declare the node, deployment host, and complete
+NixOS configuration in your `.nix` inventory.
+
+From the prepared starter directory:
 
 ```bash
-# Replace the placeholder with this node's real hardware configuration.
-ssh root@node-a nixos-generate-config --show-hardware-config \
-  > machines/hardware-configuration.nix
-
 nix flake lock
 nix-swarm cluster plan --source .
-nix-swarm cluster init --source . --yes
+nix-swarm cluster apply --source . --yes
 nix-swarm cluster doctor --source . --target nix-swarm@node-a
 nix-swarm --source . --target nix-swarm@node-a
 ```
 
-`cluster init` creates one strong local cookie, installs it on the configured root SSH hosts with mode `0400`, evaluates every NixOS closure, and activates the cluster. Use declarative secret provisioning instead if root SSH is unavailable.
+`cluster apply` is the first Nix-Swarm mutation. It performs preflight, builds
+closures, enrolls only a missing cookie, activates NixOS, and verifies the
+cluster. Nix-Swarm does not install NixOS, partition disks, or run
+`nixos-anywhere`; those are optional, user-owned preparation choices outside the
+product and release gates. Use declarative secret provisioning instead if root
+SSH is unavailable.
 
 The starter flake also exposes `nixosConfigurations.<node>-hardened` and the
 flake exposes `nixosModules.hardened`. Select the hardened machine output in
@@ -94,6 +102,8 @@ Service `settings` are public metadata rendered into the Nix store. Never put cr
 
 - [Getting started](docs/GETTING_STARTED.md)
 - [Configuration](docs/CONFIG_REFERENCE.md)
+- [Bootstrap contract](docs/BOOTSTRAP.md)
+- [Preparing a NixOS target](docs/PROVISIONING.md)
 - [Operations](docs/OPERATIONS.md)
 - [Security](docs/SECURITY.md)
 - [Development and tests](docs/DEVELOPMENT.md)

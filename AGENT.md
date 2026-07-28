@@ -17,6 +17,16 @@ controls, Mnesia database, or consensus layer without an explicit scope change.
 Temporary duplicate instances during a network partition are an accepted
 leaderless tradeoff.
 
+## Product boundary
+
+Nix-Swarm starts with a target that is **already running NixOS**. Users own
+installation, disks, hardware configuration, and boot. The supported handoff is
+SSH, privilege, architecture and disk-space checks, trusted private-network
+reachability, and a complete `.nix` inventory. `cluster apply` is the first
+Nix-Swarm mutation; preflight and bootstrap begin there. `nixos-anywhere` and
+Disko can appear only as optional user-owned preparation examples, never as
+release gates.
+
 ## Runtime flow
 
 1. The NixOS module renders an Erlang terms configuration.

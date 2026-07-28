@@ -1,5 +1,15 @@
 # Operations
 
+## Bootstrap boundary
+
+Nix-Swarm starts with a target that is **already running NixOS**. Before any
+operator command, verify SSH host identity and public-key authentication,
+root or passwordless noninteractive privilege, supported architecture and disk
+space, trusted private-network reachability, and a complete `.nix` inventory.
+`cluster apply` is the first Nix-Swarm mutation; it runs preflight and bootstrap
+before activation. Installing NixOS, partitioning disks, and hardware or
+firmware setup remain user-owned preparation and are not release gates.
+
 ## Read operations
 
 ```bash
