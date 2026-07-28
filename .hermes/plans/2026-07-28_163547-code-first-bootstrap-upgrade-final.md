@@ -423,6 +423,17 @@ enrollment with mismatches failing closed.
 **Exit criteria:** ExUnit covers every target/credential state; Docker proves
 missing, matching, and mismatched credential behavior without secret leakage.
 
+**Phase 2 implementation evidence (2026-07-28):**
+
+- Added typed `NixSwarm.Deploy.Target` identities and `NixSwarm.Deploy.Preflight` classification.
+- Added bounded injected probe adapters and redacted probe result structures.
+- Covered new NixOS, inactive, unqueryable, in-sync, outdated, draining, maintenance, blocking, and missing/mismatched credential states.
+- Added `NixSwarm.Deploy.preflight/2`, which evaluates the deployment plan and probes targets without host mutation.
+- Added `NixSwarm.Credentials.enroll_missing/1` as the explicit idempotent non-rotation enrollment operation.
+- `cluster apply` now performs missing-only credential enrollment before deployment in the normal CLI path; injected deployment tests remain side-effect free.
+- Remote verification passed: focused preflight tests (`13 passed`), full `mix test` (`225 passed`), formatting, and warnings-as-errors compilation.
+- Docker evidence is unavailable on the current local and remote hosts because Docker is not installed; Docker credential scenarios remain a later runtime gate.
+
 ### Phase 3 — New-node apply workflow
 
 **Tasks:** 5, 6, and 7.

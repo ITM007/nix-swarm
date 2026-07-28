@@ -91,6 +91,10 @@ defmodule NixSwarm.Credentials do
     }
   end
 
+  def enroll_missing(opts \\ []) when is_list(opts) do
+    install(Keyword.put(opts, :rotate_credentials, false))
+  end
+
   @doc false
   def rotate_local_cookie!(path) do
     path = Path.expand(path)

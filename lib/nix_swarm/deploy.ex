@@ -8,6 +8,7 @@ defmodule NixSwarm.Deploy do
   """
 
   alias NixSwarm.Paths
+  alias NixSwarm.Deploy.{Preflight, Target}
 
   @default_timeout_ms 30 * 60 * 1_000
   @default_health_timeout_sec 120
@@ -54,6 +55,17 @@ defmodule NixSwarm.Deploy do
 
         %{plan | results: results}
       end
+    end)
+  end
+
+  @doc "Runs bounded target preflight without mutating any host."
+  def preflight(opts \\ [], probe_fun \\ nil) when is_list(opts) do
+    plan = plan(Keyword.put(opts, :dry_run, true))
+    probe_opts = if is_function(probe_fun, 2), do: [probe_fun: probe_fun], else: []
+
+    Enum.map(plan.results, fn result ->
+      target = %Target{host: result.host, configuration: result.configuration}
+      Preflight.run(target, probe_opts)
     end)
   end
 

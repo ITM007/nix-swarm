@@ -109,6 +109,12 @@ defmodule NixSwarm.CLI do
 
       args == ["cluster", "apply"] ->
         require_confirmation!(opts, "cluster apply")
+
+        if not Keyword.has_key?(dependencies, :deploy_fun) or
+             Keyword.has_key?(dependencies, :credentials_fun) do
+          _credentials = credentials_fun.(deploy_options(opts, false))
+        end
+
         result = deploy_fun.(deploy_options(opts, false))
         print_deploy_result(result)
         :ok
