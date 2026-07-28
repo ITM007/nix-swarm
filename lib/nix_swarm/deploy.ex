@@ -8,7 +8,7 @@ defmodule NixSwarm.Deploy do
   """
 
   alias NixSwarm.Paths
-  alias NixSwarm.Deploy.{Preflight, Target}
+  alias NixSwarm.Deploy.{Plan, Preflight, Rollout, Target}
 
   @default_timeout_ms 30 * 60 * 1_000
   @default_health_timeout_sec 120
@@ -67,6 +67,11 @@ defmodule NixSwarm.Deploy do
       target = %Target{host: result.host, configuration: result.configuration}
       Preflight.run(target, probe_opts)
     end)
+  end
+
+  @doc "Returns a two-stage bootstrap/existing rollout plan without executing it."
+  def rollout_plan(targets, opts \\ []) when is_list(targets) and is_list(opts) do
+    Rollout.plan(targets, opts)
   end
 
   @doc "Rolls target hosts back to their previous native NixOS system generation."
@@ -203,14 +208,14 @@ defmodule NixSwarm.Deploy do
         }
       end)
 
-    canary_count = Enum.count(target_hosts, &(&1 in canary_hosts))
+    rollout =
+      Rollout.plan(results,
+        max_unavailable: max_unavailable,
+        canary_hosts: canary_hosts,
+        classifications: Keyword.get(opts, :target_classifications, %{})
+      )
 
-    batches =
-      results
-      |> Enum.split(canary_count)
-      |> then(fn {canaries, remaining} ->
-        Enum.map(canaries, &[&1]) ++ Enum.chunk_every(remaining, max_unavailable)
-      end)
+    batches = rollout.stages
 
     validation_targets = configurations |> Map.values() |> Enum.uniq() |> Enum.sort()
 
@@ -219,30 +224,37 @@ defmodule NixSwarm.Deploy do
         validation_invocation(flake, configuration)
       end)
 
-    %{
-      dry_run: dry_run,
-      source: source,
-      flake: flake,
-      cluster_file: cluster_file,
-      machines_dir: machines_dir,
-      hosts: target_hosts,
-      canary_hosts: Enum.filter(target_hosts, &(&1 in canary_hosts)),
-      max_unavailable: max_unavailable,
-      batches: batches,
-      configurations: configurations,
-      command_timeout_ms: timeout_ms,
-      health_check: health_check,
-      health_timeout_sec: health_timeout_sec,
-      health_stable_samples: health_stable_samples,
-      auto_rollback: auto_rollback,
-      deployment_manifest: manifest,
-      validation: %{
-        targets: validation_targets,
-        commands: Enum.map(validation, fn {exe, args, env} -> render_command(exe, args, env) end),
-        invocations: validation
-      },
-      results: results
-    }
+    deploy_plan =
+      %{
+        dry_run: dry_run,
+        source: source,
+        flake: flake,
+        cluster_file: cluster_file,
+        machines_dir: machines_dir,
+        hosts: target_hosts,
+        canary_hosts: Enum.filter(target_hosts, &(&1 in canary_hosts)),
+        max_unavailable: max_unavailable,
+        batches: batches,
+        rollout: rollout,
+        bootstrap_hosts: Enum.map(rollout.bootstrap, & &1.host),
+        existing_hosts: Enum.map(rollout.existing, & &1.host),
+        configurations: configurations,
+        command_timeout_ms: timeout_ms,
+        health_check: health_check,
+        health_timeout_sec: health_timeout_sec,
+        health_stable_samples: health_stable_samples,
+        auto_rollback: auto_rollback,
+        deployment_manifest: manifest,
+        validation: %{
+          targets: validation_targets,
+          commands:
+            Enum.map(validation, fn {exe, args, env} -> render_command(exe, args, env) end),
+          invocations: validation
+        },
+        results: results
+      }
+
+    Map.put(deploy_plan, :operator_plan, Plan.build(deploy_plan))
   end
 
   def hosts(opts, source, machines_dir \\ nil) do
@@ -621,9 +633,13 @@ defmodule NixSwarm.Deploy do
       rescue
         deployment_error ->
           rollback_result = maybe_rollback_attempted(attempted, plan)
+          attempted_hosts = Rollout.attempted_hosts(plan.batches, index + 1)
+          unattempted_hosts = Rollout.unattempted_hosts(plan.batches, index + 1)
 
           raise RuntimeError,
-                "deployment failed in batch #{index + 1}: #{Exception.message(deployment_error)}; #{rollback_result}"
+                "deployment failed in stage #{index + 1}: #{Exception.message(deployment_error)}; " <>
+                  "attempted=#{inspect(attempted_hosts)}; " <>
+                  "unattempted=#{inspect(unattempted_hosts)}; #{rollback_result}"
       end
 
     do_run_batches!(remaining, plan, results ++ batch_results, index + 1)

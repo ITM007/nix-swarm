@@ -568,9 +568,13 @@ defmodule NixSwarm.CLI do
   end
 
   defp print_deploy_plan(plan) do
-    IO.puts("NixOS deployment plan")
-    IO.puts("  source: #{plan.source}")
-    IO.puts("  rollout width: #{plan.max_unavailable}")
+    if Map.has_key?(plan, :operator_plan) do
+      IO.puts(NixSwarm.Deploy.Plan.render(plan.operator_plan))
+    else
+      IO.puts("NixOS deployment plan")
+      IO.puts("  source: #{plan.source}")
+      IO.puts("  rollout width: #{plan.max_unavailable}")
+    end
 
     Enum.each(plan.validation.commands, &IO.puts("  validate: #{&1}"))
 

@@ -432,7 +432,7 @@ missing, matching, and mismatched credential behavior without secret leakage.
 - Added `NixSwarm.Credentials.enroll_missing/1` as the explicit idempotent non-rotation enrollment operation.
 - `cluster apply` now performs missing-only credential enrollment before deployment in the normal CLI path; injected deployment tests remain side-effect free.
 - Remote verification passed: focused preflight tests (`13 passed`), full `mix test` (`225 passed`), formatting, and warnings-as-errors compilation.
-- Docker evidence is unavailable on the current local and remote hosts because Docker is not installed; Docker credential scenarios remain a later runtime gate.
+- Docker evidence remains unavailable because Docker is not installed on the local or remote host; the required three-node acceptance scenario remains an environment-dependent release gate.
 
 ### Phase 3 — New-node apply workflow
 
@@ -446,6 +446,16 @@ convergence.
 unprovisioned/disabled Nix-Swarm target, then proves enrollment, activation,
 three-node membership, one config digest, healthy placement, and safe failure
 before/after existing-peer updates.
+
+**Phase 3 implementation evidence (2026-07-28):**
+
+- Added pure `NixSwarm.Deploy.Rollout` planning with bootstrap-first stages, canary ordering, and bounded existing-node batches.
+- Integrated rollout stages into `NixSwarm.Deploy.plan/1` and native `nixos-rebuild` execution.
+- Added stage-aware attempted/unattempted host reporting and rollback context on failures.
+- Added `NixSwarm.Deploy.Plan` with deterministic source/inventory/closure fingerprinting and an in-memory operator plan; no plan file is written.
+- Extended `cluster plan` output with bootstrap, existing, maintenance, credential action, closure, rollout, health, and rollback sections.
+- Remote verification passed: full `mix test` (`232 passed`), formatting, warnings-as-errors compilation, and `nix flake check --no-build --no-write-lock-file`.
+- Docker evidence remains unavailable because Docker is not installed on the local or remote host; the required three-node acceptance scenario remains an environment-dependent release gate.
 
 ### Phase 4 — Reviewable, compatible upgrades
 

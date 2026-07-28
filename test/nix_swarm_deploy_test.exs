@@ -169,6 +169,35 @@ defmodule NixSwarmDeployTest do
     assert plan.max_unavailable == 1
   end
 
+  test "deployment plan separates bootstrap hosts from existing rollout hosts" do
+    source = Path.expand("..", __DIR__)
+
+    plan =
+      NixSwarm.Deploy.plan(
+        source: source,
+        hosts: ["root@example-node-a.local", "root@example-node-b.local"],
+        configurations: %{
+          "root@example-node-a.local" => "node-a",
+          "root@example-node-b.local" => "node-b"
+        },
+        target_classifications: %{
+          "root@example-node-a.local" => :existing_outdated,
+          "root@example-node-b.local" => :new_nixos_host
+        },
+        canary_hosts: ["root@example-node-a.local"],
+        max_unavailable: 1,
+        dry_run: true
+      )
+
+    assert plan.bootstrap_hosts == ["root@example-node-b.local"]
+    assert plan.existing_hosts == ["root@example-node-a.local"]
+
+    assert Enum.map(plan.batches, fn batch -> Enum.map(batch, & &1.host) end) == [
+             ["root@example-node-b.local"],
+             ["root@example-node-a.local"]
+           ]
+  end
+
   test "plan orders canaries first and preserves bounded rollout batches" do
     source = Path.expand("..", __DIR__)
 
