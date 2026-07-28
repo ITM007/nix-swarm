@@ -498,7 +498,11 @@ supported failure classes.
 - Added `ConfigFiles.generated_path_allowed?/1` and regression coverage proving generated machine/service artifacts are `.nix` only and cannot target secrets or non-Nix extensions.
 - Extended operations documentation with the supported diagnostic classes and read-only TUI/apply boundary.
 - Remote verification passed: full `mix test` (`241 passed`), formatting, warnings-as-errors compilation, and `nix flake check --no-build --no-write-lock-file`.
-- Docker evidence remains unavailable because Docker is not installed on the local or remote host; live doctor/status failure-matrix acceptance remains an environment-dependent release gate.
+- Added a bounded rollout property test covering target preservation, safe classifications, and every `maxUnavailable` width.
+- Added `NixSwarm.ReleaseEvidence.failure_matrix/0` covering 24 required bootstrap, credential, upgrade, rollback, security, Disko, and closure-hygiene scenarios.
+- Added `scripts/collect_release_evidence.exs`, which records timestamp, revision, bounded command output, failed checks, and unavailable tools in a secret-redacted text report without serializing desired state or plans.
+- Remote verification passed: focused Phase 6 tests, full `mix test --warnings-as-errors --cover` (`244 passed`, `66.79%` total coverage), formatting, warnings-as-errors compilation, and `nix flake check --no-build --no-write-lock-file`.
+- Docker status was collected by the evidence script; live failure injection and disposable bare-metal `nixos-anywhere` acceptance remain environment-dependent and are not claimed here.
 
 ### Phase 6 — Hardening and release evidence
 

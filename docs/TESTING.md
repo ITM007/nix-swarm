@@ -44,7 +44,13 @@ nix build .#checks.x86_64-linux.nixos-vm --no-link --print-build-logs
 nix build .#checks.x86_64-linux.operator-smoke --no-link --print-build-logs
 nix build .#checks.x86_64-linux.starter-syntax --no-link --print-build-logs
 MIX_ENV=test nix develop --command mix run --no-start scripts/verify_cluster.exs
+nix develop --command mix run --no-start scripts/collect_release_evidence.exs -- --output _build/release-evidence.txt
 ```
+
+The evidence collector records timestamp, revision, command result, bounded
+output, and unavailable tools in a secret-redacted text report. It exits nonzero
+for failed commands but does not turn an unavailable Docker installation into a
+passing runtime result.
 
 Observed on 2026-07-22:
 
@@ -145,6 +151,15 @@ Run each failure with a clean baseline and capture both status output and
 | Fill or corrupt DETS state | Agent reports/recreates state without treating operational observations as desired state. |
 | Inject ANSI/control bytes into journald | Operator log output strips terminal control sequences. |
 | Exceed log/request bounds | Query protocol rejects the request without unbounded memory or output growth. |
+
+The executable catalog is available from the development shell:
+
+```bash
+nix develop --command mix run --no-start -e 'IO.inspect(NixSwarm.ReleaseEvidence.failure_matrix())'
+```
+
+It is intentionally a catalog and evidence boundary, not a claim that Docker or
+bare-metal scenarios ran on every host.
 
 ## Evidence Collection
 
