@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  printf 'usage: %s [--require-docker] [--revision REV] [--output DIR]\n' "$0" >&2
+}
+
+require_docker=false
+revision=""
+output="_build/release-evidence"
+while (($#)); do
+  case "$1" in
+    --require-docker) require_docker=true; shift ;;
+    --revision) [[ $# -ge 2 ]] || { usage; exit 2; }; revision=$2; shift 2 ;;
+    --output) [[ $# -ge 2 ]] || { usage; exit 2; }; output=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage; exit 2 ;;
+  esac
+done
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+if [[ -z "$revision" ]]; then
+  revision=$(git rev-parse HEAD)
+fi
+if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+  printf 'release-check: source checkout is dirty; commit or use an isolated clean checkout\n' >&2
+  exit 1
+fi
+
+worktree=$(mktemp -d "${TMPDIR:-/tmp}/nix-swarm-release.XXXXXX")
+project="nix-swarm-release-${RANDOM}-${BASHPID}"
+output_abs=$(mkdir -p "$output" && cd "$output" && pwd)
+cleanup_status=0
+cleanup() {
+  set +e
+  if command -v docker >/dev/null 2>&1; then
+    docker compose -p "$project" down --volumes --remove-orphans >/dev/null 2>&1
+    [[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$project")" ]] || cleanup_status=1
+    [[ -z "$(docker network ls -q --filter "label=com.docker.compose.project=$project")" ]] || cleanup_status=1
+    [[ -z "$(docker volume ls -q --filter "label=com.docker.compose.project=$project")" ]] || cleanup_status=1
+  fi
+  git worktree remove --force "$worktree" >/dev/null 2>&1 || cleanup_status=1
+  rm -rf "$worktree"
+  if ((cleanup_status != 0)); then
+    printf 'release-check: cleanup failed for project %s\n' "$project" >&2
+    return 1
+  fi
+}
+trap cleanup EXIT
+
+git worktree add --detach "$worktree" "$revision" >/dev/null
+cd "$worktree"
+export COMPOSE_PROJECT_NAME="$project"
+export NIX_SWARM_RELEASE_OUTPUT="$output_abs"
+args=(--output "$output_abs/evidence.txt")
+$require_docker && args+=(--require-docker)
+
+nix develop --command mix deps.get
+nix develop --command mix run --no-start scripts/collect_release_evidence.exs -- "${args[@]}"

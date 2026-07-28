@@ -105,6 +105,25 @@ docker compose exec node-a systemctl status nix-swarmd.service
 The harness creates ignored development credentials under
 `docker/nixos/secrets/`. Verify that the cookie is shared by the three nodes,
 the operator receives only the SSH private key, and the files do not enter Git.
+Every profile gets an isolated deterministic Compose project (`nix-swarm-standard`
+or `nix-swarm-hardened`). The lifecycle contract is:
+
+```bash
+./scripts/docker-stack reset
+./scripts/docker-stack up
+./scripts/docker-stack status --assert-ready
+./scripts/docker-stack scenario --list
+./scripts/docker-stack evidence
+./scripts/docker-stack reset
+```
+
+`reset` is idempotent and removes Compose containers, networks, volumes, result
+links, and generated development secrets. `scripts/docker-scenarios` is the
+live failure-matrix boundary; its stable IDs cover clean bootstrap, prepared
+node additions, credential outcomes, reachability/architecture, and low-disk
+preflight. Use `--failure preflight|credential|activation|readiness|reconciliation`
+to inject a named fixture failure. Docker-unavailable runs fail nonzero and are
+reported as unavailable; they must not be presented as live evidence.
 
 ### Live test listing
 
@@ -190,6 +209,31 @@ It is intentionally a catalog and evidence boundary, not a claim that Docker or
 bare-metal scenarios ran on every host.
 
 ## Evidence Collection
+
+For a clean candidate revision, use the release wrapper rather than running
+individual commands from a dirty development tree:
+
+```bash
+./scripts/release-check --require-docker --output _build/release-evidence
+```
+
+The wrapper creates a detached temporary worktree, gives Docker an isolated
+Compose project name, captures evidence before teardown, and resets harness
+resources from an exit trap. It exits nonzero when Docker is unavailable, a
+required gate is unavailable, or the runtime is empty.
+
+The deterministic scenario interface is:
+
+```bash
+./scripts/docker-scenarios --list
+./scripts/docker-stack status --assert-ready
+./scripts/docker-stack scenario --scenario mismatched-credential --failure credential
+./scripts/docker-stack evidence
+./scripts/docker-stack reset
+```
+
+Scenario execution is live-only. No unavailable Docker result may be recorded
+as a simulated pass.
 
 For every run, save the command, exit code, timestamp, and relevant output. A
 minimal live evidence bundle is:

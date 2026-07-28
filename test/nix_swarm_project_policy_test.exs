@@ -1,5 +1,6 @@
 defmodule NixSwarmProjectPolicyTest do
   use ExUnit.Case, async: true
+  import Bitwise
 
   test "the project requires and enables Elixir 1.20 type inference" do
     project = Mix.Project.config()
@@ -58,5 +59,15 @@ defmodule NixSwarmProjectPolicyTest do
     assert roadmap =~ "not a Nix-Swarm release gate"
     refute roadmap =~ "Turnkey NixOS provisioning profile"
     refute roadmap =~ "Nix-Swarm must ship a tested starter profile"
+  end
+
+  test "release orchestration is an explicit clean-checkout command" do
+    assert File.regular?("scripts/release-check")
+    assert (File.stat!("scripts/release-check").mode &&& 0o111) != 0
+    script = File.read!("scripts/release-check")
+    assert script =~ "git worktree add --detach"
+    assert script =~ "trap cleanup EXIT"
+    assert script =~ "docker compose"
+    assert File.read!("docs/RELEASE.md") =~ "prepared NixOS"
   end
 end

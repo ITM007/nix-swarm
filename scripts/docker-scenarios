@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+profile="${NIX_SWARM_DOCKER_PROFILE:-standard}"
+scenario=""
+failure="${NIX_SWARM_DOCKER_FAILURE:-}"
+keep=0
+
+scenario_ids=(
+  clean-bootstrap add-new-node add-multiple-nodes missing-credential
+  matching-credential mismatched-credential unreachable-target
+  wrong-architecture low-disk failed-bootstrap existing-peer-failure
+  digest-drift minor-upgrade protocol-incompatible canary-failure
+  convergence-timeout process-death drain-before-removal private-firewall
+  disko-explicit-disk hardened-template public-key-ssh enrollment-readiness
+  closure-hygiene
+)
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/docker-scenarios [--profile standard|hardened] [--failure POINT] --scenario ID
+       scripts/docker-scenarios --list
+
+The scenario runner is live-only: unavailable Docker is a nonzero, fail-closed
+result. NIX_SWARM_DOCKER_FAILURE/--failure injects a named fixture failure into
+the verification boundary; it never fabricates a passing result.
+EOF
+}
+
+list_scenarios() {
+  printf '%s\n' "${scenario_ids[@]}"
+}
+
+while (($#)); do
+  case "$1" in
+    --profile) profile="${2:?missing profile}"; shift 2 ;;
+    --profile=*) profile="${1#*=}"; shift ;;
+    --scenario) scenario="${2:?missing scenario}"; shift 2 ;;
+    --scenario=*) scenario="${1#*=}"; shift ;;
+    --failure) failure="${2:?missing failure point}"; shift 2 ;;
+    --failure=*) failure="${1#*=}"; shift ;;
+    --keep) keep=1; shift ;;
+    --list) list_scenarios; exit 0 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+[[ -n "$scenario" ]] || { echo "a scenario is required" >&2; usage >&2; exit 2; }
+valid=0
+for id in "${scenario_ids[@]}"; do [[ "$id" == "$scenario" ]] && valid=1; done
+((valid)) || { echo "unknown scenario: $scenario" >&2; exit 2; }
+
+case "$profile" in standard|hardened) ;; *) echo "unknown profile: $profile" >&2; exit 2 ;; esac
+if [[ -n "$failure" && ! "$failure" =~ ^(preflight|credential|activation|readiness|reconciliation)$ ]]; then
+  echo "unknown failure injection point: $failure" >&2
+  exit 2
+fi
+
+stack=("$root_dir/scripts/docker-stack" --profile "$profile")
+started=0
+cleanup() {
+  rc=$?
+  if ((started)); then
+    if ((rc != 0)); then "${stack[@]}" evidence || true; fi
+    if ((keep == 0)); then "${stack[@]}" reset || true; fi
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT INT TERM
+
+# docker-stack is the single availability gate. Do not replace this with a
+# simulated success: failed lookup means this matrix result is unavailable.
+"${stack[@]}" up
+started=1
+export NIX_SWARM_DOCKER_SCENARIO="$scenario"
+export NIX_SWARM_DOCKER_FAILURE="$failure"
+
+if [[ -n "$failure" ]]; then
+  echo "failure_injection=$failure scenario=$scenario"
+fi
+
+# This verifier starts at the prepared-NixOS boundary and records only the
+# scenario's observable result. It is deliberately injected through env vars.
+mix run --no-start "$root_dir/scripts/verify_cluster.exs"
+"${stack[@]}" status --assert-ready

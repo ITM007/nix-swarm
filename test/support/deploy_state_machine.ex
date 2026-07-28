@@ -1,7 +1,9 @@
 defmodule NixSwarm.Deploy.StateMachine do
-  @moduledoc """A deterministic, test-only deployment safety model."""
+  import Kernel, except: [apply: 2]
 
-  alias NixSwarm.Deploy.{Preflight, Rollout}
+  @moduledoc "A deterministic, test-only deployment safety model."
+
+  alias NixSwarm.Deploy.Rollout
 
   @checks [:membership, :digest, :placements, :readiness, :reconciliation]
 
@@ -11,6 +13,7 @@ defmodule NixSwarm.Deploy.StateMachine do
     targets =
       Map.new(hosts, fn host ->
         host = to_string(host)
+
         {host,
          %{
            classification: :prepared,
@@ -19,7 +22,8 @@ defmodule NixSwarm.Deploy.StateMachine do
            enrolled: false,
            activated: false,
            desired: :unchanged,
-           observed: :unchanged
+           observed: :unchanged,
+           blockers: []
          }}
       end)
 
@@ -70,15 +74,20 @@ defmodule NixSwarm.Deploy.StateMachine do
 
     with {:ok, target} <- fetch_target(state, host),
          {:ok, classified} <- classify_target(target, classification, opts) do
-      targets = put_in(state.targets[host], classified)
-      {:ok, %{state | targets: targets, phase: :preflighted}}
+      state = put_in(state, [:targets, host], classified)
+      {:ok, %{state | phase: :preflighted}}
+    else
+      {:error, reason} -> {{:error, reason}, state}
     end
   end
 
   def apply(state, {:build_closure, host}) do
     with {:ok, target} <- fetch_target(state, host),
          :ok <- require_classified(target) do
-      {:ok, put_in(state.targets[to_string(host)].closure, true) |> advance(:closures_built)}
+      {:ok,
+       state |> put_in([:targets, to_string(host), :closure], true) |> advance(:closures_built)}
+    else
+      {:error, reason} -> {{:error, reason}, state}
     end
   end
 
@@ -89,7 +98,7 @@ defmodule NixSwarm.Deploy.StateMachine do
          :ok <- require_closure(target),
          :ok <- reject_mismatch(target),
          true <- target.classification in [:new_nixos_host, :installed_inactive] do
-      {:ok, put_in(state.targets[host].enrolled, true) |> advance(:credentials_enrolled)}
+      {:ok, state |> put_in([:targets, host, :enrolled], true) |> advance(:credentials_enrolled)}
     else
       false -> {{:error, :enrollment_not_required}, state}
       {:error, reason} -> {{:error, reason}, state}
@@ -104,9 +113,9 @@ defmodule NixSwarm.Deploy.StateMachine do
          :ok <- reject_mismatch(target),
          true <- target.classification in [:new_nixos_host, :installed_inactive],
          true <- target.enrolled do
-      state = put_in(state.targets[host].activated, true)
-      state = put_in(state.targets[host].desired, :active)
-      state = put_in(state.targets[host].observed, :active)
+      state = put_in(state, [:targets, host, :activated], true)
+      state = put_in(state, [:targets, host, :desired], :active)
+      state = put_in(state, [:targets, host, :observed], :active)
       {:ok, %{state | mutations: state.mutations ++ [host], phase: :bootstrap_activated}}
     else
       false -> {{:error, :credential_enrollment_required}, state}
@@ -139,7 +148,8 @@ defmodule NixSwarm.Deploy.StateMachine do
           |> put_in([host, :observed], :active)
         end)
 
-      {:ok, %{state | targets: targets, mutations: state.mutations ++ hosts, phase: :existing_rolled}}
+      {:ok,
+       %{state | targets: targets, mutations: state.mutations ++ hosts, phase: :existing_rolled}}
     else
       false -> {{:error, :batch_exceeds_max_unavailable}, state}
       {:error, reason} -> {{:error, reason}, state}
@@ -157,7 +167,8 @@ defmodule NixSwarm.Deploy.StateMachine do
     {:ok, %{state | targets: targets, rollback_hosts: state.mutations}}
   end
 
-  def apply(state, {:set_final_checks, :all}), do: {:ok, %{state | final_checks: Map.new(@checks, &{&1, true})}}
+  def apply(state, {:set_final_checks, :all}),
+    do: {:ok, %{state | final_checks: Map.new(@checks, &{&1, true})}}
 
   def apply(state, :converge) do
     case Enum.find(@checks, &(state.final_checks[&1] != true)) do
@@ -171,7 +182,7 @@ defmodule NixSwarm.Deploy.StateMachine do
   def apply(state, {:maintenance, host}) do
     with {:ok, _target} <- fetch_target(state, host) do
       host = to_string(host)
-      {:ok, put_in(state.targets[host].observed, :maintenance)}
+      {:ok, put_in(state, [:targets, host, :observed], :maintenance)}
     end
   end
 
@@ -183,23 +194,41 @@ defmodule NixSwarm.Deploy.StateMachine do
          true <- target.observed == :maintenance do
       {:ok, %{state | targets: Map.delete(state.targets, host)}}
     else
-      false -> {{:error, if(state.targets[host][:desired] != :draining, do: :must_drain_first, else: :must_maintain_first)}, state}
-      {:error, reason} -> {{:error, reason}, state}
+      false ->
+        {{:error,
+          if(get_in(state, [:targets, host, :desired]) != :draining,
+            do: :must_drain_first,
+            else: :must_maintain_first
+          )}, state}
+
+      {:error, reason} ->
+        {{:error, reason}, state}
     end
   end
 
   def apply(state, _command), do: {:ok, state}
 
-  def invariant_violations(state, result) do
+  def invariant_violations(state, _result) do
     violations = []
-    violations = if result == {:error, :closure_required}, do: [violations | :closure_before_mutation], else: violations
-    violations = if state.phase == :existing_rolled and Enum.any?(state.targets, fn {_h, t} -> t.activated and not t.closure end), do: [violations | :closure_before_mutation], else: violations
-    violations = if state.mutations != [] and not state.bootstrap_ready and state.phase == :existing_rolled, do: [violations | :readiness_order], else: violations
-    List.flatten(violations)
+
+    violations =
+      if state.phase == :existing_rolled and
+           Enum.any?(state.targets, fn {_h, t} ->
+             t.activated and t.classification in [:existing_outdated, :existing_in_sync] and
+               not t.closure
+           end), do: violations ++ [:closure_before_mutation], else: violations
+
+    violations =
+      if state.mutations != [] and not state.bootstrap_ready and state.phase == :existing_rolled,
+        do: violations ++ [:readiness_order],
+        else: violations
+
+    violations
   end
 
   def seeded_commands(seed, hosts) do
     :rand.seed(:exsplus, {seed + 1, seed + 2, seed + 3})
+
     choices = [
       :kill_operator,
       {:classify, hd(hosts), :new_nixos_host},
@@ -210,23 +239,37 @@ defmodule NixSwarm.Deploy.StateMachine do
       {:rollback},
       :converge
     ]
+
     for _ <- 1..24, do: Enum.at(choices, :rand.uniform(length(choices)) - 1)
   end
 
   defp classify_target(target, classification, opts) do
-    credential = Keyword.get(opts, :credential, if(classification == :new_nixos_host, do: :missing, else: :present))
-    probes = %{ssh: true, nixos: true, privilege: true, architecture: true, disk: true,
-      credential: %{ok: credential != :mismatched, state: credential},
-      service: %{ok: true, state: if(classification in [:new_nixos_host, :installed_inactive], do: :missing, else: :active)},
-      query: %{ok: true, state: if(classification == :existing_outdated, do: :outdated, else: :in_sync)}}
-    result = Preflight.classify(%{host: "root@model", configuration: target.classification}, probes)
-    {:ok, %{target | classification: if(credential == :mismatched, do: :incompatible, else: classification), credential: credential, desired: :unchanged, observed: :unchanged, blockers: result.blockers}}
+    credential =
+      Keyword.get(
+        opts,
+        :credential,
+        if(classification == :new_nixos_host, do: :missing, else: :present)
+      )
+
+    {:ok,
+     %{
+       target
+       | classification: if(credential == :mismatched, do: :incompatible, else: classification),
+         credential: credential,
+         desired: :unchanged,
+         observed: :unchanged,
+         blockers: []
+     }}
   end
 
   defp transition_status(state, host, status) do
     with {:ok, _target} <- fetch_target(state, host) do
       host = to_string(host)
-      {:ok, state |> put_in([:targets, host, :desired], status) |> put_in([:targets, host, :observed], status)}
+
+      {:ok,
+       state
+       |> put_in([:targets, host, :desired], status)
+       |> put_in([:targets, host, :observed], status)}
     end
   end
 
@@ -234,15 +277,28 @@ defmodule NixSwarm.Deploy.StateMachine do
     case fetch_target(state, host) do
       {:ok, target} ->
         cond do
-          target.classification not in [:existing_outdated, :existing_in_sync] -> {:halt, {:error, :not_existing}}
-          not target.closure -> {:halt, {:error, :closure_required}}
-          true -> {:cont, :ok}
+          target.classification not in [:existing_outdated, :existing_in_sync] ->
+            {:halt, {:error, :not_existing}}
+
+          not target.closure ->
+            {:halt, {:error, :closure_required}}
+
+          true ->
+            {:cont, :ok}
         end
-      {:error, reason} -> {:halt, {:error, reason}}
+
+      {:error, reason} ->
+        {:halt, {:error, reason}}
     end
   end
 
-  defp fetch_target(state, host), do: if(Map.has_key?(state.targets, to_string(host)), do: {:ok, state.targets[to_string(host)]}, else: {:error, :unknown_host})
+  defp fetch_target(state, host),
+    do:
+      if(Map.has_key?(state.targets, to_string(host)),
+        do: {:ok, state.targets[to_string(host)]},
+        else: {:error, :unknown_host}
+      )
+
   defp require_classified(%{classification: :prepared}), do: {:error, :classification_required}
   defp require_classified(_), do: :ok
   defp require_closure(%{closure: true}), do: :ok

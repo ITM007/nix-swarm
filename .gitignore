@@ -51,4 +51,5 @@ nix-swarm-*.tar
 /machines/
 /secrets/*.cookie
 /secrets/*.key
+/docker/nixos/secrets/
 reasonix.toml

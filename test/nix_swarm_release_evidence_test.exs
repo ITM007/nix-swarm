@@ -41,19 +41,25 @@ defmodule NixSwarm.ReleaseEvidenceTest do
     refute ReleaseEvidence.release_success?(results)
   end
 
-  test "empty docker runtime is a failed gate" do
+  test "empty runtime is not a pass" do
     assert ReleaseEvidence.validate_runtime(:docker, [], expected_services: ["node-a"]) ==
              {:failed, "empty_runtime"}
 
     assert ReleaseEvidence.validate_runtime(:docker, ["node-a"], expected_services: ["node-a"]) ==
              :passed
+
+    assert ReleaseEvidence.validate_runtime(:docker, ["node-a"],
+             expected_services: ["node-a", "node-b"]
+           ) ==
+             {:failed, "empty_runtime"}
   end
 
   test "redacts credential labels, bearer tokens, private keys and bounded secrets" do
-    detail = "cookie=secret cookie-value; Authorization: Bearer abc.def.ghi " <>
-      "-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY----- " <>
-      "token=0123456789abcdef0123456789abcdef " <>
-      String.duplicate("A", 100)
+    detail =
+      "cookie=secret cookie-value; Authorization: Bearer abc.def.ghi " <>
+        "-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY----- " <>
+        "token=0123456789abcdef0123456789abcdef " <>
+        String.duplicate("A", 100)
 
     redacted = ReleaseEvidence.redact(detail)
 
@@ -65,12 +71,22 @@ defmodule NixSwarm.ReleaseEvidenceTest do
   end
 
   test "renders gate metadata and clean checkout state" do
-    report = ReleaseEvidence.render_report(
-      timestamp: "2026-07-28T00:00:00Z",
-      revision: "abc123",
-      clean: true,
-      results: [%{name: :format, status: :passed, command: ["mix", "format"], exit_status: 0, duration_ms: 12, detail: "ok"}]
-    )
+    report =
+      ReleaseEvidence.render_report(
+        timestamp: "2026-07-28T00:00:00Z",
+        revision: "abc123",
+        clean: true,
+        results: [
+          %{
+            name: :format,
+            status: :passed,
+            command: ["mix", "format"],
+            exit_status: 0,
+            duration_ms: 12,
+            detail: "ok"
+          }
+        ]
+      )
 
     assert report =~ "status: passed"
     assert report =~ "clean: true"

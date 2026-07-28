@@ -49,13 +49,18 @@ defmodule NixSwarmDeployStateMachineTest do
               [:new_nixos_host, :existing_outdated, :existing_outdated, :existing_in_sync],
               1
             ) do
-        %{host: "root@node-#{host}", configuration: "node-#{host}", classification: classification}
+        %{
+          host: "root@node-#{host}",
+          configuration: "node-#{host}",
+          classification: classification
+        }
       end
 
     for max_unavailable <- 1..3 do
       state = StateMachine.new(Enum.map(targets, & &1.host), max_unavailable: max_unavailable)
       assert {:ok, planned} = StateMachine.plan(state, targets)
       assert Enum.all?(planned.stages, &(length(&1) <= max_unavailable))
+
       assert Enum.map(List.flatten(planned.stages), & &1.host) |> Enum.sort() ==
                Enum.map(targets, & &1.host) |> Enum.sort()
     end
@@ -87,6 +92,7 @@ defmodule NixSwarmDeployStateMachineTest do
     state = StateMachine.new(["root@a"])
     state = dispatch!(state, {:classify, "root@a", :existing_outdated})
     state = dispatch!(state, {:build_closure, "root@a"})
+    state = %{state | bootstrap_ready: true, phase: :bootstrap_ready}
     state = dispatch!(state, {:roll_existing, ["root@a"]})
 
     for missing <- [:membership, :digest, :placements, :readiness, :reconciliation] do
@@ -111,6 +117,7 @@ defmodule NixSwarmDeployStateMachineTest do
 
     state = dispatch!(state, :kill_operator)
     assert StateMachine.agent_snapshot(state, "root@a") == original_agent
+
     assert {:error, :operator_dead, ^state} =
              StateMachine.dispatch(state, {:classify, "root@a", :existing_outdated})
 
@@ -131,7 +138,8 @@ defmodule NixSwarmDeployStateMachineTest do
 
     {_state, violations} =
       Enum.reduce(commands, {StateMachine.new(["root@a", "root@b", "root@c"]), []}, fn command,
-                                                                                             {state, violations} ->
+                                                                                       {state,
+                                                                                        violations} ->
         {result, next_state} = StateMachine.apply(state, command)
         {next_state, violations ++ StateMachine.invariant_violations(next_state, result)}
       end)

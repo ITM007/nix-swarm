@@ -2,6 +2,12 @@
 
 ## v1.0 release gate
 
+The release gate starts from a clean checkout and a prepared NixOS machine for live bootstrap acceptance. Nix-Swarm does not install
+NixOS, partition disks, run Disko, or invoke `nixos-anywhere`; those are
+operator-owned preparation steps. The supported handoff is documented in
+`docs/BOOTSTRAP.md`, after which Nix-Swarm begins with SSH preflight and the
+explicit `cluster plan`/`cluster apply` workflow.
+
 Before tagging v1.0, all of the following must pass:
 
 - `nix develop --command mix format --check-formatted`
@@ -12,7 +18,19 @@ Before tagging v1.0, all of the following must pass:
 - packaged operator smoke tests for `--help`, `--version`, and `cluster plan`
 - `MIX_ENV=test nix develop --command mix run --no-start scripts/verify_cluster.exs`
 - a real multi-node rollout, failed activation, automatic rollback, node reboot,
-  partition recovery, and credential rotation exercise
+  partition recovery, and credential rotation exercise on the prepared-target
+  acceptance environment
+
+Use the reproducible wrapper for release-candidate collection:
+
+```bash
+./scripts/release-check --require-docker --output _build/release-evidence
+```
+
+It refuses a dirty source checkout, runs in a detached temporary worktree,
+uses an isolated Compose project, captures bounded evidence, and resets Docker
+resources in an exit trap. If Docker is unavailable or the runtime is empty,
+the command exits nonzero rather than reporting a passing release.
 
 The release workflow also verifies that the release tag exactly matches the
 repository `VERSION` file before building artifacts. Keep `VERSION` unchanged
