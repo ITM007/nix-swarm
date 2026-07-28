@@ -2,14 +2,38 @@
 
 This document is the end-to-end test inventory for Nix-Swarm. It is written for
 release candidates and for operators emulating a small NixOS cluster locally.
-The Docker harness runs NixOS systemd as PID 1 in privileged containers. It is
-useful for live BEAM, systemd, SSH, query-socket, placement, and persistence
-checks, but it does not replace the NixOS VM test or a real staging rollout.
+Nix-Swarm begins at an SSH-reachable, user-prepared NixOS target: machine
+installation, partitioning, hardware discovery, firmware, and storage setup are
+outside the product and are not release gates. The Docker harness runs NixOS
+systemd as PID 1 in privileged containers. It is useful for live BEAM, systemd,
+SSH, query-socket, placement, and persistence checks, but it does not replace
+the NixOS VM test or a real staging rollout.
 
 ## Test Layers
 
 Run the layers in this order. A later layer is not a substitute for an earlier
 one, and a Docker pass must not be reported as native NixOS boot coverage.
+
+### Deployment model coverage
+
+`test/nix_swarm_deploy_state_machine_test.exs` runs a pure deterministic model
+of bootstrap and upgrade command sequences. It uses fixed random seeds rather
+than network or Docker state and checks closure-before-mutation, fail-closed
+credential handling, bootstrap readiness ordering, `maxUnavailable` bounds,
+attempted-only rollback, preservation of unattempted hosts, complete final
+convergence, operator-process isolation, and draining/maintenance removal.
+
+Run it, along with the rollout and preflight contracts, with:
+
+```bash
+nix develop --command mix test \
+  test/nix_swarm_deploy_state_machine_test.exs \
+  test/nix_swarm_deploy_rollout_property_test.exs \
+  test/nix_swarm_deploy_rollout_test.exs \
+  test/nix_swarm_deploy_preflight_test.exs --seed 0
+```
+
+The model is test-only and does not add a runtime dependency.
 
 | Layer | Coverage | Command or entry point |
 | --- | --- | --- |
@@ -47,10 +71,14 @@ MIX_ENV=test nix develop --command mix run --no-start scripts/verify_cluster.exs
 nix develop --command mix run --no-start scripts/collect_release_evidence.exs -- --output _build/release-evidence.txt
 ```
 
-The evidence collector records timestamp, revision, command result, bounded
-output, and unavailable tools in a secret-redacted text report. It exits nonzero
-for failed commands but does not turn an unavailable Docker installation into a
-passing runtime result.
+The evidence collector records aggregate status (`passed`, `failed`, or
+`incomplete`), timestamp, revision, clean/dirty checkout state, declared argv,
+exit status, duration, bounded redacted output, and unavailable tools. Required
+unavailable/skipped gates and empty Docker Compose runtimes fail closed. Docker
+is optional for developer runs, but those reports remain `incomplete`; release
+runs must pass `--require-docker` and require the expected runtime services.
+The report is written even when a gate fails, and the collector exits nonzero
+unless every gate passes.
 
 Observed on 2026-07-22:
 
@@ -196,5 +224,6 @@ git status --short
 The Docker harness does not prove a separate kernel, native NixOS boot, host
 firewall policy, WireGuard/Tailscale routing, native `nixos-rebuild` activation,
 rollback on a real target, production secret management, storage failure, or
-backup recovery. Those cases remain required in the NixOS VM and staging test
-plans.
+backup recovery. Machine preparation is user-owned and is not a Nix-Swarm
+release gate; the release boundary begins at SSH/preflight/bootstrap/apply.
+Those runtime cases remain required in the NixOS VM and staging test plans.
