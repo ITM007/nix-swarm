@@ -40,6 +40,7 @@ The model is test-only and does not add a runtime dependency.
 | Static and unit | Formatting, compiler inference, parsers, placement, deployment decisions, security contracts | `mix format --check-formatted`, `mix compile --warnings-as-errors`, `mix test --warnings-as-errors --cover` |
 | Nix evaluation | Packages, module assertions, starter syntax, deployment manifest evaluation | `nix flake check --print-build-logs` |
 | NixOS VM | Real NixOS activation, hardened daemon, systemd notify, DETS, query authorization | `nix build .#checks.x86_64-linux.nixos-vm --no-link --print-build-logs` |
+| Caddy edge VM | Standard NixOS Caddy module, Nix-Swarm-managed `caddy.service`, managed backend, and HTTP request through Caddy | `nix build .#checks.x86_64-linux.caddy-vm --no-link --print-build-logs` |
 | Docker live | Three independent BEAM nodes, systemd workload ownership, SSH query path, failure and rejoin | `./scripts/docker-stack up` |
 | Staging | Kernel, firewall, native `nixos-rebuild`, real SSH, rollback, secret provisioning, production limits | Separate NixOS machines |
 
@@ -124,6 +125,10 @@ node additions, credential outcomes, reachability/architecture, and low-disk
 preflight. Use `--failure preflight|credential|activation|readiness|reconciliation`
 to inject a named fixture failure. Docker-unavailable runs fail nonzero and are
 reported as unavailable; they must not be presented as live evidence.
+
+The Caddy edge VM proves the Nix-defined integration only. It does not prove
+multi-node ingress failover: that first-version topology has one explicit edge
+node, while Caddy health checks cover backend endpoint availability.
 
 ### Live test listing
 

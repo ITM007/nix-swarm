@@ -6,10 +6,10 @@ It is intentionally not a container runtime, storage system, overlay network, or
 
 ## What it provides
 
-- declarative nodes, replicas, labels, constraints, preferred nodes, and draining
+- declarative nodes, replicas, allowed-node placement, and draining
 - leaderless placement and failover between configured BEAM peers
 - idempotent systemd reconciliation and durable local observations in DETS
-- native NixOS deployment, canaries, health-gated batches, and rollback
+- native NixOS deployment, sequential health-gated rollout, and rollback
 - a read-only TUI for status, placement, metrics, and bounded journald logs
 - unprivileged agents with exact systemd-unit authorization
 - SSH operator access through a restricted local Unix socket; operators never receive the BEAM cookie
@@ -96,7 +96,13 @@ Agents use distributed Erlang on TCP `4369` and fixed port `4370`. Keep those po
 
 Operators need only SSH. Set `operatorUsers = [ "alice" ];` on each node, then use `--ssh-host alice@node-a`; root also works. The TUI cannot mutate the cluster.
 
-Configure service ports, routing, and credentials through ordinary NixOS modules. Use native systemd credentials or a NixOS secret-management module for secrets.
+Configure service ports, routing, and credentials through ordinary NixOS modules.
+For optional edge routing, configure Caddy with the standard `services.caddy`
+NixOS module, declare `caddy.service` as a one-replica Nix-Swarm service on an
+explicit edge node, and list static candidate backends with Caddy active health
+checks. Nix-Swarm deploys the user-authored Nix generation but never edits a
+Caddyfile or calls the Caddy Admin API. Use native systemd credentials or a
+NixOS secret-management module for secrets.
 
 ## Documentation
 

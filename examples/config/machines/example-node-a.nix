@@ -3,6 +3,7 @@
   imports = [
     ../nix/nix-swarm/module.nix
     ../cluster/cluster.nix
+    ../services/caddy-edge.nix
   ];
 
   services.nix-swarm = {

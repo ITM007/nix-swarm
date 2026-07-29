@@ -12,13 +12,11 @@
 
     nodes = {
       "nix-swarm@example-node-a.local" = {
-        labels = [ "ingress" "apps" ];
         deployHost = "root@example-node-a.local";
         nixosConfiguration = "example-node-a";
       };
 
       "nix-swarm@example-node-b.local" = {
-        labels = [ "apps" ];
         deployHost = "root@example-node-b.local";
         nixosConfiguration = "example-node-b";
       };
@@ -27,10 +25,17 @@
     services = {
       example-web = {
         replicas = 2;
-        preferredNodes = [
+        unitTemplate = "example-web@%{slot}.service";
+        allowedNodes = [
           "nix-swarm@example-node-a.local"
           "nix-swarm@example-node-b.local"
         ];
+      };
+
+      caddy = {
+        replicas = 1;
+        unitTemplate = "caddy.service";
+        allowedNodes = [ "nix-swarm@example-node-a.local" ];
       };
     };
   };

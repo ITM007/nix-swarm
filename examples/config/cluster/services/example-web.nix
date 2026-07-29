@@ -6,7 +6,7 @@
 
     serviceConfig = {
       DynamicUser = true;
-      ExecStart = "${pkgs.bash}/bin/bash -lc 'port=$((8080 + %i)); while true; do printf \"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok\" | ${pkgs.netcat}/bin/nc -l -p \"$port\" -q 1; done'";
+      ExecStart = "${pkgs.bash}/bin/bash -lc 'port=$((8080 + %i)); while true; do printf \"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok\" | ${pkgs.netcat}/bin/nc -l -p \"$port\" -q 1 -s 0.0.0.0; done'";
       Restart = "always";
       RestartSec = 2;
       NoNewPrivileges = true;

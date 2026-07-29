@@ -121,6 +121,87 @@
             ];
           };
 
+          exampleNodeA = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [ ./examples/config/machines/example-node-a.nix ];
+          };
+
+          exampleNodeB = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [ ./examples/config/machines/example-node-b.nix ];
+          };
+
+          exampleConfigCaddy =
+            assert exampleNodeA.config.services.caddy.enable;
+            assert !exampleNodeB.config.services.caddy.enable;
+            assert exampleNodeA.config.services.nix-swarm.services.caddy.unitTemplate == "caddy.service";
+            assert exampleNodeA.config.services.nix-swarm.services.caddy.allowedNodes == [ "nix-swarm@example-node-a.local" ];
+            assert exampleNodeA.config.systemd.services ? caddy;
+            pkgs.runCommand "nix-swarm-example-caddy-config" { } ''
+              touch "$out"
+            '';
+
+          caddyVmTest = pkgs.testers.runNixOSTest {
+            name = "nix-swarm-caddy-edge";
+
+            nodes.edge = { lib, pkgs, ... }: {
+              imports = [ self.nixosModules.default ];
+              networking.hostName = "edge";
+
+              services.nix-swarm = {
+                enable = true;
+                package = nixSwarm.cluster;
+                nodeName = "nix-swarm@edge";
+                cookieFile = "/run/keys/nix-swarm.cookie";
+                peers = [ "nix-swarm@edge" ];
+                nodes."nix-swarm@edge" = {
+                  deployHost = "root@edge";
+                };
+                services = {
+                  caddy = {
+                    replicas = 1;
+                    unitTemplate = "caddy.service";
+                    allowedNodes = [ "nix-swarm@edge" ];
+                  };
+                  example = {
+                    replicas = 1;
+                    unitTemplate = "example.service";
+                    allowedNodes = [ "nix-swarm@edge" ];
+                  };
+                };
+              };
+
+              services.caddy = {
+                enable = true;
+                virtualHosts."http://app.test".extraConfig = ''
+                  reverse_proxy 127.0.0.1:8080
+                '';
+              };
+
+              systemd.tmpfiles.rules = [
+                "d /run/keys 0700 root root -"
+                "f+ /run/keys/nix-swarm.cookie 0400 root root - 0123456789abcdef0123456789abcdef"
+              ];
+
+              systemd.services.example = {
+                wantedBy = lib.mkForce [ ];
+                serviceConfig = {
+                  ExecStart = "${pkgs.python3}/bin/python3 -m http.server 8080 --bind 127.0.0.1";
+                  Restart = "always";
+                };
+              };
+            };
+
+            testScript = ''
+              edge.start()
+              edge.wait_for_unit("nix-swarmd.service")
+              edge.wait_for_unit("caddy.service")
+              edge.wait_until_succeeds("systemctl is-active example.service")
+              edge.succeed("curl --fail --silent --show-error -H 'Host: app.test' http://127.0.0.1/ | grep -q '<title>Directory listing for /</title>'")
+              edge.succeed("test ! -e /run/nix-swarm/Caddyfile")
+            '';
+          };
+
           vmTest = pkgs.testers.runNixOSTest {
             name = "nix-swarm-agent";
 
@@ -247,8 +328,10 @@
           agent-package = nixSwarm.cluster;
           nixos-module = testNode.config.system.build.toplevel;
           nixos-vm = vmTest;
+          caddy-vm = caddyVmTest;
           starter-syntax = starterSyntax;
           operator-smoke = operatorSmoke;
+          example-config-caddy = exampleConfigCaddy;
         });
 
       nixosModules = {

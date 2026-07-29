@@ -54,6 +54,38 @@ defmodule NixSwarmProjectPolicyTest do
     end
   end
 
+  test "Caddy routing is Nix-defined and has no mutable runtime control path" do
+    cluster = File.read!("examples/config/cluster/cluster.nix")
+    edge = File.read!("examples/config/services/caddy-edge.nix")
+
+    runtime =
+      Path.wildcard("lib/nix_swarm/**/*.ex")
+      |> Enum.map_join("\\n", &File.read!/1)
+
+    assert cluster =~ ~s(unitTemplate = "caddy.service")
+    assert cluster =~ ~s(allowedNodes = [ "nix-swarm@example-node-a.local" ])
+    assert edge =~ "services.caddy"
+    assert edge =~ "reverse_proxy"
+    assert edge =~ "health_uri"
+    assert edge =~ "health_interval"
+
+    refute runtime =~ "Caddyfile"
+    refute runtime =~ "caddy reload"
+    refute runtime =~ "/config/apps/http"
+    refute runtime =~ "localhost:2019"
+  end
+
+  test "the multi-node example uses only the current service schema" do
+    cluster = File.read!("examples/config/cluster/cluster.nix")
+
+    for forbidden <- ["labels", "preferredNodes", "constraints", "maxReplicasPerNode"] do
+      refute cluster =~ forbidden
+    end
+
+    assert cluster =~ ~s(unitTemplate = "example-web@%{slot}.service")
+    assert cluster =~ "allowedNodes"
+  end
+
   test "the Nix module does not expose compatibility or rollout tuning options" do
     module = File.read!("nix/nix-swarm/module.nix")
 

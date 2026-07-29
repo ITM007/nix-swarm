@@ -13,6 +13,11 @@ layer for systemd services on NixOS homelabs and small-business networks.
 - Nix-Swarm stores operational observations, never a second desired-state model.
 - the TUI is a read-only projection for operators.
 
+Optional edge routing is user-owned NixOS configuration. A standard Caddy
+service may be placed on one declared edge node and use health-checked static
+candidate backends, but Nix-Swarm does not provide a routing mesh, virtual IP,
+dynamic proxy API, or automatic certificate-state replication.
+
 ## Supported feature set
 
 The supported public workflow is intentionally narrower than Docker Swarm:
@@ -35,11 +40,11 @@ The supported public workflow is intentionally narrower than Docker Swarm:
 
 Nix-Swarm is a simple systemd orchestrator for homelabs and small businesses.
 Downtime is acceptable. Databases, volumes, storage, stateful replication,
-live migration, machine provisioning, ingress/routing, and a custom monitoring
-or secret stack are not managed by Nix-Swarm. Put those concerns in ordinary
-NixOS modules and systemd configuration.
+live migration, routing meshes, virtual IPs, machine provisioning, or a custom
+monitoring or secret stack are not managed by Nix-Swarm. Put those concerns in
+ordinary NixOS modules and systemd configuration.
 
-The following are not public options: ingress, healthcheck metadata, arbitrary
+The following are not public options: ingress metadata, healthcheck metadata, arbitrary
 settings, preferred nodes, node labels, service constraints,
 `maxReplicasPerNode`, readiness or runtime timing, autoscaling expert knobs,
 and canary/parallel rollout controls. Rollout policy is fixed and safe

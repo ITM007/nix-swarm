@@ -19,8 +19,8 @@ All desired state is under `services.nix-swarm` in Nix.
 | `operatorUsers` | `[]` | Existing SSH users added to that group |
 | `extraManagedUnits` | `[]` | Exact temporary unit allowlist for migrations |
 | `onFailureUnits` | `[]` | Native systemd `OnFailure=` targets |
-| `resourceLimits.memoryMax` | `512M` | Agent `MemoryMax` |
-| `resourceLimits.tasksMax` | `512` | Agent `TasksMax` |
+| `MemoryMax` | `512M` | Fixed agent systemd memory limit |
+| `TasksMax` | `512` | Fixed agent systemd task limit |
 
 `openFirewall = true` is rejected unless `firewallInterfaces` is non-empty.
 
@@ -31,7 +31,6 @@ services.nix-swarm = {
   peers = [ "nix-swarm@node-a" "nix-swarm@node-b" ];
 
   nodes."nix-swarm@node-a" = {
-    labels = [ "apps" "ssd" ];
     availability = "active"; # "active", "draining", or "maintenance"
     deployHost = "root@node-a";
     nixosConfiguration = "node-a";
@@ -99,6 +98,33 @@ health gate with two consecutive healthy samples, and rollback attempted hosts
 after every failure. There are no deployment rollout knobs in the Nix module
 or manifest.
 
-## Ingress
+## Optional Caddy edge routing
 
-Ingress sites are compatibility metadata only. Configure nginx, HAProxy, or another NixOS load balancer explicitly; Nix-Swarm does not synthesize backends or implement a routing mesh.
+Nix-Swarm does not provide an ingress controller or routing mesh. Users may
+configure Caddy through the standard NixOS `services.caddy` module and manage
+it as an ordinary Nix-Swarm service restricted to one edge node:
+
+```nix
+services.nix-swarm.services.caddy = {
+  replicas = 1;
+  unitTemplate = "caddy.service";
+  allowedNodes = [ "nix-swarm@edge-a" ];
+};
+```
+
+Keep the Caddy policy in a user-owned `.nix` module. List the finite candidate
+backend endpoints and use Caddy active health checks to remove nodes whose
+systemd service is not currently ready. Nix-Swarm never edits a Caddyfile,
+calls the Caddy Admin API, or creates a second routing configuration.
+
+Edit the Nix module and apply it normally:
+
+```bash
+nix-swarm cluster plan --source .
+nix-swarm cluster apply --source . --yes
+```
+
+The first supported design uses one explicit edge node. DNS, router
+forwarding, certificates, certificate storage, and edge-node failover remain
+operator responsibilities. Do not use automatic backend movement for
+single-writer or stateful services without application-owned coordination.

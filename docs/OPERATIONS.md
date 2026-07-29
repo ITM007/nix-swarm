@@ -36,6 +36,34 @@ failed batch always attempts rollback of every host attempted so far.
 For deliberate maintenance, target selected hosts with
 `--hosts root@node-a,root@node-b`. This does not change the sequential policy.
 
+## Optional Caddy edge
+
+Caddy is not built into Nix-Swarm. Configure it in a user-owned NixOS module
+with `services.caddy`, enable it only on an explicitly chosen edge machine, and
+declare that machine as the only `allowedNodes` entry for the generic
+`caddy.service` Nix-Swarm service. Keep all routing and TLS policy in Nix.
+
+For basic stateless HTTP services, list every valid node/slot endpoint in the
+Caddy `reverse_proxy` block and enable active health checks. Service slots use
+stable ports; when placement moves a slot, Caddy's health checks stop sending
+traffic to the old endpoint and begin using the healthy endpoint without
+Nix-Swarm editing any file.
+
+Example workflow:
+
+```bash
+$EDITOR examples/config/services/caddy-edge.nix
+nix-swarm cluster plan --source .
+nix-swarm cluster apply --source . --yes
+nix-swarm cluster status --target nix-swarm@example-node-a.local
+```
+
+Nix-Swarm deploys Caddy as part of the normal NixOS generation and rollback. It
+does not watch Caddy files, call the Caddy Admin API, provide a virtual IP, or
+replicate Caddy certificate state. If the edge node fails, backend agents may
+continue running but external HTTP traffic remains unavailable until DNS,
+router forwarding, or an operator-managed replacement edge is available.
+
 ## Install or rotate the cluster credential
 
 ```bash
