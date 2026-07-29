@@ -174,7 +174,12 @@
               services.caddy = {
                 enable = true;
                 virtualHosts."http://app.test".extraConfig = ''
-                  reverse_proxy 127.0.0.1:8080
+                  reverse_proxy 127.0.0.1:8080 127.0.0.1:8081 {
+                    health_uri /
+                    health_interval 1s
+                    health_timeout 500ms
+                    fail_duration 2s
+                  }
                 '';
               };
 
@@ -190,6 +195,14 @@
                   Restart = "always";
                 };
               };
+
+              systemd.services.example-secondary = {
+                wantedBy = [ "multi-user.target" ];
+                serviceConfig = {
+                  ExecStart = "${pkgs.python3}/bin/python3 -m http.server 8081 --bind 127.0.0.1";
+                  Restart = "no";
+                };
+              };
             };
 
             testScript = ''
@@ -197,8 +210,12 @@
               edge.wait_for_unit("nix-swarmd.service")
               edge.wait_for_unit("caddy.service")
               edge.wait_until_succeeds("systemctl is-active example.service")
+              edge.wait_until_succeeds("systemctl is-active example-secondary.service")
+              edge.succeed("systemctl is-enabled caddy.service")
               edge.succeed("curl --fail --silent --show-error -H 'Host: app.test' http://127.0.0.1/ | grep -q '<title>Directory listing for /</title>'")
-              edge.succeed("test ! -e /run/nix-swarm/Caddyfile")
+              edge.succeed("systemctl stop example-secondary.service")
+              edge.succeed("sleep 3; timeout 5 curl --fail --silent --show-error -H 'Host: app.test' http://127.0.0.1/ | grep -q '<title>Directory listing for /</title>'")
+              edge.succeed("test ! -e /run/nix-swarm/Caddyfile && test ! -e /var/lib/nix-swarm/Caddyfile")
             '';
           };
 

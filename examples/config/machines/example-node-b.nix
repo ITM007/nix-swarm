@@ -13,4 +13,6 @@
     # Example only: replace wg0 with your private overlay interface.
     firewallInterfaces = [ "wg0" ];
   };
+
+  networking.firewall.interfaces.wg0.allowedTCPPorts = [ 8080 8081 ];
 }

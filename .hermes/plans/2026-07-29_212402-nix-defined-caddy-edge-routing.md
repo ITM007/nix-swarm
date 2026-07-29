@@ -488,7 +488,7 @@ edge.succeed("test ! -e /run/nix-swarm/Caddyfile")
 **Step 2: Build the VM check and verify RED**
 
 ```bash
-nix build .#checks.x86_64-linux.caddy-edge-vm \
+nix build .#checks.x86_64-linux.caddy-vm \
   --no-link --print-build-logs
 ```
 
@@ -504,7 +504,7 @@ Expected: the Caddy frontend returns the known backend response and both units a
 
 **Step 5: Document the test layer**
 
-Add `caddy-edge-vm` to the test inventory. Clearly distinguish this one-node routing proof from multi-node failover evidence.
+Add `caddy-vm` to the test inventory. Clearly distinguish this one-node routing proof from multi-node failover evidence.
 
 **Step 6: Commit**
 
