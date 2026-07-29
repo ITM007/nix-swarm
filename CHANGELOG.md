@@ -6,86 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- A restricted SSH-to-local-Unix-socket operator API; operator tools no longer join the BEAM cluster or receive its cookie.
-- One-command credential enrollment and health-gated flake-input upgrades.
-- A minimal packaged starter flake, flake apps, bounded query protocol, and security regression tests.
-- Declarative service capacity controls, readiness gates, per-node replica limits, and bounded CPU autoscaling with hysteresis.
-
-- Agent/operator-specific supervision trees with supervised task execution.
-- A validated, fail-closed ETS configuration snapshot owner and configuration digests.
-- A DETS-backed operational-state store for the last Nix generation, assignments, health, and reconciliation result.
-- `:erpc`-based bounded RPC helpers and telemetry spans for reconcile, RPC, command, and deploy work.
-- Native NixOS rollout batches, canary ordering, and `nixosConfiguration` node metadata.
-- Flake checks for both packages and a complete NixOS module evaluation, plus CI gates.
-- Optional ACME/forced-SSL ingress configuration.
-- Elixir 1.20 set-theoretic signature inference in application and test compilation.
-- Coverage-gated tests for secrets, rollout logic, RPC, the fake executor, watchdog notifications, templates, and deployment compatibility entry points.
-- Code-first `cluster plan`, `cluster apply`, `cluster rollback`, and `cluster doctor` workflows.
-- Declarative `active`/`draining` node availability and native systemd `OnFailure=` integration.
-- Operator query commands for cluster overview, membership, snapshots, and bounded service logs over the restricted socket API.
-- v1.0 migration and release-gate documentation, including the supported stateless-workload boundary and partition behavior.
-- Packaged operator smoke coverage for help, version, and deployment-plan entry points on x86_64 Linux.
-- A three-node x86_64 NixOS/Docker Compose integration harness with systemd-managed demo workloads, SSH query access, persistent node state, and documented node failure/rejoin exercises.
-- A packaged starter configuration with a minimal flake, example machine, service, and hardware stubs for new deployments.
-- Release, migration, parity, operations, security, Docker, and development documentation covering the hardened v1.0 readiness path.
+- Nix-defined Caddy edge-routing examples using the standard NixOS Caddy
+  module, static candidate backends, and active health checks.
+- A Caddy NixOS VM check covering managed `caddy.service`, backend health
+  removal, HTTP forwarding, and the absence of Nix-Swarm-generated Caddy files.
+- Explicit plan/apply, rollback, status, doctor, and service-restart workflows
+  documented for the simplified product boundary.
 
 ### Changed
 
-- Release artifacts now run the full BEAM/Nix validation gate and reject tags
-  that do not match `VERSION`.
-- Direct API log requests clamp line counts and use the executor timeout path
-  for `nix-swarmd` logs instead of invoking `journalctl` without a command
-  timeout.
-- The agent runs unprivileged with an exact Nix-generated polkit unit allowlist and systemd resource limits.
-- Release cookies are provisioned as private runtime files and no longer appear in process arguments or environment variables.
-- Intermediate rollout batches require reachable peers and healthy updated-node units; the final gate requires one config digest and all owned units healthy.
-- Source packaging is allowlisted, log output is terminal-sanitized, and ex_ratatui is updated to 0.11.1.
-
-- Deployments now evaluate local `nixosConfigurations` and use `nixos-rebuild --target-host`; remote source copying and remote Nix-file generation are gone.
-- SSH uses the normal client configuration with strict host-key checking.
-- Reconciliation reacts immediately to node membership changes and batches systemd status reads.
-- Placement uses SHA-256 scoring rather than VM-dependent term hashing.
-- Health is derived from systemd unit state; arbitrary shell health checks are no longer executed by the root agent.
-- `nix-swarmd` now has explicit watchdog, stop, restart-backoff, state-directory, and systemd sandbox lifecycle settings.
-- Version metadata is read from `VERSION` by both Mix and Nix.
-- CI now compiles test modules with type inference and warnings-as-errors and enforces the coverage baseline.
-- The operator TUI is read-only; all durable changes flow through reviewed Nix code and explicit CLI deployment commands.
-- Runtime desired-state overrides were replaced by durable, node-local operational observations.
-- Configuration loading now has a supervised ETS snapshot owner, generation/digest tracking, and explicit runtime validation.
-- Deployment and upgrade workflows preserve flake locks on failure, support native NixOS configuration selection, and report rollout convergence by node.
-- Credential enrollment is idempotent for matching remote fingerprints, installs only missing hosts, and performs coordinated cookie rotation with restart, health verification, and rollback of the previous credential.
-- Packaged operator and query wrappers now start the application supervision tree before evaluating CLI commands; help and version handling avoids deployment-source side effects.
-- Deployment manifests are exported under the standard `lib.nixSwarm.deploymentManifest` flake output, and CI evaluates the complete flake checks on x86_64 Linux.
-- Release checks now target x86_64 Linux only; the NixOS VM test exercises systemd watchdog survival, the restricted query helper, and durable agent state.
-- Public README, contributing, security, getting-started, and configuration-reference docs now describe the code-reviewed deployment model and x86_64-only support boundary.
+- The public service model is now limited to `replicas`, `unitTemplate`,
+  `allowedNodes`, and bounded CPU/memory autoscaling.
+- Rollouts are sequential and health-gated with fixed internal policy; canary,
+  parallel, label, constraint, and per-node replica controls are removed.
+- The TUI is read-only and durable changes flow through reviewed Nix and explicit
+  CLI commands.
+- The starter is a prepared-machine one-node example with an example systemd
+  workload and user-owned Caddy configuration.
 
 ### Removed
 
-- Unsafe automatic file-watcher deployment and its standalone systemd unit.
-- The executor GenServer that bypassed the validated fake/systemd adapter boundary.
-- SSH bootstrap code that wrote placeholder machine files and secrets on targets.
-- Remote API endpoints for ad-hoc service and machine mutation.
+- Mutable service scaffolding, runtime desired-state overrides, generated remote
+  configuration, ingress metadata, arbitrary healthcheck/settings fields, and
+  the old `cluster init`/`ensure`/`rebuild` and `cluster upgrade prepare` paths.
 
-### Fixed
-
-- Autoscaler target reconstruction now drops decisions for services removed
-  from the current configuration instead of retaining stale targets.
-- Restored the rollout coordinator and injected TUI update function removed by the v0.5 work-in-progress.
-- Restored executor input validation, configured adapters, command timeouts, and normalized status contracts.
-- Invalid deployment validation now aborts before any target is changed.
-- Cluster status reports configuration digest drift across live nodes.
-- Age encryption no longer passes an unsupported stdin option to `System.cmd/3`, and temporary plaintext input is mode `0600` and removed after encryption.
-- Generated web and custom NixOS service templates correctly bind their `pkgs` argument.
-- Reconciler tests restore application state and are no longer order-dependent.
-- Credential rotation restores the local cookie when coordinated remote rotation fails, and SSH preflight distinguishes a missing credential from an unreachable host.
-- Packaged deployment commands no longer crash because `NixSwarm.TaskSupervisor` was not started.
-- The systemd watchdog now sends the supported `WATCHDOG=1` notification, and local operator queries handle dynamic node atoms safely.
-- Packaged SSH query helpers now preload the safe response atoms and keep machine-readable output free of runtime startup noise.
-- Packaged query helpers now terminate their machine-readable response before runtime shutdown diagnostics can append to it.
-- The packaged operator launcher now loads the restricted-query protocol before safe response decoding.
-- Cluster status output no longer duplicates the `v` prefix in node release labels.
-- The Docker demo workload now uses a fixed per-node HTTP port so all published node ports are directly testable.
-- Autoscaler sample aggregation, target clamping, membership invalidation, and stale-decision rejection have deterministic coverage.
 
 ## [0.4.1] - 2026-06-18
 

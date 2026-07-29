@@ -1,7 +1,8 @@
 # Prepared Nix-Swarm starter
 
 This starter is a small **NixOS configuration example** for one machine that
-has already been prepared by its owner. Nix-Swarm starts at SSH preflight: it
+has already been prepared by its owner. It includes one systemd workload and
+optional single-node Caddy edge routing. Nix-Swarm starts at SSH preflight: it
 does not install NixOS, partition disks, configure boot, or choose storage.
 
 ## Prepare the machine first
@@ -38,10 +39,16 @@ sops-nix, agenix, or systemd credentials for established deployments.
 
 ## Example service
 
-`services/example-web.nix` is the only workload example: a single bounded
-systemd service. It is declared in `machines/node-a.nix` and enabled by the
-`example-web` service entry in `cluster.nix`. Copy that `.nix` file when adding
-a workload; Nix-Swarm does not maintain a second desired-state format.
+`services/example-web.nix` is a single bounded systemd service. It is declared
+in `machines/node-a.nix` and enabled by the `example-web` service entry in
+`cluster.nix`. `services/caddy-edge.nix` configures the standard NixOS Caddy
+module and proxies to that local service with active health checks. The Caddy
+service is declared as one `caddy.service` replica on this node.
+
+Edit either module as needed and apply the resulting NixOS generation through
+`cluster plan` and `cluster apply`. Nix-Swarm never rewrites the modules or
+calls the Caddy Admin API. Copy the `.nix` files when adding workloads;
+Nix-Swarm does not maintain a second desired-state format.
 
 The flake uses the project's hardened NixOS module as a secure default. It is
 a service baseline, not a machine-installation or hardware matrix. Native

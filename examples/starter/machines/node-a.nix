@@ -4,6 +4,7 @@
     ./hardware-configuration.nix
     ../profiles/nix-swarm-node.nix
     ../services/example-web.nix
+    ../services/caddy-edge.nix
   ];
 
   networking.hostName = "node-a";

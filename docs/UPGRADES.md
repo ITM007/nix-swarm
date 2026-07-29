@@ -1,59 +1,69 @@
 # Upgrades
 
-Nix-Swarm upgrades are prepared as reviewed Nix changes and applied explicitly.
+Nix-Swarm upgrades are reviewed Nix changes applied explicitly through the
+normal plan/apply workflow.
 
-## Prepare
+## Upgrade the cluster
 
 From the repository checkout:
 
 ```bash
-nix-swarm cluster upgrade prepare --source .
+nix-swarm cluster upgrade --source . --yes
 ```
 
-Preparation:
+This updates the `nix-swarm` flake input, validates the resulting closures, and
+performs the normal sequential health-gated rollout. Review and commit the
+resulting `flake.lock` change afterward. If you want to inspect changes first,
+update the input and lock file manually, then run `cluster plan` before apply.
 
-1. updates only the `nix-swarm` flake input;
-2. evaluates and builds the flake checks without writing another plan artifact;
-3. leaves the resulting `flake.lock` change in the working tree for review;
-4. reports whether the lock file changed.
+`cluster upgrade` is a mutation command and requires `--yes`. It does not skip
+Nix evaluation, closure validation, preflight, credential checks, protocol
+checks, health gates, or rollback behavior.
 
-No host is mutated by `cluster upgrade prepare`.
+## Upgrade application and Caddy configuration
 
-Review the resulting `.nix` changes and `flake.lock`, then use the common
-mutation path:
+Application units, Caddy configuration, routes, TLS policy, and backend
+candidates are ordinary user-owned NixOS configuration. Edit those `.nix`
+modules, review the diff, then run:
 
 ```bash
 nix-swarm cluster plan --source .
 nix-swarm cluster apply --source . --yes
 ```
 
-`--yes` skips only the interactive confirmation. It does not skip evaluation,
-closure validation, preflight, credential mismatch checks, protocol checks, or
-health gates.
+Nix-Swarm deploys the resulting NixOS generation. It never rewrites a Caddyfile,
+creates a generated routing file, or calls the Caddy Admin API.
 
 ## Failure behavior
 
-If flake validation fails, the exact previous `flake.lock` contents are
-restored. The command fails closed and no deployment is attempted.
+All selected closures are built before mutation. Deployment is sequential and
+uses the fixed readiness gate. If activation or readiness fails, attempted hosts
+are rolled back to their previous NixOS generation. A failed Caddy activation
+therefore fails the ordinary host rollout; no special Caddy rollback path is
+needed.
 
-The legacy `cluster upgrade` command remains available for compatibility but
-performs an immediate update-and-deploy operation. New workflows should use
-`cluster upgrade prepare` followed by explicit `cluster apply`.
+If flake evaluation or build validation fails, no host is mutated.
 
-## Compatibility
+## Rollback
 
-Agents advertise a bounded read-only query protocol version and capabilities.
-Rolling upgrades must keep the operator and target protocol versions
-compatible. An incompatible target must be rejected before the first canary
-mutation.
+```bash
+nix-swarm cluster rollback --source . --yes
+```
 
-The read-only status projection reports:
+Rollback activates each target's previous native NixOS generation and runs the
+same health gate. It does not restore arbitrary mutable files, Caddy certificate
+state, or application data. Databases and other stateful workloads require
+their own backup and rollback procedure.
 
-- desired configuration digest;
-- observed configuration digest;
-- desired and observed generation;
-- desired and observed release;
-- drift fields and synchronization status.
+## Operator package
 
-These observations do not become a second desired-state database. Git and Nix
+Update only the local operator profile with:
+
+```bash
+nix profile upgrade operator
+```
+
+Keep the operator and target protocol versions compatible during rolling
+upgrades. The read-only status projection reports desired/observed generations,
+releases, digests, drift, and synchronization state. Git and evaluated Nix
 remain authoritative.

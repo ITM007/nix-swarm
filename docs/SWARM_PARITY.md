@@ -54,9 +54,8 @@ The TUI never mutates state. Nix and Git remain authoritative, while runtime
 observations are diagnostics only. Removed commands must return a concise
 migration error and must not execute compatibility code: use `cluster apply`
 instead of `cluster init`/`ensure`/`rebuild`, `cluster status` instead of
-`cluster members`, `cluster credentials rotate` instead of `cluster
-credentials`, and copy/edit the starter instead of service scaffolding
-commands.
+`cluster members`, `cluster credentials rotate` instead of `cluster credentials`, and copy/edit
+the starter instead of service scaffolding commands.
 
 If automatic manager failover becomes necessary, a small three-node Raft log is
 the next appropriate addition. It should remain optional and must not replace

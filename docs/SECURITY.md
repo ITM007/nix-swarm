@@ -36,6 +36,12 @@ nix-swarm cluster credentials --source . --yes
 
 Configure service ports, routing, and credentials through ordinary NixOS modules rather than Nix-Swarm metadata.
 
+For Caddy, keep the complete routing and TLS policy in the user-owned
+`services.caddy` NixOS module. Nix-Swarm may place `caddy.service` on a declared
+edge node, but it never edits the Caddy configuration, generates a replacement
+Caddyfile, or calls the Caddy Admin API. Restrict backend ports to the trusted
+private interface and use Caddy health checks only for stateless services.
+
 ## SSH and operator authorization
 
 Deploy and query commands require normal host-key verification and batch authentication. Add existing users to the query-socket group declaratively:

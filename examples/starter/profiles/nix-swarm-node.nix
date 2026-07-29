@@ -27,10 +27,7 @@ in
   services.nix-swarm = {
     enable = true;
     hardened = true;
-    resourceLimits = {
-      memoryMax = "384M";
-      tasksMax = 256;
-    };
+
     openFirewall = lib.mkDefault false;
     firewallInterfaces = lib.mkDefault [ ];
     cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";

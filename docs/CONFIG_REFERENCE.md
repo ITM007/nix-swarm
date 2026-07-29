@@ -19,8 +19,8 @@ All desired state is under `services.nix-swarm` in Nix.
 | `operatorUsers` | `[]` | Existing SSH users added to that group |
 | `extraManagedUnits` | `[]` | Exact temporary unit allowlist for migrations |
 | `onFailureUnits` | `[]` | Native systemd `OnFailure=` targets |
-| `MemoryMax` | `512M` | Fixed agent systemd memory limit |
-| `TasksMax` | `512` | Fixed agent systemd task limit |
+| Fixed `MemoryMax` | `512M` | Agent systemd memory limit |
+| Fixed `TasksMax` | `512` | Agent systemd task limit |
 
 `openFirewall = true` is rejected unless `firewallInterfaces` is non-empty.
 
@@ -53,9 +53,7 @@ services.nix-swarm.services.api = {
     maxReplicas = 8;
     cpuTargetPercent = 70;
     memoryTargetPercent = 80;
-
   };
-
 };
 ```
 

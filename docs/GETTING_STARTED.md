@@ -8,17 +8,23 @@ nix-swarm --help
 cd ~/.config/nix-swarm
 ```
 
-The packaged starter is a one-node flake with one example systemd service. Commit this directory to Git after adapting it.
+The packaged starter is a prepared-machine, one-node flake with one example
+systemd service and optional Caddy edge routing. Commit the directory to Git
+after adapting it.
 
-## 2. Adapt the node
+## 2. Prepare and adapt the node
 
-Edit these values:
+Nix-Swarm assumes the target is already running NixOS. Edit these values:
 
-- `flake.nix`: system architecture
-- `cluster.nix`: BEAM node name, labels, `deployHost`, and NixOS configuration name
-- `machines/node-a.nix`: hostname, BEAM node name, and original `system.stateVersion`
+- `flake.nix`: system architecture and flake inputs;
+- `cluster.nix`: BEAM node name, deployment host, NixOS configuration name, and
+  service placement;
+- `machines/node-a.nix`: hostname, deployment public key, and the original
+  `system.stateVersion`;
+- `machines/hardware-configuration.nix`: the real hardware and filesystem
+  configuration from the target.
 
-Capture the target's hardware module:
+Capture hardware configuration from the prepared target:
 
 ```bash
 ssh root@node-a nixos-generate-config --show-hardware-config \
@@ -26,45 +32,67 @@ ssh root@node-a nixos-generate-config --show-hardware-config \
 nix flake lock
 ```
 
-Use a resolvable short name such as `nix-swarm@node-a`, or a resolvable FQDN on every peer. Do not mix short and long distributed-Erlang names.
+Use a resolvable short name such as `nix-swarm@node-a`, or a resolvable FQDN on
+every peer. Do not mix short and long distributed-Erlang names.
 
-## 3. Review and initialize
+## 3. Review and apply
 
-Pre-populate SSH host keys, then run:
+Pre-populate SSH host keys, then use the explicit plan/apply workflow:
 
 ```bash
 ssh -o StrictHostKeyChecking=yes root@node-a true
 nix-swarm cluster plan --source .
-nix-swarm cluster init --source . --yes
+nix-swarm cluster apply --source . --yes
 ```
 
-Initialization securely generates `secrets/nix-swarm.cookie` if absent, installs it on every configured deploy host, and applies the flake. The local cookie is ignored by Git.
+`cluster apply` is the first Nix-Swarm mutation. It evaluates and builds the
+NixOS closures, enrolls only a missing cookie when authorized, activates the
+configuration, and verifies convergence. The local cookie is ignored by Git.
 
 ## 4. Inspect
 
 ```bash
 nix-swarm cluster doctor --source . --target nix-swarm@node-a
 nix-swarm cluster status --source . --target nix-swarm@node-a
+nix-swarm service logs --source . --name example-web --target nix-swarm@node-a
 nix-swarm --source . --target nix-swarm@node-a
 ```
 
-For a non-root operator, declare `operatorUsers = [ "alice" ];` on every node and pass `--ssh-host alice@node-a`.
+For a non-root operator, declare `operatorUsers = [ "alice" ];` on every node
+and pass `--ssh-host alice@node-a`.
 
 ## 5. Add services and nodes
 
-```bash
-nix-swarm service add --source . --name worker --template custom --replicas 2
-```
-
-Each placement entry needs a matching NixOS/systemd unit. `service add` creates one self-contained module with the placement declaration and `%{service}@%{slot}.service`; import that generated file from `cluster.nix`. The command never rewrites an existing Nix module.
-
-For additional nodes, add a `nixosConfigurations` output, a machine module, matching `peers`/`nodes` entries, and keep `lib.nixSwarm.deploymentManifest` generated from those configurations. Run BEAM traffic only over a private overlay:
+Define each service in Nix and provide its matching systemd unit in a normal
+NixOS module:
 
 ```nix
-services.nix-swarm = {
-  openFirewall = true;
-  firewallInterfaces = [ "wg0" ]; # or tailscale0
+services.nix-swarm.services.worker = {
+  replicas = 2;
+  unitTemplate = "worker@%{slot}.service";
+  allowedNodes = [ "nix-swarm@node-a" ];
 };
 ```
 
-Operators use SSH; only agent-to-agent traffic needs TCP `4369` and `4370`.
+Nix-Swarm does not create service files or maintain mutable service state. For
+additional nodes, add a `nixosConfigurations` output, a machine module, matching
+`peers`/`nodes` entries, and the corresponding deployment manifest metadata.
+
+## 6. Optional Caddy edge routing
+
+The starter includes a user-owned Caddy module. Edit
+`services/caddy-edge.nix` to change the site, TLS, or backend policy. Caddy is a
+normal NixOS service and Nix-Swarm manages its placement as
+`caddy.service` on the declared edge node. Candidate backends use Caddy health
+checks; Nix-Swarm never edits the Caddy configuration or calls its Admin API.
+
+Apply Caddy edits through the same reviewed workflow:
+
+```bash
+nix-swarm cluster plan --source .
+nix-swarm cluster apply --source . --yes
+```
+
+The starter keeps Caddy local to the single prepared node. For multi-node
+routing, copy the topology from `examples/config`, list stable candidate
+endpoints, and expose backend ports only on the trusted private interface.
