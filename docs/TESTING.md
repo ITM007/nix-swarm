@@ -19,8 +19,8 @@ one, and a Docker pass must not be reported as native NixOS boot coverage.
 `test/nix_swarm_deploy_state_machine_test.exs` runs a pure deterministic model
 of bootstrap and upgrade command sequences. It uses fixed random seeds rather
 than network or Docker state and checks closure-before-mutation, fail-closed
-credential handling, bootstrap readiness ordering, `maxUnavailable` bounds,
-attempted-only rollback, preservation of unattempted hosts, complete final
+credential handling, bootstrap readiness ordering,
+sequential one-host stages, attempted-host rollback, preservation of unattempted hosts, complete final
 convergence, operator-process isolation, and draining/maintenance removal.
 
 Run it, along with the rollout and preflight contracts, with:

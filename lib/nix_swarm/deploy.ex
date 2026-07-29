@@ -11,8 +11,8 @@ defmodule NixSwarm.Deploy do
   alias NixSwarm.Deploy.{Plan, Preflight, Rollout, Target}
 
   @default_timeout_ms 30 * 60 * 1_000
-  @default_health_timeout_sec 120
-  @default_health_stable_samples 2
+  @health_timeout_sec 120
+  @health_stable_samples 2
   @ssh_options [
     "-o",
     "BatchMode=yes",
@@ -36,8 +36,6 @@ defmodule NixSwarm.Deploy do
       cluster_file: default_cluster_file(resolved_source),
       machines_dir: machines_dir,
       hosts: default_hosts(resolved_source, machines_dir),
-      canary_hosts: [],
-      max_unavailable: 1,
       build_host: nil,
       use_remote_sudo: true,
       command_timeout_ms: @default_timeout_ms
@@ -121,56 +119,11 @@ defmodule NixSwarm.Deploy do
     target_hosts = hosts_from_options(opts, manifest)
     dry_run = Keyword.get(opts, :dry_run, false)
     health_check = Keyword.get(opts, :health_check, true) != false
-    deployment_policy = manifest_value(manifest, "deployment") || %{}
-
-    declared_canary_nodes =
-      deployment_policy
-      |> manifest_value("canaryNodes")
-      |> List.wrap()
-      |> Enum.map(&to_string/1)
-
-    manifest_targets = deployment_targets_from_manifest(manifest)
-
-    declared_canary_hosts =
-      manifest_targets
-      |> Enum.filter(&(&1.node in declared_canary_nodes))
-      |> Enum.map(& &1.host)
-
-    canary_hosts =
-      case Keyword.fetch(opts, :canary_hosts) do
-        {:ok, value} -> parse_hosts(value)
-        :error -> declared_canary_hosts
-      end
-
-    max_unavailable =
-      positive_rollout_width!(
-        Keyword.get(
-          opts,
-          :max_unavailable,
-          manifest_value(deployment_policy, "maxUnavailable") || 1
-        )
-      )
-
-    target_hosts = order_hosts(target_hosts, canary_hosts)
-
-    health_timeout_sec =
-      positive_integer!(
-        manifest_value(deployment_policy, "healthTimeoutSec") || @default_health_timeout_sec,
-        "deployment health timeout"
-      )
-
-    health_stable_samples =
-      positive_integer!(
-        manifest_value(deployment_policy, "stableSamples") || @default_health_stable_samples,
-        "deployment stable samples"
-      )
-
-    auto_rollback = manifest_value(deployment_policy, "autoRollback") != false
-
-    if health_stable_samples > health_timeout_sec do
-      raise ArgumentError,
-            "deployment stable samples cannot exceed the health timeout in seconds"
-    end
+    # Deployment policy is deliberately fixed: one host at a time, with a
+    # bounded health gate and rollback attempted hosts on every failure.
+    target_hosts = Enum.sort(target_hosts)
+    health_timeout_sec = @health_timeout_sec
+    health_stable_samples = @health_stable_samples
 
     validate_inputs!(source, target_hosts, flake)
 
@@ -209,11 +162,7 @@ defmodule NixSwarm.Deploy do
       end)
 
     rollout =
-      Rollout.plan(results,
-        max_unavailable: max_unavailable,
-        canary_hosts: canary_hosts,
-        classifications: Keyword.get(opts, :target_classifications, %{})
-      )
+      Rollout.plan(results, classifications: Keyword.get(opts, :target_classifications, %{}))
 
     batches = rollout.stages
 
@@ -232,8 +181,6 @@ defmodule NixSwarm.Deploy do
         cluster_file: cluster_file,
         machines_dir: machines_dir,
         hosts: target_hosts,
-        canary_hosts: Enum.filter(target_hosts, &(&1 in canary_hosts)),
-        max_unavailable: max_unavailable,
         batches: batches,
         rollout: rollout,
         bootstrap_hosts: Enum.map(rollout.bootstrap, & &1.host),
@@ -243,7 +190,6 @@ defmodule NixSwarm.Deploy do
         health_check: health_check,
         health_timeout_sec: health_timeout_sec,
         health_stable_samples: health_stable_samples,
-        auto_rollback: auto_rollback,
         deployment_manifest: manifest,
         validation: %{
           targets: validation_targets,
@@ -695,9 +641,6 @@ defmodule NixSwarm.Deploy do
     end
   end
 
-  defp maybe_rollback_attempted(_attempted, %{auto_rollback: false}),
-    do: "automatic rollback disabled by Nix policy"
-
   defp maybe_rollback_attempted(attempted, plan) do
     targets = Enum.uniq_by(attempted, & &1.host)
 
@@ -995,21 +938,6 @@ defmodule NixSwarm.Deploy do
 
   defp positive_timeout!(timeout),
     do: raise(ArgumentError, "invalid command timeout: #{inspect(timeout)}")
-
-  defp positive_integer!(value, _label) when is_integer(value) and value > 0, do: value
-
-  defp positive_integer!(value, label),
-    do: raise(ArgumentError, "#{label} must be a positive integer, got: #{inspect(value)}")
-
-  defp positive_rollout_width!(width) when is_integer(width) and width > 0, do: width
-
-  defp positive_rollout_width!(width),
-    do: raise(ArgumentError, "max_unavailable must be positive, got: #{inspect(width)}")
-
-  defp order_hosts(hosts, canary_hosts) do
-    canaries = Enum.filter(canary_hosts, &(&1 in hosts))
-    canaries ++ Enum.reject(hosts, &(&1 in canaries))
-  end
 
   defp machine_host(machine_file) do
     machine_file |> Path.basename() |> Path.rootname()

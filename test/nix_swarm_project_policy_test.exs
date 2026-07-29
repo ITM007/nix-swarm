@@ -23,6 +23,86 @@ defmodule NixSwarmProjectPolicyTest do
     refute function_exported?(NixSwarm.API, :restart_machine, 1)
   end
 
+  test "the public CLI contract is intentionally small" do
+    help = capture_help()
+
+    for command <- [
+          "cluster plan",
+          "cluster apply",
+          "cluster rollback",
+          "cluster upgrade",
+          "cluster credentials rotate",
+          "cluster doctor",
+          "cluster status",
+          "service logs",
+          "service restart"
+        ] do
+      assert help =~ command, "supported command missing from help: #{command}"
+    end
+
+    for removed <- [
+          "cluster init",
+          "cluster ensure",
+          "cluster rebuild",
+          "cluster members",
+          "cluster upgrade prepare",
+          "service create",
+          "service add",
+          "service list"
+        ] do
+      refute help =~ removed, "removed command still advertised: #{removed}"
+    end
+  end
+
+  test "the Nix module does not expose compatibility or rollout tuning options" do
+    module = File.read!("nix/nix-swarm/module.nix")
+
+    for forbidden <- [
+          "ingress",
+          "healthcheck",
+          "settings",
+          "preferredNodes",
+          "labels",
+          "constraints",
+          "maxReplicasPerNode",
+          "readiness",
+          "sampleWindowSec",
+          "scaleUpCooldownSec",
+          "scaleDownCooldownSec",
+          "maxStep",
+          "connectIntervalMs",
+          "reconcileIntervalMs",
+          "autoscaleIntervalMs",
+          "failureGraceMs",
+          "recoveryStabilizationMs",
+          "commandTimeoutMs",
+          "generation",
+          "healthTimeoutSec",
+          "stableSamples",
+          "canaryNodes",
+          "maxUnavailable",
+          "autoRollback"
+        ] do
+      refute Regex.match?(~r/\b#{Regex.escape(forbidden)}\b/, module),
+             "#{forbidden} must not be a public Nix option"
+    end
+
+    for forbidden <- [
+          "connect_interval_ms",
+          "reconcile_interval_ms",
+          "autoscale_interval_ms",
+          "failure_grace_ms",
+          "recovery_stabilization_ms",
+          "command_timeout_ms"
+        ] do
+      refute module =~ forbidden, "#{forbidden} must not be emitted in the generated manifest"
+    end
+  end
+
+  defp capture_help do
+    ExUnit.CaptureIO.capture_io(fn -> assert :ok == NixSwarm.CLI.run(["help"]) end)
+  end
+
   test "canonical onboarding starts with a prepared NixOS machine" do
     docs = [
       "README.md",
@@ -49,6 +129,24 @@ defmodule NixSwarmProjectPolicyTest do
     refute Regex.match?(~r/production (?:ready|readiness).*bare.?metal/i, text)
     refute Regex.match?(~r/(?:release|product) (?:requirement|gate).*nixos-anywhere/i, text)
     refute Regex.match?(~r/(?:release|product) (?:requirement|gate).*Disko/i, text)
+  end
+
+  test "the starter contains only prepared-machine Nix configuration" do
+    starter = Path.expand("../examples/starter", __DIR__)
+    flake = File.read!(Path.join(starter, "flake.nix"))
+    readme = File.read!(Path.join(starter, "README.md"))
+
+    refute flake =~ "disko"
+    refute flake =~ "nixos-anywhere"
+    refute readme =~ "nixos-anywhere"
+    refute readme =~ "Disko"
+    refute File.exists?(Path.join(starter, "disko"))
+    refute File.exists?(Path.join(starter, "machines/node-c"))
+    refute File.exists?(Path.join(starter, "machines/hardened-node.nix"))
+
+    assert flake =~ "node-a"
+    assert readme =~ "already running NixOS"
+    assert File.exists?(Path.join(starter, "services/example-web.nix"))
   end
 
   test "the old roadmap preserves the prepared-host release boundary" do

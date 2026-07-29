@@ -165,8 +165,7 @@ defmodule NixSwarm.API do
   def cluster_overview do
     %{
       members: cluster_members(),
-      status: cluster_status(),
-      ingress: ingress_info()
+      status: cluster_status()
     }
   end
 
@@ -214,12 +213,6 @@ defmodule NixSwarm.API do
       cluster_logs: cluster_logs,
       errors: errors
     }
-  end
-
-  @doc "Returns ingress configuration from the current node's runtime config."
-  def ingress_info do
-    config = NixSwarm.Config.current()
-    Map.get(config, :ingress, %{sites: %{}})
   end
 
   @doc "Triggers immediate reconciliation across all live cluster nodes."

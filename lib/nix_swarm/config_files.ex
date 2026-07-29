@@ -138,7 +138,6 @@ defmodule NixSwarm.ConfigFiles do
       deploy_host =
         opts |> Keyword.get(:deploy_host, node_host(node_name)) |> to_string() |> String.trim()
 
-      labels = opts |> Keyword.get(:labels, []) |> normalize_label_list()
       module_path = relative_nix_path(Path.join(paths.source, "nix/nix-swarm/module.nix"), output)
       cluster_path = relative_nix_path(paths.cluster_file, output)
 
@@ -158,7 +157,6 @@ defmodule NixSwarm.ConfigFiles do
           cookieFile = #{NixSwarm.nix_string_literal(cookie_file)};
           peers = lib.mkAfter [ #{NixSwarm.nix_string_literal(node_name)} ];
           nodes.#{nix_attr_name(node_name)} = {
-            labels = #{nix_string_list(labels)};
             deployHost = #{NixSwarm.nix_string_literal(deploy_host)};
             nixosConfiguration = #{NixSwarm.nix_string_literal(Path.basename(output, ".nix"))};
           };
@@ -196,8 +194,6 @@ defmodule NixSwarm.ConfigFiles do
             services.nix-swarm.services.#{nix_attr_name(service_name)} = {
               replicas = #{normalize_replicas(Keyword.get(opts, :replicas, 1))};
           #{unit_template_entry(Keyword.get(opts, :unit_template))}
-              constraints = #{nix_string_list(normalize_label_list(Keyword.get(opts, :constraints, [])))};
-              preferredNodes = #{nix_string_list(normalize_node_list(Keyword.get(opts, :preferred_nodes, Keyword.get(opts, :preferredNodes, []))))};
             };
           }
           """
@@ -400,30 +396,6 @@ defmodule NixSwarm.ConfigFiles do
   defp strip_common_prefix(target_parts, from_parts), do: {target_parts, from_parts}
 
   defp nix_attr_name(value), do: NixSwarm.nix_string_literal(to_string(value))
-
-  defp nix_string_list(values) do
-    values
-    |> List.wrap()
-    |> Enum.map(&NixSwarm.nix_string_literal/1)
-    |> Enum.join(" ")
-    |> then(&"[ #{&1} ]")
-  end
-
-  defp normalize_label_list(value) when is_binary(value) do
-    value
-    |> String.split([",", " "], trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-  end
-
-  defp normalize_label_list(values) do
-    values
-    |> List.wrap()
-    |> Enum.map(&(&1 |> to_string() |> String.trim()))
-    |> Enum.reject(&(&1 == ""))
-  end
-
-  defp normalize_node_list(values), do: normalize_label_list(values)
 
   defp normalize_replicas(value) when is_integer(value) and value >= 0, do: value
 

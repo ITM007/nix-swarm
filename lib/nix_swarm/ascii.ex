@@ -111,36 +111,17 @@ defmodule NixSwarm.Ascii do
 
   def cluster_map(status, tick) do
     step = rem(div(tick * 5, 24), 8)
-    ingress_idx = if step < 4, do: step, else: nil
-    fanout_progress = if step >= 4, do: step - 4, else: nil
-
-    traffic =
-      Enum.map(0..3, fn i ->
-        char =
-          if i == ingress_idx do
-            Span.new("v", style: %Style{fg: :magenta, modifiers: [:bold]})
-          else
-            Span.new("|", style: %Style{fg: :dark_gray})
-          end
-
-        Line.new([char])
-      end)
+    fanout_progress = step
 
     header =
       [
         Line.new([
-          Span.new("[ EXTERNAL TRAFFIC ]", style: %Style{fg: :cyan, modifiers: [:bold]})
+          Span.new(
+            "====================== [ SWARM NETWORK ] ======================",
+            style: %Style{fg: :blue, modifiers: [:bold]}
+          )
         ])
-      ] ++
-        traffic ++
-        [
-          Line.new([
-            Span.new(
-              "====================== [ SWARM NETWORK ] ======================",
-              style: %Style{fg: :blue, modifiers: [:bold]}
-            )
-          ])
-        ]
+      ]
 
     nodes = Enum.sort_by(status.nodes, fn {n, _} -> n end)
     chunks = Enum.chunk_every(nodes, 3)

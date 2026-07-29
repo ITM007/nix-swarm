@@ -73,7 +73,7 @@ defmodule NixSwarm.Executor.Fake do
 
         %{
           cpu: %{usage_ns: counter * 1_000_000},
-          memory: %{used: multiplier * 64 * 1024 * 1024},
+          memory: %{used: multiplier * 64 * 1024 * 1024, max: 512 * 1024 * 1024},
           disk: %{used: multiplier * 256 * 1024 * 1024},
           network: %{counter: counter * 16_384},
           started_at_ns: started_at_ns
@@ -85,6 +85,11 @@ defmodule NixSwarm.Executor.Fake do
   end
 
   def unit_cpu_usage(unit, config), do: unit_metrics(unit, config).cpu.usage_ns
+
+  def unit_memory_usage(unit, config) do
+    metrics = unit_metrics(unit, config)
+    %{current: metrics.memory.used, max: metrics.memory.max}
+  end
 
   defp transition_unit(unit, action, transient_state, final_state, config) do
     with :ok <- ensure_node_root(config),
@@ -115,7 +120,7 @@ defmodule NixSwarm.Executor.Fake do
   defp default_metrics,
     do: %{
       cpu: %{usage_ns: 0},
-      memory: %{used: 0},
+      memory: %{used: 0, max: nil},
       disk: %{used: 0},
       network: %{counter: 0},
       started_at_ns: 0

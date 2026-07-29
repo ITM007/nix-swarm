@@ -17,6 +17,38 @@ controls, Mnesia database, or consensus layer without an explicit scope change.
 Temporary duplicate instances during a network partition are an accepted
 leaderless tradeoff.
 
+## Simplified public contract
+
+The supported operator surface is deliberately small:
+
+- launch the read-only TUI, or use `help` and `version`;
+- inspect with `cluster doctor`, `cluster status`, and `service logs`;
+- preview and mutate Nix with `cluster plan` and `cluster apply --yes`;
+- use `cluster rollback --yes`, `cluster upgrade --yes`, and
+  `cluster credentials rotate --yes` for explicit deployment maintenance;
+- use `service restart --name NAME --yes` for a bounded maintenance restart.
+
+Starting and stopping are declarative: set `replicas` above zero or to zero in
+Nix and apply. Databases, volumes, storage, live migration, and machine
+provisioning are outside the product. CPU-and-memory autoscaling is limited to
+existing declared service capacity; it never rewrites Nix or manages a
+stateful workload.
+
+The TUI is a read-only projection. Nix files and Git are the authoritative
+record; runtime observations are not a second desired-state store. Removed
+commands return a migration error rather than silently invoking compatibility
+paths. Users should replace old bootstrap aliases with `cluster apply`,
+`cluster members` with `cluster status`, and service scaffolding commands with
+an edited copy of `examples/starter`.
+
+Public Nix service configuration is intentionally limited to replicas, an
+optional unit template, allowed nodes, and the small autoscaling policy.
+Ingress, healthcheck metadata, arbitrary settings, preferred nodes,
+labels/constraints, per-node replica caps, readiness/runtime timing, and
+canary/parallel rollout controls are not product options. Configure routing,
+service readiness, credentials, and exceptional systemd behavior in the
+service's own NixOS modules or standard systemd overrides.
+
 ## Product boundary
 
 Nix-Swarm starts with a target that is **already running NixOS**. Users own

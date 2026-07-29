@@ -52,6 +52,19 @@ defmodule NixSwarmSecurityTest do
     assert {:error, :request_too_large} = QueryProtocol.decode_request(oversized)
   end
 
+  test "unsupported operator mutations fail before reaching compatibility code" do
+    for argv <- [
+          ["cluster", "init"],
+          ["cluster", "ensure"],
+          ["cluster", "rebuild"],
+          ["service", "list"]
+        ] do
+      assert {:error, message} = NixSwarm.CLI.run(argv)
+      assert message =~ "removed"
+      refute message =~ "changes machines"
+    end
+  end
+
   test "local query socket returns membership without exposing arbitrary MFA" do
     socket_path = :sys.get_state(NixSwarm.QueryServer).path
 

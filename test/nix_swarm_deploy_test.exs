@@ -159,14 +159,15 @@ defmodule NixSwarmDeployTest do
            ]
   end
 
-  test "the packaged starter plans its declared SSH targets and rollout policy" do
+  test "the packaged starter plans its prepared machine and rollout policy" do
     source = Path.expand("../examples/starter", __DIR__)
     plan = NixSwarm.Deploy.plan(source: source, dry_run: true)
 
-    assert plan.hosts == ["root@node-c"]
-    assert plan.configurations == %{"root@node-c" => "node-c"}
-    assert plan.canary_hosts == ["root@node-c"]
-    assert plan.max_unavailable == 1
+    assert plan.hosts == ["root@node-a"]
+    assert plan.configurations == %{"root@node-a" => "node-a"}
+    assert plan.health_timeout_sec == 120
+    assert plan.health_stable_samples == 2
+    refute Map.has_key?(plan, :auto_rollback)
   end
 
   test "deployment plan separates bootstrap hosts from existing rollout hosts" do
@@ -184,8 +185,6 @@ defmodule NixSwarmDeployTest do
           "root@example-node-a.local" => :existing_outdated,
           "root@example-node-b.local" => :new_nixos_host
         },
-        canary_hosts: ["root@example-node-a.local"],
-        max_unavailable: 1,
         dry_run: true
       )
 
@@ -198,15 +197,13 @@ defmodule NixSwarmDeployTest do
            ]
   end
 
-  test "plan orders canaries first and preserves bounded rollout batches" do
+  test "plan deploys every host sequentially in stable host order" do
     source = Path.expand("..", __DIR__)
 
     plan =
       NixSwarm.Deploy.plan(
         source: source,
         hosts: ["root@example-node-b.local", "root@example-node-a.local"],
-        canary_hosts: ["root@example-node-a.local"],
-        max_unavailable: 1,
         configurations: %{
           "root@example-node-a.local" => "node-a",
           "root@example-node-b.local" => "node-b"
@@ -214,7 +211,8 @@ defmodule NixSwarmDeployTest do
       )
 
     assert plan.hosts == ["root@example-node-a.local", "root@example-node-b.local"]
-    assert plan.canary_hosts == ["root@example-node-a.local"]
+    refute Map.has_key?(plan, :canary_hosts)
+    refute Map.has_key?(plan, :max_unavailable)
 
     assert Enum.map(plan.batches, &Enum.map(&1, fn result -> result.configuration end)) == [
              ["node-a"],
@@ -238,20 +236,15 @@ defmodule NixSwarmDeployTest do
           "deployHost" => "root@node-b",
           "nixosConfiguration" => "node-b"
         }
-      },
-      "deployment" => %{
-        "healthTimeoutSec" => 45,
-        "stableSamples" => 3,
-        "autoRollback" => true
       }
     }
 
     plan = NixSwarm.Deploy.plan(source: source, deployment_manifest: manifest, dry_run: true)
 
     assert plan.hosts == ["root@node-a"]
-    assert plan.health_timeout_sec == 45
-    assert plan.health_stable_samples == 3
-    assert plan.auto_rollback
+    assert plan.health_timeout_sec == 120
+    assert plan.health_stable_samples == 2
+    refute Map.has_key?(plan, :auto_rollback)
   end
 
   test "deployment manifests fail closed on unsupported schemas" do

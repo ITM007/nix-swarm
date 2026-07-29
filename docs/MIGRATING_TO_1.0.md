@@ -26,10 +26,10 @@ using `cluster doctor`.
 
 ## Configuration changes
 
-- `healthcheck` is display-only compatibility metadata; health is derived from
-  systemd unit state and readiness.
-- Ingress entries are routing metadata. Configure nginx, HAProxy, or another
-  load balancer explicitly.
+- Remove `healthcheck`, `settings`, and `ingress` metadata from Nix-Swarm service
+  definitions. Configure health, routing, ports, and credentials directly with
+  ordinary NixOS/systemd modules; Nix-Swarm only derives readiness from unit state.
+- Configure nginx, HAProxy, or another load balancer explicitly in NixOS.
 - `active`, `draining`, and `maintenance` node availability replace ad-hoc
   runtime placement changes.
 - Optional autoscaling is CPU-only, bounded by Nix, and intended only for

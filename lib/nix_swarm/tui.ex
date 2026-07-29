@@ -9,7 +9,7 @@ defmodule NixSwarm.TUI do
   alias ExRatatui.Style
   alias ExRatatui.Text.{Line, Span}
   alias ExRatatui.Widgets.{Block, Gauge, Paragraph, Table, Tabs, Throbber}
-  alias NixSwarm.{Ascii, ClusterLogs, ConfigFiles, Deploy, Remote, Update}
+  alias NixSwarm.{Ascii, ClusterLogs, ConfigFiles, Remote}
   alias NixSwarm.TUI.{Runtime, State}
 
   require Logger
@@ -26,8 +26,6 @@ defmodule NixSwarm.TUI do
     logs: [:logs_content, :logs_filter]
   }
   @input_refresh_debounce_ms 750
-  @read_only_message "read-only console: change Nix code, then use `nix-swarm cluster plan/apply`"
-
   @type state :: map()
 
   @doc "The operator TUI is intentionally a read-only projection of cluster state."
@@ -52,8 +50,7 @@ defmodule NixSwarm.TUI do
           lines: Keyword.get(opts, :lines, @default_lines),
           refresh_ms: Keyword.get(opts, :refresh_ms, @default_refresh_ms),
           config_paths: config_paths,
-          owner_pid: self(),
-          deploy_fun: Keyword.get(opts, :deploy_fun, &Deploy.run/1)
+          owner_pid: self()
         ],
         %{},
         Keyword.get(opts, :editor_runner, &run_system_editor/1)
@@ -172,74 +169,6 @@ defmodule NixSwarm.TUI do
   end
 
   def handle_event(%Event.Mouse{}, %{help_overlay: true} = state) do
-    {:noreply, note_input(state)}
-  end
-
-  def handle_event(
-        %Event.Key{code: "c", kind: "press"},
-        %{rollout_confirmation: confirmation} = state
-      )
-      when not is_nil(confirmation) do
-    {:noreply, state |> set_rollout_scope(:cluster) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "m", kind: "press"},
-        %{rollout_confirmation: confirmation} = state
-      )
-      when not is_nil(confirmation) do
-    {:noreply, state |> set_rollout_scope(:selected_machine) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: code, kind: "press"},
-        %{rollout_confirmation: confirmation} = state
-      )
-      when not is_nil(confirmation) and code in ["u", "enter"] do
-    {:noreply, state |> confirm_rollout() |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "esc", kind: "press"},
-        %{rollout_confirmation: confirmation} = state
-      )
-      when not is_nil(confirmation) do
-    {:noreply, state |> cancel_rollout_confirmation() |> note_input()}
-  end
-
-  def handle_event(%Event.Key{kind: "press"}, %{rollout_confirmation: confirmation} = state)
-      when not is_nil(confirmation) do
-    {:noreply, note_input(state)}
-  end
-
-  def handle_event(%Event.Mouse{}, %{rollout_confirmation: confirmation} = state)
-      when not is_nil(confirmation) do
-    {:noreply, note_input(state)}
-  end
-
-  def handle_event(
-        %Event.Key{code: code, kind: "press"},
-        %{action_confirmation: confirmation} = state
-      )
-      when not is_nil(confirmation) and code in ["y", "enter"] do
-    {:noreply, state |> confirm_action_confirmation() |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: code, kind: "press"},
-        %{action_confirmation: confirmation} = state
-      )
-      when not is_nil(confirmation) and code in ["n", "esc"] do
-    {:noreply, state |> cancel_action_confirmation() |> note_input()}
-  end
-
-  def handle_event(%Event.Key{kind: "press"}, %{action_confirmation: confirmation} = state)
-      when not is_nil(confirmation) do
-    {:noreply, note_input(state)}
-  end
-
-  def handle_event(%Event.Mouse{}, %{action_confirmation: confirmation} = state)
-      when not is_nil(confirmation) do
     {:noreply, note_input(state)}
   end
 
@@ -428,111 +357,6 @@ defmodule NixSwarm.TUI do
     {:noreply, state |> request_refresh(:manual) |> note_input()}
   end
 
-  def handle_event(
-        %Event.Key{code: "b", modifiers: modifiers, kind: "press"},
-        %{active_view: view} = state
-      )
-      when view in [:dashboard, :services] and modifiers in [nil, []] do
-    {:noreply, state |> request_service_action(:start) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "b", modifiers: modifiers, kind: "press"},
-        %{active_view: :machines} = state
-      )
-      when modifiers in [nil, []] do
-    {:noreply, state |> request_node_service_action(:start) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "z", modifiers: modifiers, kind: "press"},
-        %{active_view: view} = state
-      )
-      when view in [:dashboard, :services] and modifiers in [nil, []] do
-    {:noreply, state |> request_service_action(:stop) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "z", modifiers: modifiers, kind: "press"},
-        %{active_view: :machines} = state
-      )
-      when modifiers in [nil, []] do
-    {:noreply, state |> request_node_service_action(:stop) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "x", modifiers: modifiers, kind: "press"},
-        %{active_view: view} = state
-      )
-      when view in [:dashboard, :services] and modifiers in [nil, []] do
-    {:noreply, state |> request_restart() |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "x", modifiers: modifiers, kind: "press"},
-        %{active_view: :machines} = state
-      )
-      when modifiers in [nil, []] do
-    {:noreply, state |> request_node_service_action(:restart) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "R", modifiers: modifiers, kind: "press"},
-        %{active_view: :machines} = state
-      )
-      when modifiers in [nil, []] do
-    {:noreply, state |> request_machine_action(:restart) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "Z", modifiers: modifiers, kind: "press"},
-        %{active_view: :machines} = state
-      )
-      when modifiers in [nil, []] do
-    {:noreply, state |> request_machine_action(:shutdown) |> note_input()}
-  end
-
-  def handle_event(%Event.Key{code: "c", kind: "press"}, state) do
-    {:noreply, state |> request_reconcile() |> note_input()}
-  end
-
-  def handle_event(%Event.Key{code: "u", kind: "press"}, state) do
-    {:noreply, state |> request_update() |> note_input()}
-  end
-
-  def handle_event(%Event.Key{code: code, modifiers: modifiers, kind: "press"}, state)
-      when code == "P" or (code == "p" and modifiers == ["shift"]) do
-    {:noreply, state |> request_apply(false) |> note_input()}
-  end
-
-  def handle_event(%Event.Key{code: "y", kind: "press"}, state) do
-    {:noreply, state |> request_apply(true) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "a", modifiers: modifiers, kind: "press"},
-        %{active_view: view} = state
-      )
-      when view in [:machines, :services] and modifiers in [nil, []] do
-    {:noreply, state |> open_add_config_prompt(view) |> note_input()}
-  end
-
-  def handle_event(
-        %Event.Key{code: "e", modifiers: modifiers, kind: "press"},
-        %{active_view: view} = state
-      )
-      when view in [:machines, :services] and modifiers in [nil, []] do
-    external_action_transition(edit_selected_config_file(state, view))
-  end
-
-  def handle_event(
-        %Event.Key{code: "d", modifiers: modifiers, kind: "press"},
-        %{active_view: view} = state
-      )
-      when view in [:machines, :services] and modifiers in [nil, []] do
-    {:noreply, state |> delete_selected_config(view) |> note_input()}
-  end
-
   def handle_event(event, state) do
     Logger.debug("TUI unhandled event: #{inspect(event)}")
     {:noreply, state}
@@ -603,7 +427,6 @@ defmodule NixSwarm.TUI do
           |> Map.put(:job_ref, nil)
           |> Map.put(:job_started_at_ms, nil)
           |> queue_refresh(:auto)
-          |> maybe_run_pending_operator_action()
 
         {:noreply, maybe_flush_pending_refresh(updated_state)}
 
@@ -628,9 +451,7 @@ defmodule NixSwarm.TUI do
           |> Map.put(:flash, Map.get(payload, :flash, state.flash))
           |> Map.put(:last_error, nil)
           |> Map.put(:last_rollout, Map.get(payload, :rollout, state.last_rollout))
-          |> Map.put(:apply_result, Map.get(payload, :apply_result, state.apply_result))
           |> apply_snapshot(payload.snapshot)
-          |> maybe_run_pending_operator_action()
 
         maybe_notify_test(updated_state, payload)
         {:noreply, maybe_flush_pending_refresh(updated_state)}
@@ -659,7 +480,6 @@ defmodule NixSwarm.TUI do
             flash: "last action failed",
             last_error: message
         }
-        |> maybe_run_pending_operator_action()
 
       maybe_notify_test(updated_state, %{error: message})
       {:noreply, maybe_flush_pending_refresh(updated_state)}
@@ -687,483 +507,6 @@ defmodule NixSwarm.TUI do
   end
 
   defp request_refresh(state, trigger), do: queue_refresh(state, trigger)
-
-  defp request_service_action(%{operator_mode: :read_only} = state, _action),
-    do: put_flash(state, @read_only_message)
-
-  defp request_service_action(%{selected_service: nil} = state, action) do
-    put_flash(state, "select a service before #{service_action_verb(action)}")
-  end
-
-  defp request_service_action(%{job_ref: nil, selected_service: service} = state, action) do
-    launch_service_action(state, action, service)
-  end
-
-  defp request_service_action(%{selected_service: service} = state, action) do
-    queue_operator_action(
-      state,
-      {:service_action, action, service},
-      "#{service_action_label(action)} queued for #{service}"
-    )
-  end
-
-  defp launch_service_action(state, action, service) do
-    launch_job(state, {action, service}, fn ->
-      node = Remote.connect!(state.remote)
-      results = Remote.rpc!(node, NixSwarm.API, service_action_api(action), [service])
-      snapshot = fetch_snapshot(state.remote, state.lines, service, state.selected_node)
-
-      %{
-        snapshot: snapshot,
-        flash: service_action_message(action, service, results)
-      }
-    end)
-  end
-
-  defp request_node_service_action(%{operator_mode: :read_only} = state, _action),
-    do: put_flash(state, @read_only_message)
-
-  defp request_node_service_action(%{selected_node: nil} = state, action) do
-    put_flash(state, "select a machine before #{service_action_verb(action)} a local service")
-  end
-
-  defp request_node_service_action(%{selected_service: nil} = state, action) do
-    put_flash(state, "select a service before #{service_action_verb(action)} it on one machine")
-  end
-
-  defp request_node_service_action(
-         %{job_ref: nil, selected_node: node, selected_service: service} = state,
-         action
-       ) do
-    launch_node_service_action(state, action, node, service)
-  end
-
-  defp request_node_service_action(
-         %{selected_node: node, selected_service: service} = state,
-         action
-       ) do
-    queue_operator_action(
-      state,
-      {:node_service_action, action, node, service},
-      "#{service_action_label(action)} queued for #{service} on #{node_hostname(state.overview, node)}"
-    )
-  end
-
-  defp launch_node_service_action(state, action, node, service) do
-    launch_job(state, {:node_service_action, action, node, service}, fn ->
-      target_node = Remote.connect!(state.remote)
-
-      result =
-        Remote.rpc!(target_node, NixSwarm.API, node_service_action_api(action), [node, service])
-
-      snapshot = fetch_snapshot(state.remote, state.lines, service, node)
-
-      %{
-        snapshot: snapshot,
-        flash:
-          node_service_action_message(
-            action,
-            service,
-            node,
-            result,
-            snapshot.overview || state.overview
-          )
-      }
-    end)
-  end
-
-  defp request_restart(state), do: request_service_action(state, :restart)
-
-  defp request_machine_action(%{operator_mode: :read_only} = state, _action),
-    do: put_flash(state, @read_only_message)
-
-  defp request_machine_action(%{selected_node: nil} = state, action) do
-    put_flash(state, "select a machine before #{machine_action_verb(action)}")
-  end
-
-  defp request_machine_action(
-         %{job_ref: nil, action_confirmation: nil, selected_node: node} = state,
-         action
-       ) do
-    open_machine_action_confirmation(state, action, node)
-  end
-
-  defp request_machine_action(%{selected_node: node} = state, action) do
-    queue_operator_action(
-      state,
-      {:machine_action, action, node},
-      "#{machine_action_label(action)} queued for #{node_hostname(state.overview, node)}"
-    )
-  end
-
-  defp open_machine_action_confirmation(state, action, node) do
-    %{state | action_confirmation: build_action_confirmation(action, node, state.overview)}
-    |> put_flash(
-      "#{machine_action_label(action)} ready: press y or enter to confirm, esc to cancel"
-    )
-  end
-
-  defp confirm_action_confirmation(%{operator_mode: :read_only} = state) do
-    state |> Map.put(:action_confirmation, nil) |> put_flash(@read_only_message)
-  end
-
-  defp confirm_action_confirmation(%{action_confirmation: %{action: action, node: node}} = state) do
-    launch_job(
-      state
-      |> Map.put(:action_confirmation, nil)
-      |> put_pending_machine_action(node, action),
-      {action, node},
-      fn ->
-        target_node = Remote.connect!(state.remote)
-        result = Remote.rpc!(target_node, NixSwarm.API, machine_action_api(action), [node])
-
-        snapshot =
-          if target_node == node do
-            current_state_snapshot(state)
-          else
-            fetch_snapshot(state.remote, state.lines, state.selected_service, node)
-          end
-
-        %{
-          snapshot: snapshot,
-          flash: machine_action_message(action, node, result, snapshot.overview || state.overview)
-        }
-      end
-    )
-  end
-
-  defp confirm_action_confirmation(state), do: state
-
-  defp cancel_action_confirmation(state) do
-    %{state | action_confirmation: nil}
-    |> put_flash("machine action cancelled")
-  end
-
-  defp request_reconcile(%{operator_mode: :read_only} = state),
-    do: put_flash(state, @read_only_message)
-
-  defp request_reconcile(%{job_ref: nil} = state) do
-    launch_reconcile(state)
-  end
-
-  defp request_reconcile(state) do
-    queue_operator_action(state, :reconcile, "reconcile queued")
-  end
-
-  defp launch_reconcile(state) do
-    launch_job(state, :reconcile, fn ->
-      node = Remote.connect!(state.remote)
-      results = Remote.rpc!(node, NixSwarm.API, :reconcile_cluster, [])
-
-      snapshot =
-        fetch_snapshot(state.remote, state.lines, state.selected_service, state.selected_node)
-
-      %{
-        snapshot: snapshot,
-        flash: reconcile_message(results)
-      }
-    end)
-  end
-
-  defp request_update(%{operator_mode: :read_only} = state),
-    do: put_flash(state, @read_only_message)
-
-  defp request_update(%{job_ref: nil, rollout_confirmation: nil} = state) do
-    open_rollout_confirmation(state)
-  end
-
-  defp request_update(%{job_ref: nil} = state) do
-    confirm_rollout(state)
-  end
-
-  defp request_update(state) do
-    queue_operator_action(state, :update, "cluster update queued")
-  end
-
-  defp open_rollout_confirmation(state) do
-    state
-    |> put_rollout_confirmation(default_rollout_scope(state))
-    |> put_flash("rollout ready: press u or enter to confirm, esc to cancel")
-  end
-
-  defp confirm_rollout(%{operator_mode: :read_only} = state) do
-    state |> Map.put(:rollout_confirmation, nil) |> put_flash(@read_only_message)
-  end
-
-  defp confirm_rollout(%{rollout_confirmation: %{deploy_opts: deploy_opts, scope: scope}} = state) do
-    launch_job(%{state | rollout_confirmation: nil}, {:update, scope}, fn ->
-      update_result = state.update_fun.(deploy_opts, state.remote)
-
-      snapshot =
-        fetch_snapshot(state.remote, state.lines, state.selected_service, state.selected_node)
-
-      %{
-        snapshot: snapshot,
-        flash: update_message(update_result),
-        rollout: update_result
-      }
-    end)
-  end
-
-  defp cancel_rollout_confirmation(state) do
-    %{state | rollout_confirmation: nil}
-    |> put_flash("rollout cancelled")
-  end
-
-  defp request_apply(%{operator_mode: :read_only} = state, _dry_run?),
-    do: put_flash(state, @read_only_message)
-
-  defp request_apply(%{job_ref: nil} = state, dry_run?) do
-    launch_apply(state, dry_run?)
-  end
-
-  defp request_apply(state, dry_run?) do
-    queue_operator_action(
-      state,
-      {:apply, dry_run?},
-      if(dry_run?, do: "dry-run queued", else: "apply queued")
-    )
-  end
-
-  defp launch_apply(state, dry_run?) do
-    launch_job(state, if(dry_run?, do: :dry_run, else: :apply), fn ->
-      result =
-        state.deploy_fun.(
-          source: state.config_paths.source,
-          cluster_file: state.config_paths.cluster_file,
-          machines_dir: state.config_paths.machines_dir,
-          dry_run: dry_run?
-        )
-
-      snapshot =
-        fetch_snapshot(state.remote, state.lines, state.selected_service, state.selected_node)
-
-      %{
-        snapshot: snapshot,
-        flash: apply_message(result),
-        apply_result: result
-      }
-    end)
-  end
-
-  defp service_action_api(:start), do: :start_service
-  defp service_action_api(:stop), do: :stop_service
-  defp service_action_api(:restart), do: :restart_service
-
-  defp node_service_action_api(:start), do: :start_service_on_node
-  defp node_service_action_api(:stop), do: :stop_service_on_node
-  defp node_service_action_api(:restart), do: :restart_service_on_node
-
-  defp machine_action_api(:restart), do: :restart_machine
-  defp machine_action_api(:shutdown), do: :shutdown_machine
-
-  defp service_action_label(:start), do: "start"
-  defp service_action_label(:stop), do: "stop"
-  defp service_action_label(:restart), do: "restart"
-
-  defp service_action_verb(:start), do: "starting"
-  defp service_action_verb(:stop), do: "stopping"
-  defp service_action_verb(:restart), do: "restarting"
-
-  defp machine_action_label(:restart), do: "restart"
-  defp machine_action_label(:shutdown), do: "shutdown"
-
-  defp machine_action_verb(:restart), do: "restarting"
-  defp machine_action_verb(:shutdown), do: "shutting down"
-
-  defp build_action_confirmation(action, node, overview) do
-    %{
-      action: action,
-      node: node,
-      title: "#{machine_action_label(action)} machine",
-      message:
-        "Selected machine: #{node_hostname(overview, node)} (#{Atom.to_string(node)})\nPress y or enter to confirm, esc or n to cancel."
-    }
-  end
-
-  defp current_state_snapshot(state) do
-    %{
-      diagnostic: state.diagnostic,
-      overview: state.overview,
-      selected_service: state.selected_service,
-      selected_node: state.selected_node,
-      service_logs: state.service_logs,
-      cluster_logs: state.cluster_logs,
-      cluster_event_logs: state.cluster_event_logs,
-      last_refresh_at: timestamp(),
-      captured_at_ms: System.monotonic_time(:millisecond)
-    }
-  end
-
-  defp cancel_prompt(state) do
-    message =
-      case get_in(state, [:prompt, :kind]) do
-        :log_search -> "log search cancelled"
-        _ -> "prompt cancelled"
-      end
-
-    %{state | prompt: nil}
-    |> put_flash(message)
-  end
-
-  defp prompt_backspace(%{prompt: _prompt} = state) do
-    update_in(state.prompt.value, fn value ->
-      value
-      |> String.to_charlist()
-      |> Enum.drop(-1)
-      |> to_string()
-    end)
-  end
-
-  defp prompt_append(%{prompt: prompt} = state, suffix) do
-    %{state | prompt: %{prompt | value: prompt.value <> suffix}}
-  end
-
-  defp submit_prompt(%{prompt: %{kind: :log_search, value: value}} = state) do
-    state
-    |> Map.put(:prompt, nil)
-    |> apply_log_search(value)
-  end
-
-  defp submit_prompt(%{prompt: %{kind: :add_machine, value: value}} = state) do
-    case parse_add_machine_input(value) do
-      {:ok, node_name, deploy_host, labels} ->
-        case ConfigFiles.add_machine(state.config_paths, node_name,
-               deploy_host: deploy_host,
-               labels: labels
-             ) do
-          {:ok, path} ->
-            state
-            |> Map.put(:prompt, nil)
-            |> Map.put(:pending_action, external_action(:edit, "machine-file", path))
-            |> put_flash("machine added: #{node_name}; opening #{Path.basename(path)}")
-
-          {:error, message} ->
-            put_error(state, message)
-        end
-
-      {:error, message} ->
-        put_error(state, message)
-    end
-  end
-
-  defp submit_prompt(%{prompt: %{kind: :add_service, value: value}} = state) do
-    case parse_add_service_input(value) do
-      {:ok, service_name, replicas, constraints, preferred_nodes} ->
-        case ConfigFiles.add_service(state.config_paths, service_name,
-               replicas: replicas,
-               constraints: constraints,
-               preferred_nodes: preferred_nodes
-             ) do
-          {:ok, path} ->
-            state
-            |> Map.put(:prompt, nil)
-            |> Map.put(:pending_action, external_action(:edit, "service-file", path))
-            |> put_flash("service added: #{service_name}; opening #{Path.basename(path)}")
-
-          {:error, message} ->
-            put_error(state, message)
-        end
-
-      {:error, message} ->
-        put_error(state, message)
-    end
-  end
-
-  defp submit_prompt(state) do
-    %{state | prompt: nil}
-    |> put_error("confirmation did not match")
-  end
-
-  defp build_rollout_confirmation(state, scope) do
-    {target_hosts, target_nodes} = rollout_targets(state, scope)
-
-    deploy_opts =
-      rollout_base_opts(state)
-      |> Keyword.put(:hosts, target_hosts)
-      |> Keyword.put(:target_nodes, target_nodes)
-      |> Update.effective_deploy_opts(%{overview: state.overview})
-
-    %{
-      scope: scope,
-      available_scopes: rollout_available_scopes(state),
-      deploy_opts: deploy_opts,
-      target_hosts: target_hosts,
-      target_nodes: target_nodes,
-      prepared_at: timestamp(),
-      current_versions: rollout_version_rows(state.overview, target_nodes)
-    }
-  end
-
-  defp rollout_base_opts(state) do
-    Deploy.defaults(state.config_paths.source)
-    |> Enum.to_list()
-    |> Keyword.drop([:hosts])
-    |> Keyword.put(:cluster_file, state.config_paths.cluster_file)
-    |> Keyword.put(:machines_dir, state.config_paths.machines_dir)
-  end
-
-  defp put_rollout_confirmation(state, scope) do
-    %{state | rollout_confirmation: build_rollout_confirmation(state, scope)}
-  end
-
-  defp set_rollout_scope(state, scope) do
-    if scope in rollout_available_scopes(state) do
-      state
-      |> put_rollout_confirmation(scope)
-      |> put_flash("rollout scope: #{rollout_scope_label(scope)}")
-    else
-      state
-    end
-  end
-
-  defp default_rollout_scope(state) do
-    if state.active_view == :machines and rollout_selected_machine_available?(state) do
-      :selected_machine
-    else
-      :cluster
-    end
-  end
-
-  defp rollout_available_scopes(state) do
-    if rollout_selected_machine_available?(state) do
-      [:cluster, :selected_machine]
-    else
-      [:cluster]
-    end
-  end
-
-  defp rollout_selected_machine_available?(state) do
-    not is_nil(state.selected_node) and is_binary(selected_node_deploy_host(state))
-  end
-
-  defp rollout_targets(state, :selected_machine) do
-    case {state.selected_node, selected_node_deploy_host(state)} do
-      {node, host} when is_atom(node) and is_binary(host) -> {[host], [Atom.to_string(node)]}
-      _ -> rollout_targets(state, :cluster)
-    end
-  end
-
-  defp rollout_targets(state, _scope) do
-    target_hosts =
-      rollout_base_opts(state)
-      |> Update.effective_deploy_opts(%{overview: state.overview})
-      |> Keyword.get(:hosts, [])
-
-    target_nodes =
-      case state.overview do
-        nil ->
-          []
-
-        overview ->
-          overview
-          |> Map.get(:members, %{})
-          |> Map.get(:live_nodes, [])
-          |> Enum.map(&Atom.to_string/1)
-      end
-
-    {target_hosts, target_nodes}
-  end
 
   defp launch_job(state, busy, fun) do
     ref = make_ref()
@@ -1194,47 +537,38 @@ defmodule NixSwarm.TUI do
     end
   end
 
-  defp queue_operator_action(state, action, message) do
+  defp cancel_prompt(state) do
+    message =
+      case get_in(state, [:prompt, :kind]) do
+        :log_search -> "log search cancelled"
+        _ -> "prompt cancelled"
+      end
+
     state
-    |> Map.put(:pending_operator_action, action)
+    |> Map.put(:prompt, nil)
     |> put_flash(message)
   end
 
-  defp maybe_run_pending_operator_action(state) do
-    case Map.get(state, :pending_operator_action) do
-      nil ->
-        state
-
-      action ->
-        state
-        |> Map.put(:pending_operator_action, nil)
-        |> run_operator_action(action)
-    end
+  defp prompt_backspace(%{prompt: prompt} = state) do
+    value = prompt.value |> String.to_charlist() |> Enum.drop(-1) |> to_string()
+    %{state | prompt: %{prompt | value: value}}
   end
 
-  defp run_operator_action(%{operator_mode: :read_only} = state, _action),
-    do: put_flash(state, @read_only_message)
-
-  defp run_operator_action(state, {:service_action, action, service}) do
-    launch_service_action(%{state | selected_service: service}, action, service)
+  defp prompt_append(%{prompt: prompt} = state, suffix) do
+    %{state | prompt: %{prompt | value: prompt.value <> suffix}}
   end
 
-  defp run_operator_action(state, {:node_service_action, action, node, service}) do
-    launch_node_service_action(
-      %{state | selected_node: node, selected_service: service},
-      action,
-      node,
-      service
-    )
+  defp submit_prompt(%{prompt: %{kind: :log_search, value: value}} = state) do
+    state
+    |> Map.put(:prompt, nil)
+    |> apply_log_search(value)
   end
 
-  defp run_operator_action(state, {:machine_action, action, node}) do
-    open_machine_action_confirmation(%{state | selected_node: node}, action, node)
+  defp submit_prompt(state) do
+    state
+    |> Map.put(:prompt, nil)
+    |> put_error("unsupported prompt")
   end
-
-  defp run_operator_action(state, :reconcile), do: launch_reconcile(state)
-  defp run_operator_action(state, :update), do: open_rollout_confirmation(state)
-  defp run_operator_action(state, {:apply, dry_run?}), do: launch_apply(state, dry_run?)
 
   defp fetch_snapshot(remote, lines, selected_service, selected_node) do
     request = {:operator_snapshot, selected_service, selected_node, lines}
@@ -1342,12 +676,6 @@ defmodule NixSwarm.TUI do
     service_selection_changed = selected_service != snapshot.selected_service
     node_selection_changed = selected_node != snapshot.selected_node
 
-    pending_machine_actions =
-      prune_pending_machine_actions(
-        Map.get(state, :pending_machine_actions, %{}),
-        snapshot.overview
-      )
-
     %{
       state
       | diagnostic: snapshot.diagnostic,
@@ -1367,8 +695,7 @@ defmodule NixSwarm.TUI do
         node_metric_samples: node_metric_samples,
         node_metrics_by_node: node_metrics_by_node,
         service_metric_samples: service_metric_samples,
-        service_metrics_by_service: service_metrics_by_service,
-        pending_machine_actions: pending_machine_actions
+        service_metrics_by_service: service_metrics_by_service
     }
     |> normalize_focused_container()
   end
@@ -1391,8 +718,6 @@ defmodule NixSwarm.TUI do
         end
 
     widgets
-    |> maybe_rollout_overlay(state, area)
-    |> maybe_action_confirmation_overlay(state, area)
     |> maybe_prompt_overlay(state, area)
     |> maybe_help_overlay(state, area)
   end
@@ -1804,33 +1129,7 @@ defmodule NixSwarm.TUI do
     message = state.last_error || state.flash || "ready"
     message = inline_status_text(message)
 
-    keys =
-      cond do
-        not is_nil(Map.get(state, :rollout_confirmation)) ->
-          [
-            Span.new("u/enter", style: %Style{fg: :cyan}),
-            Span.new(" confirm rollout | "),
-            Span.new("esc", style: %Style{fg: :cyan}),
-            Span.new(" cancel")
-          ]
-          |> maybe_append_rollout_scope_controls(state)
-          |> Kernel.++([
-            Span.new(" | "),
-            Span.new("shift+j/k or J/K", style: %Style{fg: :cyan}),
-            Span.new(" scroll")
-          ])
-
-        not is_nil(Map.get(state, :action_confirmation)) ->
-          [
-            Span.new("y/enter", style: %Style{fg: :cyan}),
-            Span.new(" confirm machine action | "),
-            Span.new("esc/n", style: %Style{fg: :cyan}),
-            Span.new(" cancel")
-          ]
-
-        true ->
-          footer_key_spans(state)
-      end
+    keys = footer_key_spans(state)
 
     %Paragraph{
       text: [
@@ -1860,34 +1159,12 @@ defmodule NixSwarm.TUI do
     |> Kernel.++(footer_action_spans(state))
   end
 
-  defp footer_action_spans(%{operator_mode: :read_only} = state) do
+  defp footer_action_spans(state) do
+    state = Map.put_new(state, :operator_mode, :read_only)
+
     [
       Span.new("read-only", style: %Style{fg: :yellow, modifiers: [:bold]}),
       Span.new(" | ")
-    ]
-    |> maybe_append_secondary_navigation(state)
-  end
-
-  defp footer_action_spans(%{active_view: :dashboard} = state) do
-    [
-      Span.new("c", style: %Style{fg: :cyan}),
-      Span.new(" reconcile | "),
-      Span.new("u", style: %Style{fg: :cyan}),
-      Span.new(" update | "),
-      Span.new("P/y", style: %Style{fg: :cyan}),
-      Span.new(" apply/dry-run")
-    ]
-    |> maybe_append_secondary_navigation(state)
-  end
-
-  defp footer_action_spans(state) do
-    [
-      Span.new("c", style: %Style{fg: :cyan}),
-      Span.new(" reconcile | "),
-      Span.new("u", style: %Style{fg: :cyan}),
-      Span.new(" update | "),
-      Span.new("P/y", style: %Style{fg: :cyan}),
-      Span.new(" apply/dry-run | ")
     ]
     |> maybe_append_secondary_navigation(state)
   end
@@ -1896,23 +1173,6 @@ defmodule NixSwarm.TUI do
     label = secondary_navigation_label(state)
     spans ++ [Span.new(" | "), Span.new(label, style: %Style{fg: :cyan})]
   end
-
-  defp maybe_append_rollout_scope_controls(spans, %{rollout_confirmation: confirmation}) do
-    if :selected_machine in Map.get(confirmation, :available_scopes, []) do
-      spans ++
-        [
-          Span.new(" | "),
-          Span.new("c", style: %Style{fg: :cyan}),
-          Span.new(" cluster | "),
-          Span.new("m", style: %Style{fg: :cyan}),
-          Span.new(" selected machine")
-        ]
-    else
-      spans
-    end
-  end
-
-  defp maybe_append_rollout_scope_controls(spans, _state), do: spans
 
   defp secondary_navigation_label(%{active_view: :dashboard}),
     do: "j/k service | o sort | ? help"
@@ -3149,127 +2409,6 @@ defmodule NixSwarm.TUI do
     end
   end
 
-  defp open_add_config_prompt(%{operator_mode: :read_only} = state, _view),
-    do: put_flash(state, @read_only_message)
-
-  defp open_add_config_prompt(state, :machines) do
-    %{
-      state
-      | prompt: %{
-          kind: :add_machine,
-          title: "add machine",
-          label: "nodeName deployHost labels(comma-separated)",
-          value: ""
-        }
-    }
-    |> put_flash("enter machine as: nix-swarm@host root@host label1,label2")
-  end
-
-  defp open_add_config_prompt(state, :services) do
-    %{
-      state
-      | prompt: %{
-          kind: :add_service,
-          title: "add service",
-          label:
-            "name replicas constraints(comma-separated) preferredNodes(comma-separated, optional)",
-          value: ""
-        }
-    }
-    |> put_flash("enter service as: name 1 label1,label2 nix-swarm@host")
-  end
-
-  defp edit_selected_config_file(%{operator_mode: :read_only} = state, _view),
-    do: {:error, put_flash(state, @read_only_message)}
-
-  defp edit_selected_config_file(state, view) do
-    case current_selected_file(state, view) do
-      nil ->
-        {:error, put_error(state, "no #{config_view_label(view)} file is selected")}
-
-      path ->
-        {:ok,
-         %{
-           state
-           | pending_action: external_action(:edit, "#{config_view_label(view)}-file", path)
-         }}
-    end
-  end
-
-  defp delete_selected_config(%{operator_mode: :read_only} = state, _view),
-    do: put_flash(state, @read_only_message)
-
-  defp delete_selected_config(state, :machines) do
-    case current_selected_file(state, :machines) do
-      nil ->
-        put_error(state, "no machine file is selected")
-
-      path ->
-        case ConfigFiles.delete_machine(state.config_paths, path) do
-          {:ok, _path, warnings} -> put_flash(state, delete_message("machine", warnings))
-          {:error, message} -> put_error(state, message)
-        end
-    end
-  end
-
-  defp delete_selected_config(%{selected_service: nil} = state, :services) do
-    put_error(state, "no service is selected")
-  end
-
-  defp delete_selected_config(state, :services) do
-    case ConfigFiles.delete_service(state.config_paths, state.selected_service) do
-      {:ok, _path, warnings} -> put_flash(state, delete_message("service", warnings))
-      {:error, message} -> put_error(state, message)
-    end
-  end
-
-  defp parse_add_machine_input(value) do
-    case String.split(value, ~r/\s+/, parts: 3, trim: true) do
-      [node_name, deploy_host, labels] -> {:ok, node_name, deploy_host, split_csv(labels)}
-      [node_name, deploy_host] -> {:ok, node_name, deploy_host, []}
-      _ -> {:error, "machine input must be: nodeName deployHost labels"}
-    end
-  end
-
-  defp parse_add_service_input(value) do
-    case String.split(value, ~r/\s+/, parts: 4, trim: true) do
-      [name, replicas, constraints, preferred_nodes] ->
-        with {:ok, replicas} <- parse_non_negative_integer(replicas) do
-          {:ok, name, replicas, split_csv(constraints), split_csv(preferred_nodes)}
-        end
-
-      [name, replicas, constraints] ->
-        with {:ok, replicas} <- parse_non_negative_integer(replicas) do
-          {:ok, name, replicas, split_csv(constraints), []}
-        end
-
-      _ ->
-        {:error, "service input must be: name replicas constraints [preferredNodes]"}
-    end
-  end
-
-  defp parse_non_negative_integer(value) do
-    case Integer.parse(value) do
-      {parsed, ""} when parsed >= 0 -> {:ok, parsed}
-      _ -> {:error, "replicas must be zero or greater"}
-    end
-  end
-
-  defp split_csv("-"), do: []
-
-  defp split_csv(value) do
-    value
-    |> String.split(",", trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-  end
-
-  defp config_view_label(:machines), do: "machine"
-  defp config_view_label(:services), do: "service"
-
-  defp delete_message(kind, []), do: "#{kind} deleted"
-  defp delete_message(kind, warnings), do: "#{kind} deleted; #{Enum.join(warnings, "; ")}"
-
   defp selected_node_services(state) do
     state
     |> selected_node_status()
@@ -3278,8 +2417,6 @@ defmodule NixSwarm.TUI do
       node_status -> Map.get(node_status, :services, [])
     end
   end
-
-  defp selected_node_deploy_host(%{overview: nil}), do: nil
 
   defp selected_node_deploy_host(%{overview: %{members: members}, selected_node: selected_node}) do
     deploy_host_for_node(Map.get(members, :deploy_hosts, %{}), selected_node)
@@ -3367,12 +2504,8 @@ defmodule NixSwarm.TUI do
     Span.new(status, style: %Style{fg: :red, modifiers: [:bold]})
   end
 
-  defp machine_status_label(state, overview, node, node_status) do
-    case Map.get(state, :pending_machine_actions, %{}) |> Map.get(node) do
-      %{action: :restart} -> "restarting"
-      %{action: :shutdown} -> "shutting down"
-      _pending -> do_machine_status_label(node_status, overview, node)
-    end
+  defp machine_status_label(_state, overview, node, node_status) do
+    do_machine_status_label(node_status, overview, node)
   end
 
   defp do_machine_status_label(nil, overview, node) do
@@ -3642,70 +2775,11 @@ defmodule NixSwarm.TUI do
   end
 
   defp busy_label(nil), do: "idle"
-  defp busy_label(:reconcile), do: "reconciling cluster"
   defp busy_label({:refresh, :initial}), do: "loading dashboard"
   defp busy_label({:refresh, :manual}), do: "refreshing"
   defp busy_label({:refresh, :selection}), do: "loading selected service"
   defp busy_label({:refresh, :node_selection}), do: "loading selected machine"
-  defp busy_label({:start, service}), do: "starting #{service}"
-  defp busy_label({:stop, service}), do: "stopping #{service}"
-  defp busy_label({:restart, service}) when is_binary(service), do: "restarting #{service}"
-
-  defp busy_label({:node_service_action, action, _node, service}),
-    do: "#{service_action_verb(action)} #{service} on selected machine"
-
-  defp busy_label({:restart, node}) when is_atom(node), do: "restarting #{node_hostname(node)}"
-
-  defp busy_label({:shutdown, node}) when is_atom(node),
-    do: "shutting down #{node_hostname(node)}"
-
-  defp busy_label(:apply), do: "applying config"
-  defp busy_label(:dry_run), do: "running dry-run"
-  defp busy_label({:update, :selected_machine}), do: "updating selected machine"
-  defp busy_label({:update, _scope}), do: "updating cluster"
-  defp busy_label(:update), do: "updating cluster"
   defp busy_label(_busy), do: "working"
-
-  defp service_action_message(action, service, results) do
-    owners =
-      results
-      |> Enum.map(fn {node, _entries} -> Atom.to_string(node) end)
-      |> case do
-        [] -> "no live nodes"
-        values -> Enum.join(values, ", ")
-      end
-
-    "#{service_action_label(action)} requested for #{service} on #{owners}"
-  end
-
-  defp machine_action_message(action, node, _result, overview) do
-    "#{machine_action_label(action)} requested for #{node_hostname(overview, node)}"
-  end
-
-  defp node_service_action_message(action, service, node, _result, overview) do
-    "#{service_action_label(action)} requested for #{service} on #{node_hostname(overview, node)} only"
-  end
-
-  defp reconcile_message(results) do
-    "reconcile completed on #{length(results)} live node(s)"
-  end
-
-  defp update_message(%{
-         after_versions: after_versions,
-         target_nodes: target_nodes,
-         version_changed?: true
-       }) do
-    "update applied: target nodes now report #{version_summary(Map.take(after_versions, target_nodes))}"
-  end
-
-  defp update_message(%{after_versions: after_versions, target_nodes: target_nodes})
-       when map_size(after_versions) > 0 do
-    "update complete: target nodes report #{version_summary(Map.take(after_versions, target_nodes))}"
-  end
-
-  defp update_message(_result) do
-    "cluster updated successfully"
-  end
 
   defp refresh_message(%{diagnostic: diagnostic}, trigger) do
     if Remote.connected?(diagnostic) do
@@ -3740,16 +2814,6 @@ defmodule NixSwarm.TUI do
       "" -> "ready"
       text -> text
     end
-  end
-
-  defp put_pending_machine_action(state, node, action) do
-    pending_action = %{action: action, started_at_ms: System.monotonic_time(:millisecond)}
-
-    Map.put(
-      state,
-      :pending_machine_actions,
-      Map.put(Map.get(state, :pending_machine_actions, %{}), node, pending_action)
-    )
   end
 
   defp note_input(state) do
@@ -3987,9 +3051,6 @@ defmodule NixSwarm.TUI do
   defp log_filter_label(:selected_machine), do: "MACHINE"
   defp log_filter_label(:selected_service), do: "SERVICE"
 
-  defp apply_message(%{dry_run: true}), do: "dry-run complete"
-  defp apply_message(_result), do: "apply complete"
-
   defp recent_input?(%{last_input_at_ms: nil}), do: false
 
   defp recent_input?(state) do
@@ -4040,28 +3101,8 @@ defmodule NixSwarm.TUI do
 
   defp stale_auto_refresh_result?(_state), do: false
 
-  defp prune_pending_machine_actions(pending_actions, overview) do
-    now = System.monotonic_time(:millisecond)
-
-    Enum.reduce(pending_actions, %{}, fn {node, %{started_at_ms: started_at_ms} = pending}, acc ->
-      age_ms = now - started_at_ms
-      node_live = node_live?(overview, node)
-
-      keep? =
-        cond do
-          age_ms > 15_000 -> false
-          node_live and age_ms > 3_000 -> false
-          true -> true
-        end
-
-      if keep?, do: Map.put(acc, node, pending), else: acc
-    end)
-  end
-
   defp modal_open?(state) do
     not is_nil(Map.get(state, :prompt)) or
-      not is_nil(Map.get(state, :rollout_confirmation)) or
-      not is_nil(Map.get(state, :action_confirmation)) or
       Map.get(state, :help_overlay, false)
   end
 
@@ -4725,39 +3766,6 @@ defmodule NixSwarm.TUI do
     lines ++ :lists.duplicate(pad_bottom, blank)
   end
 
-  defp maybe_rollout_overlay(widgets, %{rollout_confirmation: nil}, _area), do: widgets
-
-  defp maybe_rollout_overlay(widgets, %{rollout_confirmation: confirmation}, area) do
-    overlay_height = min(12, max(length(confirmation.target_hosts) + 7, 8))
-    overlay_width = min(max(area.width - 8, 40), 78)
-
-    widgets ++
-      [
-        {%Paragraph{
-           text: rollout_confirmation_text(confirmation),
-           wrap: true,
-           block: panel_block("confirm rollout", :yellow)
-         }, centered_rect(area, overlay_width, overlay_height)}
-      ]
-  end
-
-  defp maybe_action_confirmation_overlay(widgets, %{action_confirmation: nil}, _area), do: widgets
-
-  defp maybe_action_confirmation_overlay(widgets, state, _area)
-       when not is_map_key(state, :action_confirmation),
-       do: widgets
-
-  defp maybe_action_confirmation_overlay(widgets, %{action_confirmation: confirmation}, area) do
-    widgets ++
-      [
-        {%Paragraph{
-           text: confirmation.message,
-           wrap: true,
-           block: panel_block(confirmation.title, :yellow)
-         }, centered_rect(area, min(max(area.width - 8, 52), 88), 8)}
-      ]
-  end
-
   defp maybe_prompt_overlay(widgets, state, area) do
     case Map.get(state, :prompt) do
       nil ->
@@ -4792,36 +3800,6 @@ defmodule NixSwarm.TUI do
     else
       widgets
     end
-  end
-
-  defp rollout_confirmation_text(confirmation) do
-    hosts =
-      case confirmation.target_hosts do
-        [] -> ["- no explicit hosts resolved"]
-        values -> Enum.map(values, &"- #{&1}")
-      end
-
-    versions =
-      case confirmation.current_versions do
-        [] -> ["- no live version data yet"]
-        rows -> Enum.map(rows, fn {node, version} -> "- #{node}: #{version}" end)
-      end
-
-    [
-      "Prepared: #{confirmation.prepared_at}",
-      "Scope: #{rollout_scope_label(confirmation.scope)}",
-      "Targets:",
-      Enum.join(hosts, "\n"),
-      "",
-      "Current live versions:",
-      Enum.join(versions, "\n"),
-      "",
-      rollout_scope_hint(confirmation),
-      "Press u or enter to apply. Press esc to cancel."
-    ]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join("\n")
   end
 
   defp prompt_text(prompt) do
@@ -5011,17 +3989,6 @@ defmodule NixSwarm.TUI do
 
   defp format_selected_node(nil), do: "-"
   defp format_selected_node(node), do: Atom.to_string(node)
-
-  defp rollout_scope_label(:selected_machine), do: "selected machine"
-  defp rollout_scope_label(_scope), do: "cluster"
-
-  defp rollout_scope_hint(%{available_scopes: scopes}) when is_list(scopes) do
-    if :selected_machine in scopes do
-      "Press c for cluster targets or m for the selected machine."
-    end
-  end
-
-  defp rollout_scope_hint(_confirmation), do: nil
 
   defp node_hostname(nil, node), do: node_hostname(node)
 
@@ -5223,35 +4190,6 @@ defmodule NixSwarm.TUI do
 
   defp machine_version_span(%{version: version}), do: version
 
-  defp rollout_version_rows(nil, _target_nodes), do: []
-
-  defp rollout_version_rows(overview, []) do
-    rollout_version_rows(overview, cluster_node_names(overview))
-  end
-
-  defp rollout_version_rows(overview, target_nodes) do
-    cluster_nodes = cluster_node_names(overview)
-
-    target_nodes
-    |> Enum.map(fn node_name ->
-      case resolve_rollout_node(node_name, cluster_nodes) do
-        nil ->
-          {to_string(node_name), "unknown"}
-
-        node ->
-          version =
-            overview
-            |> node_status_for(node)
-            |> case do
-              nil -> "unknown"
-              node_status -> display_version_from_status(node_status)
-            end
-
-          {Atom.to_string(node), version}
-      end
-    end)
-  end
-
   defp display_version_from_status(node_status) do
     Map.get(node_status, :release_version) ||
       display_version_value(Map.get(node_status, :version, "unknown"))
@@ -5265,14 +4203,6 @@ defmodule NixSwarm.TUI do
   end
 
   defp display_version_value(version), do: to_string(version)
-
-  defp resolve_rollout_node(node_name, cluster_nodes) when is_atom(node_name) do
-    if node_name in cluster_nodes, do: node_name
-  end
-
-  defp resolve_rollout_node(node_name, cluster_nodes) do
-    Enum.find(cluster_nodes, fn node -> Atom.to_string(node) == to_string(node_name) end)
-  end
 
   defp maybe_notify_test(%{test_pid: nil}, _payload), do: :ok
 
@@ -5301,8 +4231,7 @@ defmodule NixSwarm.TUI do
          :summary_scroll_x,
          :summary_scroll_y,
          :content_scroll_x,
-         :content_scroll_y,
-         :apply_result
+         :content_scroll_y
        ])}
     )
 

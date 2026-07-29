@@ -88,17 +88,13 @@ defmodule NixSwarmConfigFilesTest do
     paths: paths
   } do
     assert {:ok, path} =
-             ConfigFiles.add_machine(paths, "nix-swarm@10.0.0.2",
-               deploy_host: "root@10.0.0.2",
-               labels: ["apps", "ingress"]
-             )
+             ConfigFiles.add_machine(paths, "nix-swarm@10.0.0.2", deploy_host: "root@10.0.0.2")
 
     contents = File.read!(path)
     assert contents =~ ~s(nodeName = "nix-swarm@10.0.0.2")
     assert contents =~ "(import ../nix/nix-swarm/module.nix)"
     assert contents =~ "../cluster/cluster.nix"
     assert contents =~ ~s("nix-swarm@10.0.0.2" = {)
-    assert contents =~ ~s(labels = [ "apps" "ingress" ];)
     assert contents =~ ~s(deployHost = "root@10.0.0.2";)
 
     cluster = File.read!(paths.cluster_file)
@@ -116,8 +112,6 @@ defmodule NixSwarmConfigFilesTest do
     assert {:ok, path} =
              ConfigFiles.add_service(paths, "forgejo",
                replicas: 2,
-               constraints: ["apps"],
-               preferred_nodes: ["nix-swarm@10.0.0.1"],
                unit_template: "forgejo@%{slot}.service"
              )
 
@@ -126,8 +120,6 @@ defmodule NixSwarmConfigFilesTest do
     assert service_file =~ ~s(services.nix-swarm.services."forgejo")
     assert service_file =~ "replicas = 2;"
     assert service_file =~ ~s(unitTemplate = "forgejo@%{slot}.service";)
-    assert service_file =~ ~s(constraints = [ "apps" ];)
-    assert service_file =~ ~s(preferredNodes = [ "nix-swarm@10.0.0.1" ];)
 
     cluster = File.read!(paths.cluster_file)
     refute cluster =~ "./services/forgejo.nix"

@@ -31,17 +31,7 @@
           "nix-swarm@example-node-a.local"
           "nix-swarm@example-node-b.local"
         ];
-        settings = {
-          docs = "Replace this example service with your own unit definitions.";
-        };
       };
-    };
-
-    ingress.sites.example-web = {
-      domain = "example.internal";
-      service = "example-web";
-      basePort = 8080;
-      default = true;
     };
   };
 }

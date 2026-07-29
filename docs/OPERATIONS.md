@@ -28,9 +28,13 @@ nix-swarm cluster plan --source .
 nix-swarm cluster apply --source . --yes
 ```
 
-All closures are built before mutation. Canaries run one at a time; other hosts use `maxUnavailable` (default `1`). Health must remain strictly `running` for the Nix-defined number of consecutive samples. The final batch also requires one digest and no placement errors. A failed batch rolls back every host attempted so far when `deployment.autoRollback` is enabled.
+All closures are built before mutation. Deployment is always sequential: one host
+at a time, with a 120-second health gate requiring two consecutive healthy
+samples. The final batch also requires one digest and no placement errors. A
+failed batch always attempts rollback of every host attempted so far.
 
-Target selected hosts with `--hosts root@node-a,root@node-b`; put canaries first with `--canary-hosts root@node-a`.
+For deliberate maintenance, target selected hosts with
+`--hosts root@node-a,root@node-b`. This does not change the sequential policy.
 
 ## Install or rotate the cluster credential
 

@@ -1,9 +1,9 @@
 defmodule NixSwarm.Deploy.Rollout do
   @moduledoc """
-  Plans the two-stage deployment of new and existing Nix-Swarm nodes.
+  Plans the sequential deployment of new and existing Nix-Swarm nodes.
 
-  Bootstrap targets are activated first. Existing targets are then ordered by
-  the Nix-defined canary and bounded-unavailable policy. This module is pure:
+  Bootstrap targets are activated first. Every target is then deployed one at
+  a time in stable host order. This module is pure:
   it never runs SSH, Nix, or systemd commands.
   """
 
@@ -11,11 +11,10 @@ defmodule NixSwarm.Deploy.Rollout do
 
   @new_classifications [:new_nixos_host, :installed_inactive]
   @existing_classifications [:existing_in_sync, :existing_outdated, :installed_unqueryable]
+  @rollout_width 1
 
   @spec plan([map()], keyword()) :: %{bootstrap: [map()], existing: [map()], stages: [[map()]]}
   def plan(targets, opts \\ []) when is_list(targets) and is_list(opts) do
-    max_unavailable = positive_integer!(Keyword.get(opts, :max_unavailable, 1))
-    canary_hosts = MapSet.new(Keyword.get(opts, :canary_hosts, []) |> Enum.map(&to_string/1))
     classifications = Keyword.get(opts, :classifications, %{})
 
     normalized = Enum.map(targets, &normalize_target!(&1, classifications))
@@ -34,8 +33,8 @@ defmodule NixSwarm.Deploy.Rollout do
       raise ArgumentError, "rollout cannot mutate blocked target(s): #{details}"
     end
 
-    ordered_existing = order_existing(existing, canary_hosts)
-    stages = Enum.map(bootstrap, &[&1]) ++ batches(ordered_existing, max_unavailable)
+    ordered_existing = Enum.sort_by(existing, & &1.host)
+    stages = Enum.map(bootstrap, &[&1]) ++ batches(ordered_existing, @rollout_width)
 
     %{bootstrap: bootstrap, existing: ordered_existing, stages: stages}
   end
@@ -74,21 +73,6 @@ defmodule NixSwarm.Deploy.Rollout do
     )
   end
 
-  defp order_existing(targets, canary_hosts) do
-    Enum.sort_by(targets, fn target ->
-      {if(MapSet.member?(canary_hosts, target.host), do: 0, else: 1), target.host}
-    end)
-  end
-
   defp batches([], _width), do: []
   defp batches(targets, width), do: Enum.chunk_every(targets, width)
-
-  defp positive_integer!(value) when is_integer(value) and value > 0, do: value
-
-  defp positive_integer!(value),
-    do:
-      raise(
-        ArgumentError,
-        "rollout max_unavailable must be a positive integer, got #{inspect(value)}"
-      )
 end

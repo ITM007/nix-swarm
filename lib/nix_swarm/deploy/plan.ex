@@ -17,12 +17,13 @@ defmodule NixSwarm.Deploy.Plan do
       credential_actions: credential_actions(deploy),
       closures: deploy.validation.targets,
       rollout_stages: Enum.map(deploy.batches, &Enum.map(&1, fn target -> target.host end)),
+      rollout_policy: :sequential,
       health_policy: %{
+        strategy: :sequential,
         timeout_sec: deploy.health_timeout_sec,
-        stable_samples: deploy.health_stable_samples,
-        auto_rollback: deploy.auto_rollback
+        stable_samples: deploy.health_stable_samples
       },
-      rollback: if(deploy.auto_rollback, do: :automatic_attempted_hosts, else: :disabled)
+      rollback: :automatic_attempted_hosts
     }
   end
 
@@ -35,9 +36,10 @@ defmodule NixSwarm.Deploy.Plan do
       "  bootstrap targets: #{join(plan.bootstrap_targets)}",
       "  existing targets: #{join(plan.existing_targets)}",
       "  maintenance targets: #{join(plan.maintenance_targets)}",
+      "  rollout policy: sequential, one host at a time",
       "  rollout stages: #{inspect(plan.rollout_stages)}",
       "  health: #{plan.health_policy.timeout_sec}s/#{plan.health_policy.stable_samples} stable samples",
-      "  rollback: #{plan.rollback}"
+      "  rollback: every attempted host on failure"
     ]
     |> Enum.join("\n")
   end

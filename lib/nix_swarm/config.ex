@@ -5,11 +5,11 @@ defmodule NixSwarm.Config do
   alias NixSwarm.Service
 
   @default_runtime %{
-    connect_interval_ms: 500,
-    reconcile_interval_ms: 5_000,
-    autoscale_interval_ms: 10_000,
-    failure_grace_ms: 10_000,
-    recovery_stabilization_ms: 30_000,
+    connect_interval_ms: 100,
+    reconcile_interval_ms: 100,
+    autoscale_interval_ms: 1_000,
+    failure_grace_ms: 200,
+    recovery_stabilization_ms: 200,
     command_timeout_ms: 5_000,
     executor: %{adapter: :fake, root: Path.join(System.tmp_dir!(), "nix-swarm")},
     generation: "dev"
@@ -96,8 +96,7 @@ defmodule NixSwarm.Config do
       peers: peers,
       nodes: nodes,
       services: normalize_services(NixSwarm.fetch_value(raw, :services, [])),
-      runtime: runtime,
-      ingress: normalize_ingress(NixSwarm.fetch_value(raw, :ingress, []))
+      runtime: runtime
     }
   end
 
@@ -123,13 +122,6 @@ defmodule NixSwarm.Config do
   defp normalize_nodes(raw_nodes) do
     raw_nodes
     |> Enum.into(%{}, fn {node_name, attrs} ->
-      labels =
-        attrs
-        |> NixSwarm.fetch_value(:labels, [])
-        |> List.wrap()
-        |> Enum.map(&to_string/1)
-        |> MapSet.new()
-
       deploy_host =
         attrs
         |> NixSwarm.fetch_value(:deploy_host, NixSwarm.fetch_value(attrs, :deployHost))
@@ -145,7 +137,6 @@ defmodule NixSwarm.Config do
 
       {normalize_node_name(node_name),
        %{
-         labels: labels,
          availability:
            normalize_availability(NixSwarm.fetch_value(attrs, :availability, :active)),
          deploy_host: deploy_host,
@@ -155,44 +146,15 @@ defmodule NixSwarm.Config do
   end
 
   defp normalize_runtime(raw_runtime) do
+    # Runtime timing is deliberately not part of the public configuration.
+    # Keep the executor adapter selectable internally, while all operational
+    # timings remain fixed policy in this module.
     executor = normalize_executor(NixSwarm.fetch_value(raw_runtime, :executor, %{}))
+    generation = NixSwarm.fetch_value(raw_runtime, :generation, @default_runtime.generation)
 
     @default_runtime
-    |> Map.merge(%{
-      connect_interval_ms:
-        normalize_integer(
-          NixSwarm.fetch_value(raw_runtime, :connect_interval_ms),
-          @default_runtime.connect_interval_ms
-        ),
-      reconcile_interval_ms:
-        normalize_integer(
-          NixSwarm.fetch_value(raw_runtime, :reconcile_interval_ms),
-          @default_runtime.reconcile_interval_ms
-        ),
-      autoscale_interval_ms:
-        normalize_integer(
-          NixSwarm.fetch_value(raw_runtime, :autoscale_interval_ms),
-          @default_runtime.autoscale_interval_ms
-        ),
-      failure_grace_ms:
-        normalize_integer(
-          NixSwarm.fetch_value(raw_runtime, :failure_grace_ms),
-          @default_runtime.failure_grace_ms
-        ),
-      recovery_stabilization_ms:
-        normalize_integer(
-          NixSwarm.fetch_value(raw_runtime, :recovery_stabilization_ms),
-          @default_runtime.recovery_stabilization_ms
-        ),
-      command_timeout_ms:
-        normalize_integer(
-          NixSwarm.fetch_value(raw_runtime, :command_timeout_ms),
-          @default_runtime.command_timeout_ms
-        ),
-      generation:
-        to_string(NixSwarm.fetch_value(raw_runtime, :generation, @default_runtime.generation)),
-      executor: executor
-    })
+    |> Map.put(:executor, executor)
+    |> Map.put(:generation, to_string(generation))
   end
 
   defp normalize_executor(:systemd), do: %{adapter: :systemd}
@@ -221,18 +183,6 @@ defmodule NixSwarm.Config do
 
   defp normalize_executor(_), do: @default_runtime.executor
 
-  defp normalize_integer(nil, default), do: default
-  defp normalize_integer(value, _default) when is_integer(value), do: value
-
-  defp normalize_integer(value, default) when is_binary(value) do
-    case Integer.parse(value) do
-      {parsed, _} -> parsed
-      :error -> default
-    end
-  end
-
-  defp normalize_integer(_, default), do: default
-
   defp normalize_node_name(name) when is_atom(name), do: name
   defp normalize_node_name(name), do: NodeName.to_node!(name, label: "configured node name")
 
@@ -244,34 +194,6 @@ defmodule NixSwarm.Config do
   defp normalize_availability(value) when value in [:draining, "draining"], do: :draining
   defp normalize_availability(value) when value in [:maintenance, "maintenance"], do: :maintenance
   defp normalize_availability(_value), do: :active
-
-  defp normalize_ingress(raw_sites) do
-    %{
-      sites:
-        raw_sites
-        |> List.wrap()
-        |> Enum.reduce(%{}, fn site, acc ->
-          name = NixSwarm.fetch_value(site, :name, "") |> to_string()
-
-          next = %{
-            domain: NixSwarm.fetch_value(site, :domain, name) |> to_string(),
-            service: NixSwarm.fetch_value(site, :service, "") |> to_string(),
-            ports:
-              NixSwarm.fetch_value(site, :ports, [])
-              |> List.wrap()
-              |> Enum.map(&normalize_integer(&1, 0)),
-            scheme: NixSwarm.fetch_value(site, :scheme, "http") |> to_string(),
-            default: NixSwarm.fetch_value(site, :default, false) == true
-          }
-
-          if next.service != "" do
-            Map.put(acc, name, next)
-          else
-            acc
-          end
-        end)
-    }
-  end
 
   defp load_current! do
     case load_current() do
@@ -370,19 +292,6 @@ defmodule NixSwarm.Config do
 
     errors
     |> maybe_error(
-      service.max_replicas_per_node != nil and
-        (service.max_replicas_per_node < 1 or service.max_replicas_per_node > 128),
-      "service #{service.name} max_replicas_per_node must be between 1 and 128"
-    )
-    |> maybe_error(
-      service.readiness.timeout_sec < 1 or service.readiness.timeout_sec > 3_600,
-      "service #{service.name} readiness.timeout_sec must be between 1 and 3600"
-    )
-    |> maybe_error(
-      service.readiness.stable_samples < 1 or service.readiness.stable_samples > 60,
-      "service #{service.name} readiness.stable_samples must be between 1 and 60"
-    )
-    |> maybe_error(
       autoscaling.enabled and
         (autoscaling.min_replicas < 0 or autoscaling.min_replicas > service.replicas),
       "service #{service.name} autoscaling.min_replicas must be between 0 and replicas"
@@ -397,20 +306,8 @@ defmodule NixSwarm.Config do
       "service #{service.name} autoscaling.cpu_target_percent must be between 1 and 100"
     )
     |> maybe_error(
-      autoscaling.enabled and autoscaling.sample_window_sec not in 1..3_600,
-      "service #{service.name} autoscaling.sample_window_sec must be between 1 and 3600"
-    )
-    |> maybe_error(
-      autoscaling.enabled and autoscaling.scale_up_cooldown_sec not in 0..86_400,
-      "service #{service.name} autoscaling.scale_up_cooldown_sec must be between 0 and 86400"
-    )
-    |> maybe_error(
-      autoscaling.enabled and autoscaling.scale_down_cooldown_sec not in 0..86_400,
-      "service #{service.name} autoscaling.scale_down_cooldown_sec must be between 0 and 86400"
-    )
-    |> maybe_error(
-      autoscaling.enabled and autoscaling.max_step not in 1..128,
-      "service #{service.name} autoscaling.max_step must be between 1 and 128"
+      autoscaling.enabled and autoscaling.memory_target_percent not in 1..100,
+      "service #{service.name} autoscaling.memory_target_percent must be between 1 and 100"
     )
     |> maybe_error(
       capacity > 1 and not String.contains?(service.unit_template, "%{slot}"),

@@ -2,27 +2,23 @@ defmodule NixSwarm.Placement do
   @moduledoc """
   Deterministic service-placement engine.
 
-  Ranks eligible nodes per service using a stable hash and cycles
-  service slots across the ranking, spreading replicas when possible.
+  Active nodes are sorted by a stable service/node hash and slots cycle through
+  that ordering. This gives a repeatable spread without exposing scheduling
+  labels or per-node capacity controls in service configuration.
   """
 
   alias NixSwarm.Service
 
-  @spec plan(map(), [atom()], map()) :: %{
-          optional(String.t()) => [%{slot: integer(), owner: atom() | nil, unit: String.t()}]
-        }
+  @spec plan(map(), [atom()], map()) :: %{optional(String.t()) => [map()]}
   def plan(
         config \\ NixSwarm.Config.current(),
         live_nodes \\ NixSwarm.Cluster.placement_nodes(),
         replica_targets \\ autoscaling_targets()
       ) do
     Enum.into(config.services, %{}, fn service ->
-      ranked_nodes = ranked_eligible_nodes(service, live_nodes, config.nodes)
+      nodes = ranked_eligible_nodes(service, live_nodes, config.nodes)
       replicas = effective_replicas(service, replica_targets)
-
-      slots = assign_slots(service, ranked_nodes, replicas)
-
-      {service.name, slots}
+      {service.name, assign_slots(service, nodes, replicas)}
     end)
   end
 
@@ -33,19 +29,18 @@ defmodule NixSwarm.Placement do
       ) do
     placement = plan(config, live_nodes)
 
-    config.services
-    |> Enum.flat_map(fn service ->
-      configured_eligible_nodes = eligible_nodes(service, config.peers, config.nodes)
-      live_eligible_nodes = eligible_nodes(service, live_nodes, config.nodes)
+    Enum.flat_map(config.services, fn service ->
+      configured_nodes = eligible_nodes(service, config.peers, config.nodes)
+      live_nodes_for_service = eligible_nodes(service, live_nodes, config.nodes)
       slots = Map.get(placement, service.name, [])
       unowned_slots = slots |> Enum.filter(&is_nil(&1.owner)) |> Enum.map(& &1.slot)
 
       []
       |> maybe_add_invalid_replica_count(service)
-      |> maybe_add_no_configured_eligible_nodes(service, configured_eligible_nodes)
-      |> maybe_add_no_live_eligible_nodes(service, configured_eligible_nodes, live_eligible_nodes)
+      |> maybe_add_no_configured_eligible_nodes(service, configured_nodes)
+      |> maybe_add_no_live_eligible_nodes(service, configured_nodes, live_nodes_for_service)
       |> maybe_add_unowned_slots(service, unowned_slots)
-      |> maybe_add_underspread_replicas(service, live_eligible_nodes)
+      |> maybe_add_underspread_replicas(service, live_nodes_for_service)
       |> Enum.reverse()
     end)
   end
@@ -59,51 +54,25 @@ defmodule NixSwarm.Placement do
       ) do
     plan(config, live_nodes, replica_targets)
     |> Enum.flat_map(fn {service_name, slots} ->
-      Enum.map(slots, fn slot ->
-        Map.put(slot, :service, service_name)
-      end)
+      Enum.map(slots, &Map.put(&1, :service, service_name))
     end)
     |> Enum.filter(&(&1.owner == node))
   end
 
   @spec owner_for_slot([atom()], integer()) :: atom() | nil
   def owner_for_slot([], _slot), do: nil
-
-  def owner_for_slot(ranked_nodes, slot),
-    do: Enum.at(ranked_nodes, rem(slot, length(ranked_nodes)))
+  def owner_for_slot(nodes, slot), do: Enum.at(nodes, rem(slot, length(nodes)))
 
   @doc "Returns the temporary deterministic autoscaler owner for a service."
   def scaler_owner(service, nodes, node_info) do
-    service
-    |> ranked_eligible_nodes(nodes, node_info)
-    |> List.first()
+    service |> ranked_eligible_nodes(nodes, node_info) |> List.first()
   end
 
-  defp assign_slots(service, ranked_nodes, replicas) do
-    max_per_node = service.max_replicas_per_node
-
-    {slots, _counts} =
-      Enum.map_reduce(Service.slots(service, replicas), %{}, fn slot, counts ->
-        owner = capped_owner_for_slot(ranked_nodes, slot, counts, max_per_node)
-        counts = if owner, do: Map.update(counts, owner, 1, &(&1 + 1)), else: counts
-
-        {%{slot: slot, owner: owner, unit: Service.unit_name(service, slot)}, counts}
-      end)
-
-    slots
+  defp assign_slots(service, nodes, replicas) do
+    Enum.map(Service.slots(service, replicas), fn slot ->
+      %{slot: slot, owner: owner_for_slot(nodes, slot), unit: Service.unit_name(service, slot)}
+    end)
   end
-
-  defp capped_owner_for_slot([], _slot, _counts, _max_per_node), do: nil
-  defp capped_owner_for_slot(nodes, slot, _counts, nil), do: owner_for_slot(nodes, slot)
-
-  defp capped_owner_for_slot(nodes, slot, counts, max_per_node) do
-    nodes
-    |> rotate(rem(slot, length(nodes)))
-    |> Enum.find(fn node -> Map.get(counts, node, 0) < max_per_node end)
-  end
-
-  defp rotate(nodes, 0), do: nodes
-  defp rotate(nodes, offset), do: Enum.drop(nodes, offset) ++ Enum.take(nodes, offset)
 
   defp effective_replicas(%{autoscaling: %{enabled: true} = policy} = service, targets) do
     targets
@@ -121,24 +90,13 @@ defmodule NixSwarm.Placement do
   end
 
   defp eligible_nodes(service, nodes, node_info) do
-    nodes
-    |> Enum.filter(&eligible_node?(service, &1, node_info))
-    |> Enum.sort()
+    nodes |> Enum.filter(&eligible_node?(service, &1, node_info)) |> Enum.sort()
   end
 
   defp ranked_eligible_nodes(service, live_nodes, node_info) do
-    preferred_indexes =
-      service.preferred_nodes
-      |> Enum.with_index()
-      |> Map.new()
-
     live_nodes
     |> Enum.filter(&eligible_node?(service, &1, node_info))
-    |> Enum.sort_by(fn node ->
-      score = stable_score(service.name, node)
-      preferred_rank = Map.get(preferred_indexes, node, map_size(preferred_indexes))
-      {preferred_rank, -score, Atom.to_string(node)}
-    end)
+    |> Enum.sort_by(fn node -> {-stable_score(service.name, node), Atom.to_string(node)} end)
   end
 
   defp stable_score(service_name, node) do
@@ -150,11 +108,10 @@ defmodule NixSwarm.Placement do
 
   defp eligible_node?(service, node, node_info) do
     allowed_nodes = Map.get(service, :allowed_nodes, [])
-    metadata = Map.get(node_info, node, %{labels: MapSet.new(), availability: :active})
+    metadata = Map.get(node_info, node, %{availability: :active})
 
     (allowed_nodes == [] or node in allowed_nodes) and
-      Map.get(metadata, :availability, :active) == :active and
-      Service.eligible?(service, metadata)
+      Map.get(metadata, :availability, :active) == :active
   end
 
   defp maybe_add_invalid_replica_count(diagnostics, %{replicas: replicas} = service)
@@ -177,10 +134,9 @@ defmodule NixSwarm.Placement do
       %{
         service: service.name,
         severity: :error,
-        reason: :no_configured_eligible_nodes,
-        constraints: service.constraints,
-        message:
-          "#{service.name}: no configured nodes match constraints #{inspect(service.constraints)}"
+        reason: :no_eligible_nodes,
+        allowed_nodes: service.allowed_nodes,
+        message: "#{service.name}: no configured active nodes are eligible"
       }
       | diagnostics
     ]
@@ -195,10 +151,8 @@ defmodule NixSwarm.Placement do
         service: service.name,
         severity: :error,
         reason: :no_live_eligible_nodes,
-        constraints: service.constraints,
         configured_eligible_nodes: configured_nodes,
-        message:
-          "#{service.name}: configured nodes match constraints #{inspect(service.constraints)}, but none are live"
+        message: "#{service.name}: configured nodes are unavailable"
       }
       | diagnostics
     ]
@@ -222,22 +176,21 @@ defmodule NixSwarm.Placement do
     ]
   end
 
-  defp maybe_add_underspread_replicas(diagnostics, service, live_eligible_nodes)
-       when service.replicas > length(live_eligible_nodes) and length(live_eligible_nodes) > 0 do
+  defp maybe_add_underspread_replicas(diagnostics, service, nodes)
+       when service.replicas > length(nodes) and length(nodes) > 0 do
     [
       %{
         service: service.name,
         severity: :warning,
         reason: :replicas_exceed_live_eligible_nodes,
         replicas: service.replicas,
-        live_eligible_nodes: live_eligible_nodes,
+        live_eligible_nodes: nodes,
         message:
-          "#{service.name}: #{service.replicas} replicas requested but only #{length(live_eligible_nodes)} eligible live nodes are available"
+          "#{service.name}: #{service.replicas} replicas requested but only #{length(nodes)} eligible live nodes are available"
       }
       | diagnostics
     ]
   end
 
-  defp maybe_add_underspread_replicas(diagnostics, _service, _live_eligible_nodes),
-    do: diagnostics
+  defp maybe_add_underspread_replicas(diagnostics, _service, _nodes), do: diagnostics
 end

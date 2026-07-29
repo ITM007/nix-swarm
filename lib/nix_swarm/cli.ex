@@ -10,9 +10,6 @@ defmodule NixSwarm.CLI do
     ssh_host: :string,
     secret_file: :string,
     name: :string,
-    template: :string,
-    force: :boolean,
-    rotate_credentials: :boolean,
     lines: :integer,
     refresh_ms: :integer,
     source: :string,
@@ -22,13 +19,9 @@ defmodule NixSwarm.CLI do
     flake: :string,
     host: :string,
     hosts: :string,
-    canary_hosts: :string,
-    max_unavailable: :integer,
     command_timeout_ms: :integer,
     yes: :boolean,
-    json: :boolean,
-    replicas: :integer,
-    constraints: :keep
+    json: :boolean
   ]
 
   def main(argv) do
@@ -58,14 +51,9 @@ defmodule NixSwarm.CLI do
     plan_fun = Keyword.get(dependencies, :plan_fun, &NixSwarm.Deploy.run/1)
     deploy_fun = Keyword.get(dependencies, :deploy_fun, &NixSwarm.Deploy.run/1)
     rollback_fun = Keyword.get(dependencies, :rollback_fun, &NixSwarm.Deploy.rollback/1)
-    ensure_fun = Keyword.get(dependencies, :ensure_fun, &NixSwarm.Cluster.Ensure.run/1)
     credentials_fun = Keyword.get(dependencies, :credentials_fun, &NixSwarm.Credentials.install/1)
     upgrade_fun = Keyword.get(dependencies, :upgrade_fun, &NixSwarm.Upgrade.run/2)
-
-    upgrade_prepare_fun =
-      Keyword.get(dependencies, :upgrade_prepare_fun, fn upgrade_opts ->
-        NixSwarm.Upgrade.prepare(upgrade_opts)
-      end)
+    restart_fun = Keyword.get(dependencies, :restart_fun, &NixSwarm.ServiceRestart.run/1)
 
     cond do
       Keyword.get(opts, :version, false) ->
@@ -76,37 +64,6 @@ defmodule NixSwarm.CLI do
         print_help()
         :ok
 
-      args == ["cluster", "ensure"] ->
-        require_confirmation!(opts, "cluster ensure")
-        IO.puts("Ensuring cluster nodes are running nix-swarmd...\n")
-
-        IO.puts(
-          "After bootstrap, review the plan and apply future changes from the code checkout.\n"
-        )
-
-        result = ensure_fun.(deploy_options(opts, false))
-
-        Enum.each(result.nodes, fn node ->
-          case {node.status, node[:result]} do
-            {:ok, :ok} ->
-              IO.puts("  #{node.node}: #{node.action} (ok)")
-
-            {:ok, {:error, reason}} ->
-              IO.puts("  #{node.node}: ERROR - #{reason}")
-              IO.puts(:stderr, "error: #{node.node}: #{reason}")
-
-            {:ok, _result} ->
-              IO.puts("  #{node.node}: #{node.action} (#{node[:message] || "ok"})")
-
-            {:error, _} ->
-              msg = node[:message] || "unknown error"
-              IO.puts("  #{node.node}: ERROR - #{msg}")
-              IO.puts(:stderr, "error: #{node.node}: #{msg}")
-          end
-        end)
-
-        if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
-
       args == ["cluster", "plan"] ->
         plan = plan_fun.(deploy_options(opts, true))
         print_deploy_plan(plan)
@@ -114,11 +71,6 @@ defmodule NixSwarm.CLI do
 
       args == ["cluster", "apply"] ->
         require_confirmation!(opts, "cluster apply")
-
-        if not Keyword.has_key?(dependencies, :deploy_fun) or
-             Keyword.has_key?(dependencies, :credentials_fun) do
-          _credentials = credentials_fun.(deploy_options(opts, false))
-        end
 
         result = deploy_fun.(deploy_options(opts, false))
         print_deploy_result(result)
@@ -130,21 +82,16 @@ defmodule NixSwarm.CLI do
         print_deploy_result(result)
         :ok
 
-      args == ["cluster", "credentials"] ->
-        require_confirmation!(opts, "cluster credentials")
-        result = credentials_fun.(deploy_options(opts, false))
+      args == ["cluster", "credentials", "rotate"] ->
+        require_confirmation!(opts, "cluster credentials rotate")
+
+        result =
+          credentials_fun.(Keyword.put(deploy_options(opts, false), :rotate_credentials, true))
 
         IO.puts(
           "Installed cluster credential #{result.fingerprint} on #{length(result.hosts)} host(s)."
         )
 
-        :ok
-
-      args == ["cluster", "upgrade", "prepare"] ->
-        result = upgrade_prepare_fun.(deploy_options(opts, true))
-        IO.puts("Prepared nix-swarm upgrade for #{result.source}")
-        IO.puts("  validation: #{result.validation}")
-        IO.puts("  flake.lock changed: #{result.lock_changed?}")
         :ok
 
       args == ["cluster", "upgrade"] ->
@@ -166,107 +113,6 @@ defmodule NixSwarm.CLI do
           do: :ok,
           else: {:error, "cluster connectivity checks failed"}
 
-      args == ["cluster", "init"] ->
-        require_confirmation!(opts, "cluster init")
-        IO.puts("Initializing nix-swarm cluster...\n")
-        IO.puts("Installing the shared agent credential and activating all machines.\n")
-
-        credential = credentials_fun.(deploy_options(opts, false))
-
-        IO.puts(
-          "  credential #{credential.fingerprint}: installed on #{length(credential.hosts)} host(s)"
-        )
-
-        result = ensure_fun.(deploy_options(opts, false))
-
-        Enum.each(result.nodes, fn node ->
-          case {node.status, node[:result]} do
-            {:ok, :ok} ->
-              IO.puts("  #{node.node}: #{node.action} (ok)")
-
-            {:ok, {:error, reason}} ->
-              IO.puts("  #{node.node}: ERROR - #{reason}")
-              IO.puts(:stderr, "error: #{node.node}: #{reason}")
-
-            {:ok, _result} ->
-              IO.puts("  #{node.node}: #{node.action} (#{node[:message] || "ok"})")
-
-            {:error, _} ->
-              msg = node[:message] || "unknown error"
-              IO.puts("  #{node.node}: ERROR - #{msg}")
-              IO.puts(:stderr, "error: #{node.node}: #{msg}")
-          end
-        end)
-
-        if result.ok do
-          IO.puts(
-            "\nNext: use `nix-swarm cluster doctor --target NODE` to verify read-only SSH access"
-          )
-
-          :ok
-        else
-          {:error, "some nodes failed; see above"}
-        end
-
-      args == ["service", "create"] ->
-        name = Keyword.fetch!(opts, :name)
-        template = Keyword.get(opts, :template, "web")
-        paths = config_paths(opts)
-        services_dir = paths.services_dir
-
-        with :ok <- ConfigFiles.validate_generated_name(name, "service name"),
-             {:ok, tpl} <- NixSwarm.Service.Templates.generate(template, String.trim(name)) do
-          output = Path.expand(Path.join(services_dir, tpl.filename))
-          services_root = Path.expand(services_dir) <> "/"
-
-          if String.starts_with?(output, services_root) and not File.exists?(output) do
-            output = Path.join(services_dir, tpl.filename)
-            File.mkdir_p!(services_dir)
-            File.write!(output, tpl.content, [:exclusive])
-            IO.puts("Created #{output}")
-            IO.puts("Service: #{name}")
-            IO.puts("Template: #{template} — #{tpl.description}")
-            IO.puts("Unit template: #{String.trim(name)}@%{slot}.service")
-            IO.puts("Next: add the service and this unitTemplate to cluster.nix")
-            :ok
-          else
-            {:error,
-             "service file already exists or is outside the services directory: #{output}"}
-          end
-        else
-          {:error, msg} -> {:error, msg}
-        end
-
-      args == ["service", "add"] ->
-        name = Keyword.fetch!(opts, :name)
-        template = Keyword.get(opts, :template, "web")
-        replicas = Keyword.get(opts, :replicas, 1)
-        constraints = Keyword.get(opts, :constraints, [])
-        paths = config_paths(opts)
-
-        with {:ok, tpl} <- NixSwarm.Service.Templates.generate(template, name),
-             {:ok, output} <-
-               NixSwarm.ConfigFiles.add_service(paths, name,
-                 replicas: replicas,
-                 constraints: constraints,
-                 unit_template: "#{String.trim(name)}@%{slot}.service",
-                 module_content: tpl.content
-               ) do
-          IO.puts("Created #{output}")
-          IO.puts("Service: #{name}")
-          IO.puts("Template: #{template} — #{tpl.description}")
-          IO.puts("Next: import this module from #{paths.cluster_file}")
-          :ok
-        else
-          {:error, msg} ->
-            IO.puts(:stderr, msg)
-            {:error, msg}
-        end
-
-      args == ["service", "list"] ->
-        IO.puts("Available service templates:\n#{NixSwarm.Service.Templates.list()}")
-        :ok
-
       args == ["service", "logs"] ->
         service_name = opts |> Keyword.fetch!(:name) |> String.trim()
         lines = Keyword.get(opts, :lines, 50)
@@ -280,6 +126,43 @@ defmodule NixSwarm.CLI do
             print_json!(%{service: service_name, logs: logs})
           else
             print_service_logs(logs)
+          end
+
+          :ok
+        else
+          {:error, msg} -> {:error, msg}
+        end
+
+      args == ["service", "restart"] ->
+        require_confirmation!(opts, "service restart")
+        service_name = opts |> Keyword.fetch!(:name) |> String.trim()
+        remote_opts = Keyword.take(opts, [:target, :ssh_host])
+
+        remote_opts =
+          case Keyword.get(dependencies, :query_fun) do
+            query_fun when is_function(query_fun, 2) ->
+              Keyword.put(remote_opts, :query_fun, query_fun)
+
+            _ ->
+              remote_opts
+          end
+
+        with {:ok, target_node} <- connect_remote(remote_opts),
+             overview <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_overview, []),
+             :ok <- validate_service_name(overview, service_name),
+             units <- restart_units(overview, service_name),
+             {:ok, result} <-
+               restart_fun.(
+                 remote: target_node,
+                 overview: overview,
+                 service: service_name,
+                 units: units,
+                 command_fun: Keyword.get(dependencies, :command_fun, &run_command/2)
+               ) do
+          if Keyword.get(opts, :json, false) do
+            print_json!(result)
+          else
+            IO.puts("Restarted #{length(units)} unit(s) for #{service_name}.")
           end
 
           :ok
@@ -301,30 +184,23 @@ defmodule NixSwarm.CLI do
           {:error, msg} -> {:error, msg}
         end
 
-      args == ["cluster", "members"] ->
-        remote_opts = Keyword.take(opts, [:target, :ssh_host])
-
-        with {:ok, target_node} <- connect_remote(remote_opts),
-             members <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_members, []) do
-          if Keyword.get(opts, :json, false),
-            do: print_json!(members),
-            else: print_cluster_members(members)
-
-          :ok
-        else
-          {:error, msg} -> {:error, msg}
-        end
-
       args == ["debug", "state"] ->
         {:error, "debug state is intentionally unavailable through the read-only operator API"}
 
-      args == ["cluster", "rebuild"] ->
-        require_confirmation!(opts, "cluster rebuild")
+      args in [["cluster", "init"], ["cluster", "ensure"], ["cluster", "rebuild"]] ->
+        {:error, "command removed; use `nix-swarm cluster apply --yes`"}
 
-        result =
-          NixSwarm.Cluster.Rebuild.run(deploy_options(opts, false))
+      args == ["cluster", "members"] ->
+        {:error, "command removed; use `nix-swarm cluster status`"}
 
-        if result.ok, do: :ok, else: {:error, "some nodes failed; see above"}
+      args == ["cluster", "credentials"] ->
+        {:error, "command removed; use `nix-swarm cluster credentials rotate --yes`"}
+
+      args == ["cluster", "upgrade", "prepare"] ->
+        {:error, "command removed; use `nix-swarm cluster upgrade --yes`"}
+
+      args in [["service", "create"], ["service", "add"], ["service", "list"]] ->
+        {:error, "command removed; copy the service definition from `examples/starter`"}
 
       args in [[], ["tui"], ["help"]] ->
         if args == ["help"] do
@@ -353,9 +229,7 @@ defmodule NixSwarm.CLI do
   defp validate_parse_result!(opts, []) do
     validate_integer_range!(opts, :lines, "--lines", 1, 1_000)
     validate_integer_range!(opts, :refresh_ms, "--refresh-ms", 100, 600_000)
-    validate_integer_range!(opts, :max_unavailable, "--max-unavailable", 1, 128)
     validate_integer_range!(opts, :command_timeout_ms, "--command-timeout-ms", 1, 86_400_000)
-    validate_integer_range!(opts, :replicas, "--replicas", 0, 128)
   end
 
   defp validate_json_scope!(args, opts) do
@@ -363,12 +237,12 @@ defmodule NixSwarm.CLI do
       not Keyword.get(opts, :json, false) ->
         :ok
 
-      args in [["cluster", "status"], ["cluster", "members"], ["service", "logs"]] ->
+      args in [["cluster", "status"], ["service", "logs"]] ->
         :ok
 
       true ->
         raise ArgumentError,
-              "--json is supported only for cluster status, cluster members, and service logs"
+              "--json is supported only for cluster status and service logs"
     end
   end
 
@@ -397,9 +271,9 @@ defmodule NixSwarm.CLI do
       [],
       ["tui"],
       ["cluster", "doctor"],
-      ["cluster", "members"],
       ["cluster", "status"],
-      ["service", "logs"]
+      ["service", "logs"],
+      ["service", "restart"]
     ]
   end
 
@@ -466,8 +340,6 @@ defmodule NixSwarm.CLI do
       :flake,
       :host,
       :hosts,
-      :canary_hosts,
-      :max_unavailable,
       :command_timeout_ms,
       :secret_file,
       :rotate_credentials
@@ -503,6 +375,27 @@ defmodule NixSwarm.CLI do
     end
   end
 
+  defp restart_units(overview, service_name) do
+    deploy_hosts = get_in(overview, [:members, :deploy_hosts]) || %{}
+
+    overview
+    |> get_in([:status, :placements, service_name])
+    |> List.wrap()
+    |> Enum.sort_by(&Map.get(&1, :slot, 0))
+    |> Enum.map(fn placement ->
+      owner = Map.get(placement, :owner)
+
+      %{
+        unit: Map.fetch!(placement, :unit),
+        owner: owner,
+        slot: Map.get(placement, :slot),
+        deploy_host: Map.get(deploy_hosts, owner) || Map.get(deploy_hosts, to_string(owner))
+      }
+    end)
+  end
+
+  defp run_command(command, args), do: System.cmd(command, args, stderr_to_stdout: true)
+
   defp print_json!(value), do: IO.puts(NixSwarm.JSON.encode!(value))
 
   defp print_service_logs(logs) do
@@ -518,16 +411,6 @@ defmodule NixSwarm.CLI do
         IO.puts(inspect(entries))
       end
     end)
-  end
-
-  defp print_cluster_members(members) do
-    IO.puts("Cluster members — #{members.queried_node}")
-    IO.puts("")
-    IO.puts("Live nodes (#{length(members.live_nodes)}):")
-    Enum.each(members.live_nodes, &IO.puts("  #{&1}"))
-    IO.puts("")
-    IO.puts("Configured nodes (#{length(members.configured_nodes)}):")
-    Enum.each(members.configured_nodes, &IO.puts("  #{&1}"))
   end
 
   defp print_cluster_status(overview) do
@@ -576,7 +459,7 @@ defmodule NixSwarm.CLI do
     else
       IO.puts("NixOS deployment plan")
       IO.puts("  source: #{plan.source}")
-      IO.puts("  rollout width: #{plan.max_unavailable}")
+      IO.puts("  rollout policy: sequential, one host at a time")
     end
 
     Enum.each(plan.validation.commands, &IO.puts("  validate: #{&1}"))
@@ -613,57 +496,46 @@ defmodule NixSwarm.CLI do
   end
 
   defp print_help do
-    launch = NixSwarm.operator_launch()
-
     IO.puts("""
     Nix-Swarm
 
-    Inspect the cluster in the read-only operator TUI:
+    Read-only operator TUI / console:
       #{NixSwarm.operator_command()}
-      #{launch}
-      #{launch} --source /path/to/checkout
+      #{NixSwarm.operator_launch()}
 
-
-    Bootstrap cluster nodes from cluster.nix:
-      nix-swarm cluster init --source /path/to/flake --yes
-      nix-swarm cluster credentials --source /path/to/flake --yes
-
-    Preview and apply the Nix configuration:
-      nix-swarm cluster plan --source /path/to/flake
-      nix-swarm cluster apply --source /path/to/flake --yes
-      nix-swarm cluster rollback --source /path/to/flake --yes
-      nix-swarm cluster upgrade --source /path/to/flake --yes
+    Deployment workflow:
+      nix-swarm cluster plan --source /path/to/checkout
+      nix-swarm cluster apply --source /path/to/checkout --yes
+      nix-swarm cluster rollback --source /path/to/checkout --yes
+      nix-swarm cluster upgrade --source /path/to/checkout --yes
+      nix-swarm cluster credentials rotate --source /path/to/checkout --yes
 
     Read-only operations:
       nix-swarm cluster status --target NODE
       nix-swarm cluster doctor --target NODE
       nix-swarm service logs --name SERVICE --target NODE
+      nix-swarm service restart --name SERVICE --target NODE --yes
 
-    Remote target:
-      --target NODE              remote Nix-Swarm node to connect to
-                                 defaults to NIX_SWARM_TARGET or the first peer in cluster/cluster.nix
+    Targeted maintenance:
+      --hosts HOSTS              comma-separated deliberate maintenance targets
 
-    Remote connection options:
-      --ssh-host USER@HOST       SSH destination; defaults to the host in --target
+    Remote connection:
+      --target NODE              remote Nix-Swarm node
+      --ssh-host USER@HOST       SSH destination
 
-    TUI options:
-      --lines N                  default log line count (default: 50)
-      --refresh-ms N             auto-refresh interval in milliseconds (default: 30000)
+    Common options:
       --source PATH              local code-first Nix-Swarm flake root
       --cluster-file PATH        override the cluster file path
       --machines-dir PATH        override the machines directory
       --services-dir PATH        override the services directory
       --flake REF                local deployment flake (defaults to --source)
-      --hosts HOSTS              comma-separated deployment targets
-      --canary-hosts HOSTS       targets deployed first, one at a time
-      --max-unavailable N        maximum parallel host changes (default: 1)
-      --yes                      confirm apply or rollback
+      --yes                      confirm a mutating operation
+      --json                     structured output for status and logs
 
     Notes:
-      - Run this from a Mix or release runtime with the ex_ratatui native library available.
-      - Nix code is the only desired-state mutation interface; the TUI is read-only.
-      - Without --source, Nix-Swarm prefers NIX_SWARM_SOURCE, then a local checkout/examples root, then ~/.config/nix-swarm.
-      - Operators never receive the BEAM cluster cookie. Read operations use SSH and a restricted local Unix socket.
+      - Nix code is the only desired-state mutation interface.
+      - Inspect `cluster plan` before every mutating operation.
+      - Operators never receive the BEAM cluster cookie.
     """)
   end
 end

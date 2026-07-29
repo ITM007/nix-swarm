@@ -14,6 +14,9 @@ defmodule NixSwarm.Autoscaler do
   alias NixSwarm.Placement
 
   @decision_ttl_multiplier 4
+  @sample_window_sec 60
+  @scale_up_cooldown_sec 30
+  @scale_down_cooldown_sec 300
   @scale_down_hysteresis 0.70
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -34,26 +37,28 @@ defmodule NixSwarm.Autoscaler do
   end
 
   @doc false
-  def recommend_target(current, utilization, policy) do
-    raw = ceil(current * utilization / policy.cpu_target_percent)
+  def recommend_target(current, %{cpu_percent: cpu, memory_percent: memory}, policy) do
+    cpu_high = is_number(cpu) and cpu > policy.cpu_target_percent
+    memory_high = is_number(memory) and memory > policy.memory_target_percent
+    cpu_low = is_number(cpu) and cpu < policy.cpu_target_percent * @scale_down_hysteresis
+
+    memory_low =
+      is_number(memory) and memory < policy.memory_target_percent * @scale_down_hysteresis
 
     cond do
-      utilization > policy.cpu_target_percent and current < policy.max_replicas ->
-        current
-        |> Kernel.+(policy.max_step)
-        |> min(max(raw, current + 1))
-        |> min(policy.max_replicas)
+      (cpu_high or memory_high) and current < policy.max_replicas ->
+        min(current + 1, policy.max_replicas)
 
-      utilization < policy.cpu_target_percent * @scale_down_hysteresis and
-          current > policy.min_replicas ->
-        current
-        |> Kernel.-(policy.max_step)
-        |> max(raw)
-        |> max(policy.min_replicas)
+      cpu_low and (memory_low or is_nil(memory)) and current > policy.min_replicas ->
+        max(current - 1, policy.min_replicas)
 
       true ->
         current
     end
+  end
+
+  def recommend_target(current, utilization, policy) when is_number(utilization) do
+    recommend_target(current, %{cpu_percent: utilization, memory_percent: nil}, policy)
   end
 
   @impl true
@@ -162,7 +167,10 @@ defmodule NixSwarm.Autoscaler do
         total =
           Enum.reduce(slots, 0, fn slot, sum -> sum + Executor.unit_cpu_usage(slot.unit) end)
 
-        {service, %{usage_ns: total, unit_count: length(slots), sampled_at_ns: now_ns}}
+        memory = Enum.map(slots, &Executor.unit_memory_usage(&1.unit))
+
+        {service,
+         %{usage_ns: total, memory: memory, unit_count: length(slots), sampled_at_ns: now_ns}}
       end)
 
     samples =
@@ -179,9 +187,13 @@ defmodule NixSwarm.Autoscaler do
               nil
           end
 
+        memory_percent = aggregate_memory(current.memory)
+
         {service,
          %{
            cpu_percent: utilization,
+           memory_percent: memory_percent,
+           diagnostic: if(memory_percent == nil, do: :memory_max_unavailable, else: nil),
            unit_count: current.unit_count,
            sampled_at_ms: System.system_time(:millisecond)
          }}
@@ -252,8 +264,8 @@ defmodule NixSwarm.Autoscaler do
       snapshots
       |> Enum.flat_map(fn snapshot ->
         case get_in(snapshot, [:samples, service_name]) do
-          %{cpu_percent: value, unit_count: count} when is_number(value) and count > 0 ->
-            [{value, count}]
+          %{cpu_percent: cpu, unit_count: count} when is_number(cpu) and count > 0 ->
+            [{cpu, Map.get(get_in(snapshot, [:samples, service_name]), :memory_percent), count}]
 
           _missing ->
             []
@@ -265,8 +277,31 @@ defmodule NixSwarm.Autoscaler do
         nil
 
       values ->
-        total_units = Enum.sum(Enum.map(values, &elem(&1, 1)))
-        Enum.sum(Enum.map(values, fn {value, count} -> value * count end)) / total_units
+        total_units = Enum.sum(Enum.map(values, &elem(&1, 2)))
+
+        %{
+          cpu_percent:
+            Enum.sum(Enum.map(values, fn {cpu, _memory, count} -> cpu * count end)) / total_units,
+          memory_percent: weighted_memory(values, total_units)
+        }
+    end
+  end
+
+  @doc false
+  def aggregate_memory(samples) do
+    finite = Enum.filter(samples, &(is_integer(&1.max) and &1.max > 0))
+
+    case finite do
+      [] ->
+        nil
+
+      values ->
+        {current, maximum} =
+          Enum.reduce(values, {0, 0}, fn sample, {used, max} ->
+            {used + sample.current, max + sample.max}
+          end)
+
+        current * 100.0 / maximum
     end
   end
 
@@ -287,14 +322,33 @@ defmodule NixSwarm.Autoscaler do
       decision.target in service.autoscaling.min_replicas..service.autoscaling.max_replicas
   end
 
-  defp track_direction(state, service, utilization, now_ms) do
+  defp weighted_memory(values, total_units) do
+    finite = Enum.filter(values, fn {_cpu, memory, _count} -> is_number(memory) end)
+
+    case finite do
+      [] ->
+        nil
+
+      samples ->
+        Enum.sum(Enum.map(samples, fn {_cpu, memory, count} -> memory * count end)) / total_units
+    end
+  end
+
+  defp track_direction(state, service, %{cpu_percent: cpu, memory_percent: memory}, now_ms) do
     policy = service.autoscaling
 
     direction =
       cond do
-        utilization > policy.cpu_target_percent -> :up
-        utilization < policy.cpu_target_percent * @scale_down_hysteresis -> :down
-        true -> :stable
+        (is_number(cpu) and cpu > policy.cpu_target_percent) or
+            (is_number(memory) and memory > policy.memory_target_percent) ->
+          :up
+
+        is_number(cpu) and cpu < policy.cpu_target_percent * @scale_down_hysteresis and
+            (is_nil(memory) or memory < policy.memory_target_percent * @scale_down_hysteresis) ->
+          :down
+
+        true ->
+          :stable
       end
 
     trend = Map.get(state.trends, service.name)
@@ -313,13 +367,12 @@ defmodule NixSwarm.Autoscaler do
 
   defp decision_due?(state, service, direction, now_ms) do
     trend = Map.fetch!(state.trends, service.name)
-    policy = service.autoscaling
-    window_ms = policy.sample_window_sec * 1_000
+    window_ms = @sample_window_sec * 1_000
 
     cooldown_ms =
       case direction do
-        :up -> policy.scale_up_cooldown_sec * 1_000
-        :down -> policy.scale_down_cooldown_sec * 1_000
+        :up -> @scale_up_cooldown_sec * 1_000
+        :down -> @scale_down_cooldown_sec * 1_000
       end
 
     last_changed = Map.get(state.last_changed_ms, service.name, now_ms - cooldown_ms)

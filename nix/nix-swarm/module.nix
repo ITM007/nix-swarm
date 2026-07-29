@@ -2,7 +2,7 @@
 
 let
   cfg = config.services.nix-swarm;
-  inherit (lib) all concatMapStringsSep elem genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption optional splitString types;
+  inherit (lib) all concatMapStringsSep elem genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
 
   escapeErlString = value:
     builtins.replaceStrings
@@ -40,7 +40,6 @@ let
 
   mkNodeEntry = name: nodeCfg: ''
     {${toErlTerm name}, [
-      {labels, ${mkStringList nodeCfg.labels}},
       {availability, ${toErlTerm nodeCfg.availability}},
       {deploy_host, ${toErlTerm nodeCfg.deployHost}},
       {nixos_configuration, ${toErlTerm nodeCfg.nixosConfiguration}}
@@ -51,30 +50,12 @@ let
     [
       {name, ${toErlTerm name}},
       {replicas, ${toString serviceCfg.replicas}},
-      {max_replicas_per_node, ${toErlTerm serviceCfg.maxReplicasPerNode}},
       {unit_template, ${toErlTerm (effectiveUnitTemplate name serviceCfg)}},
-      {constraints, ${mkStringList serviceCfg.constraints}},
       {allowed_nodes, ${mkStringList serviceCfg.allowedNodes}},
-      {preferred_nodes, ${mkStringList serviceCfg.preferredNodes}},
-      {readiness, ${toErlTerm serviceCfg.readiness}},
       {autoscaling, ${toErlTerm (serviceCfg.autoscaling // {
         minReplicas = if serviceCfg.autoscaling.minReplicas == null then serviceCfg.replicas else serviceCfg.autoscaling.minReplicas;
         maxReplicas = if serviceCfg.autoscaling.maxReplicas == null then serviceCfg.replicas else serviceCfg.autoscaling.maxReplicas;
-      })}},
-      {healthcheck, ${toErlTerm serviceCfg.healthcheck}},
-      {settings, ${toErlTerm serviceCfg.settings}}
-    ]
-  '';
-
-  mkIngressEntry = name: siteCfg: ''
-    [
-      {name, ${toErlTerm name}},
-      {domain, ${toErlTerm siteCfg.domain}},
-      {service, ${toErlTerm siteCfg.service}},
-      {ports, ${mkStringList siteCfg.ports}},
-      {base_port, ${toErlTerm siteCfg.basePort}},
-      {scheme, ${toErlTerm siteCfg.scheme}},
-      {default, ${toErlTerm siteCfg.default}}
+      })}}
     ]
   '';
 
@@ -101,12 +82,8 @@ let
     let
       nodeCfg = cfg.nodes.${node};
       allowedOk = serviceCfg.allowedNodes == [ ] || elem node serviceCfg.allowedNodes;
-      labelsOk = all (label: elem label nodeCfg.labels) serviceCfg.constraints;
     in
-    allowedOk && labelsOk;
-
-  preferredNodesEligible = serviceCfg:
-    all (node: elem node cfg.peers && builtins.hasAttr node cfg.nodes && nodeEligibleFor serviceCfg node) serviceCfg.preferredNodes;
+    allowedOk;
 
   allowedNodesKnown = serviceCfg:
     all (node: elem node cfg.peers) serviceCfg.allowedNodes;
@@ -147,15 +124,7 @@ let
             assertion = effectiveMaxReplicas serviceCfg <= 1 || hasInfix "%{slot}" template;
             message = "services.nix-swarm.services.${name}.unitTemplate must include `%{slot}` when replica capacity is greater than 1";
           }
-          {
-            assertion = serviceCfg.maxReplicasPerNode == null || (serviceCfg.maxReplicasPerNode >= 1 && serviceCfg.maxReplicasPerNode <= 128);
-            message = "services.nix-swarm.services.${name}.maxReplicasPerNode must be between 1 and 128";
-          }
-          {
-            assertion = serviceCfg.readiness.timeoutSec >= 1 && serviceCfg.readiness.timeoutSec <= 3600
-              && serviceCfg.readiness.stableSamples >= 1 && serviceCfg.readiness.stableSamples <= 60;
-            message = "services.nix-swarm.services.${name}.readiness values are outside their supported ranges";
-          }
+
           {
             assertion = !serviceCfg.autoscaling.enable || (
               effectiveMinReplicas serviceCfg >= 0
@@ -164,14 +133,8 @@ let
                 && effectiveMaxReplicas serviceCfg <= 128
                 && serviceCfg.autoscaling.cpuTargetPercent >= 1
                 && serviceCfg.autoscaling.cpuTargetPercent <= 100
-                && serviceCfg.autoscaling.sampleWindowSec >= 1
-                && serviceCfg.autoscaling.sampleWindowSec <= 3600
-                && serviceCfg.autoscaling.scaleUpCooldownSec >= 0
-                && serviceCfg.autoscaling.scaleUpCooldownSec <= 86400
-                && serviceCfg.autoscaling.scaleDownCooldownSec >= 0
-                && serviceCfg.autoscaling.scaleDownCooldownSec <= 86400
-                && serviceCfg.autoscaling.maxStep >= 1
-                && serviceCfg.autoscaling.maxStep <= 128
+                && serviceCfg.autoscaling.memoryTargetPercent >= 1
+                && serviceCfg.autoscaling.memoryTargetPercent <= 100
             );
             message = "services.nix-swarm.services.${name}.autoscaling values are inconsistent or outside supported ranges";
           }
@@ -183,10 +146,7 @@ let
             assertion = allowedNodesKnown serviceCfg;
             message = "services.nix-swarm.services.${name}.allowedNodes must reference configured peers";
           }
-          {
-            assertion = preferredNodesEligible serviceCfg;
-            message = "services.nix-swarm.services.${name}.preferredNodes must reference nodes eligible after allowedNodes and constraints";
-          }
+
         ]
       )
       (builtins.attrNames cfg.services));
@@ -199,19 +159,7 @@ let
     {services, [
       ${concatMapStringsSep ",\n      " (entry: entry) (mapAttrsToList mkServiceEntry cfg.services)}
     ]}.
-    {runtime, [
-      {connect_interval_ms, ${toString cfg.runtime.connectIntervalMs}},
-      {reconcile_interval_ms, ${toString cfg.runtime.reconcileIntervalMs}},
-      {autoscale_interval_ms, ${toString cfg.runtime.autoscaleIntervalMs}},
-      {failure_grace_ms, ${toString cfg.runtime.failureGraceMs}},
-      {recovery_stabilization_ms, ${toString cfg.runtime.recoveryStabilizationMs}},
-      {command_timeout_ms, ${toString cfg.runtime.commandTimeoutMs}},
-      {generation, ${toErlTerm cfg.runtime.generation}},
-      {executor, [{adapter, systemd}]}
-    ]}.
-    {ingress, [
-      ${concatMapStringsSep ",\n      " (entry: entry) (mapAttrsToList mkIngressEntry cfg.ingress.sites)}
-    ]}.
+    {runtime, [{executor, [{adapter, systemd}]}]}.
   '';
 
   rawRenderedConfig = pkgs.writeText "nix-swarm.config.unvalidated" renderedConfigText;
@@ -264,16 +212,7 @@ let
       assertion = cfg.epmdPort != cfg.distributionPort;
       message = "services.nix-swarm.epmdPort and distributionPort must be different";
     }
-    {
-      assertion =
-        cfg.runtime.connectIntervalMs >= 100 && cfg.runtime.connectIntervalMs <= 3600000
-        && cfg.runtime.reconcileIntervalMs >= 100 && cfg.runtime.reconcileIntervalMs <= 3600000
-        && cfg.runtime.autoscaleIntervalMs >= 100 && cfg.runtime.autoscaleIntervalMs <= 3600000
-        && cfg.runtime.failureGraceMs >= 100 && cfg.runtime.failureGraceMs <= 3600000
-        && cfg.runtime.recoveryStabilizationMs >= 100 && cfg.runtime.recoveryStabilizationMs <= 3600000
-        && cfg.runtime.commandTimeoutMs >= 100 && cfg.runtime.commandTimeoutMs <= 300000;
-      message = "services.nix-swarm.runtime intervals must be 100-3600000ms and commandTimeoutMs must be 100-300000ms";
-    }
+
     {
       assertion = lib.hasPrefix "/" cfg.cookieFile && !lib.hasPrefix "/nix/store/" cfg.cookieFile;
       message = "services.nix-swarm.cookieFile must be an absolute, out-of-store secret path";
@@ -290,38 +229,11 @@ let
       assertion = !elem "nix-swarm" cfg.operatorUsers;
       message = "services.nix-swarm.operatorUsers must not contain the managed nix-swarm system user";
     }
-    {
-      assertion = cfg.resourceLimits.tasksMax >= 16 && cfg.resourceLimits.tasksMax <= 4096;
-      message = "services.nix-swarm.resourceLimits.tasksMax must be between 16 and 4096";
-    }
-    {
-      assertion = cfg.deployment.healthTimeoutSec >= 1 && cfg.deployment.healthTimeoutSec <= 3600;
-      message = "services.nix-swarm.deployment.healthTimeoutSec must be between 1 and 3600";
-    }
-    {
-      assertion = cfg.deployment.stableSamples >= 1 && cfg.deployment.stableSamples <= 60;
-      message = "services.nix-swarm.deployment.stableSamples must be between 1 and 60";
-    }
-    {
-      assertion = cfg.deployment.stableSamples <= cfg.deployment.healthTimeoutSec;
-      message = "services.nix-swarm.deployment.stableSamples must not exceed healthTimeoutSec";
-    }
-    {
-      assertion = cfg.deployment.maxUnavailable >= 1 && cfg.deployment.maxUnavailable <= 128;
-      message = "services.nix-swarm.deployment.maxUnavailable must be between 1 and 128";
-    }
-    {
-      assertion = all (node: builtins.hasAttr node cfg.nodes && elem node cfg.peers) cfg.deployment.canaryNodes;
-      message = "services.nix-swarm.deployment.canaryNodes must reference configured peer nodes";
-    }
-    {
-      assertion = all (service: service.readiness.timeoutSec <= cfg.deployment.healthTimeoutSec) (builtins.attrValues cfg.services);
-      message = "service readiness.timeoutSec values must not exceed deployment.healthTimeoutSec";
-    }
+
   ];
 in
 {
-  imports = [ ./hardened.nix ./ingress.nix ];
+  imports = [ ./hardened.nix ];
 
   options.services.nix-swarm = {
     enable = mkEnableOption "the Nix-Swarm leaderless cluster runtime";
@@ -411,10 +323,6 @@ in
     nodes = mkOption {
       type = types.attrsOf (types.submodule ({ name, ... }: {
         options = {
-          labels = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-          };
 
           availability = mkOption {
             type = types.enum [ "active" "draining" "maintenance" ];
@@ -446,11 +354,6 @@ in
             default = 1;
           };
 
-          maxReplicasPerNode = mkOption {
-            type = types.nullOr types.int;
-            default = null;
-            description = "Optional cap on replicas of this service assigned to one node.";
-          };
 
           unitTemplate = mkOption {
             type = types.nullOr types.str;
@@ -458,10 +361,6 @@ in
             description = "Optional systemd unit template rendered by Nix-Swarm. Defaults to `%{service}.service` for one replica and `%{service}@%{slot}.service` for multiple replicas.";
           };
 
-          constraints = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-          };
 
           allowedNodes = mkOption {
             type = types.listOf types.str;
@@ -469,31 +368,12 @@ in
             description = "Optional hard allowlist of peer node names. Empty means no hard node restriction.";
           };
 
-          preferredNodes = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-            description = "Preferred nodes for this service, listed in highest-to-lowest preference order.";
-          };
-
-          readiness = {
-            timeoutSec = mkOption {
-              type = types.int;
-              default = 120;
-              description = "Maximum time deployment health gates wait for systemd readiness.";
-            };
-
-            stableSamples = mkOption {
-              type = types.int;
-              default = 2;
-              description = "Consecutive running samples required by deployment health gates.";
-            };
-          };
 
           autoscaling = {
             enable = mkOption {
               type = types.bool;
               default = false;
-              description = "Enable leaderless, CPU-based autoscaling for this stateless service.";
+              description = "Enable opinionated CPU-and-memory autoscaling. This explicitly asserts that concurrent instances are safe.";
             };
 
             minReplicas = mkOption {
@@ -509,114 +389,16 @@ in
             };
 
             cpuTargetPercent = mkOption { type = types.int; default = 65; };
-            sampleWindowSec = mkOption { type = types.int; default = 60; };
-            scaleUpCooldownSec = mkOption { type = types.int; default = 30; };
-            scaleDownCooldownSec = mkOption { type = types.int; default = 300; };
-            maxStep = mkOption { type = types.int; default = 1; };
+            memoryTargetPercent = mkOption { type = types.int; default = 80; };
           };
 
-          healthcheck = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-            description = "Deprecated display-only compatibility value. Nix-Swarm never executes this string.";
-          };
-
-          settings = mkOption {
-            type = types.attrsOf (types.oneOf [ types.str types.int types.bool ]);
-            default = { };
-            description = "Public service metadata rendered through the Nix store. Never place secrets here.";
-          };
         };
       }));
       default = { };
       description = "Cluster services keyed by logical service name.";
     };
 
-    resourceLimits = {
-      memoryMax = mkOption {
-        type = types.str;
-        default = "512M";
-        description = "systemd MemoryMax for nix-swarmd.";
-      };
 
-      tasksMax = mkOption {
-        type = types.int;
-        default = 512;
-        description = "systemd TasksMax for nix-swarmd.";
-      };
-    };
-
-    deployment = {
-      healthTimeoutSec = mkOption {
-        type = types.int;
-        default = 120;
-        description = "Maximum time each rollout batch may take to become healthy.";
-      };
-
-      stableSamples = mkOption {
-        type = types.int;
-        default = 2;
-        description = "Consecutive healthy cluster snapshots required before continuing a rollout.";
-      };
-
-      autoRollback = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Automatically roll back every host attempted by a failed deployment.";
-      };
-
-      canaryNodes = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        description = "Peer node names deployed one at a time before the remaining rollout batches.";
-      };
-
-      maxUnavailable = mkOption {
-        type = types.int;
-        default = 1;
-        description = "Maximum number of non-canary deployment targets updated concurrently.";
-      };
-    };
-
-    runtime = {
-      connectIntervalMs = mkOption {
-        type = types.int;
-        default = 500;
-      };
-
-      reconcileIntervalMs = mkOption {
-        type = types.int;
-        default = 5000;
-      };
-
-      autoscaleIntervalMs = mkOption {
-        type = types.int;
-        default = 10000;
-      };
-
-      failureGraceMs = mkOption {
-        type = types.int;
-        default = 10000;
-        description = "Time a disconnected peer remains suspect before its assignments are rebalanced.";
-      };
-
-      recoveryStabilizationMs = mkOption {
-        type = types.int;
-        default = 30000;
-        description = "Time a returning peer remains unassigned before it is admitted back into placement.";
-      };
-
-      commandTimeoutMs = mkOption {
-        type = types.int;
-        default = 5000;
-        description = "Timeout in milliseconds for local systemd/journal/metrics commands issued by the executor.";
-      };
-
-      generation = mkOption {
-        type = types.str;
-        default = "nixos";
-      };
-    };
   };
 
   config = mkIf cfg.enable {
@@ -646,9 +428,6 @@ in
       });
     '';
 
-    warnings = optional
-      (builtins.any (service: service.healthcheck != null) (builtins.attrValues cfg.services))
-      "services.nix-swarm.services.*.healthcheck shell commands are no longer executed; health is derived from systemd unit state";
 
     networking.firewall = mkMerge [
       (mkIf (cfg.openFirewall && cfg.firewallInterfaces == [ ]) {
@@ -733,8 +512,8 @@ in
         RestrictRealtime = true;
         RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
         CapabilityBoundingSet = "";
-        MemoryMax = cfg.resourceLimits.memoryMax;
-        TasksMax = cfg.resourceLimits.tasksMax;
+        MemoryMax = "512M";
+        TasksMax = 512;
         LimitNOFILE = 8192;
         SystemCallArchitectures = "native";
       };

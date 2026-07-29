@@ -1,45 +1,20 @@
 defmodule NixSwarmPlacementTest do
   use ExUnit.Case, async: true
 
-  test "placement is deterministic and honors constraints" do
+  test "placement is deterministic and spreads across active nodes" do
     config =
       NixSwarm.Config.normalize(%{
         peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1", :"node-c@127.0.0.1"],
-        nodes: %{
-          :"node-a@127.0.0.1" => %{labels: ["ssd", "edge"]},
-          :"node-b@127.0.0.1" => %{labels: ["ssd"]},
-          :"node-c@127.0.0.1" => %{labels: ["edge"]}
-        },
-        services: [
-          %{
-            name: "proxy",
-            replicas: 1,
-            unit_template: "proxy@%{slot}.service",
-            constraints: ["edge"]
-          },
-          %{
-            name: "gitea",
-            replicas: 2,
-            unit_template: "gitea@%{slot}.service",
-            constraints: ["ssd"]
-          }
-        ]
+        nodes: %{},
+        services: [%{name: "proxy", replicas: 1}, %{name: "gitea", replicas: 2}]
       })
 
-    live_nodes = config.peers
-    plan_a = NixSwarm.Placement.plan(config, live_nodes)
-    plan_b = NixSwarm.Placement.plan(config, live_nodes)
+    assert NixSwarm.Placement.plan(config, config.peers) ==
+             NixSwarm.Placement.plan(config, config.peers)
 
-    assert plan_a == plan_b
-
-    proxy_owner = plan_a["proxy"] |> hd() |> Map.fetch!(:owner)
-    assert proxy_owner in [:"node-a@127.0.0.1", :"node-c@127.0.0.1"]
-
-    gitea_owners =
-      plan_a["gitea"]
-      |> Enum.map(& &1.owner)
-
-    assert Enum.all?(gitea_owners, &(&1 in [:"node-a@127.0.0.1", :"node-b@127.0.0.1"]))
+    owners = Enum.map(NixSwarm.Placement.plan(config, config.peers)["gitea"], & &1.owner)
+    assert Enum.all?(owners, &(&1 in config.peers))
+    assert length(Enum.uniq(owners)) == 2
   end
 
   test "config files can be loaded from erlang terms" do
@@ -71,12 +46,12 @@ defmodule NixSwarmPlacementTest do
     assert config.peers == [:"node-a@127.0.0.1", :"node-b@127.0.0.1"]
     assert length(config.services) == 1
     assert hd(config.services).name == "gitea"
-    assert hd(config.services).settings == %{}
+    refute Map.has_key?(hd(config.services), :settings)
 
     File.rm_rf!(path)
   end
 
-  test "service settings are preserved" do
+  test "compatibility-only service metadata is omitted during normalization" do
     config =
       NixSwarm.Config.normalize(%{
         services: [
@@ -88,10 +63,11 @@ defmodule NixSwarmPlacementTest do
         ]
       })
 
-    assert hd(config.services).settings == %{domain: "gitea.example.internal", http_port: 3000}
+    refute Map.has_key?(hd(config.services), :settings)
+    refute Map.has_key?(hd(config.services), :healthcheck)
   end
 
-  test "service settings loaded from erlang charlists are normalized" do
+  test "compatibility-only service metadata loaded from erlang terms is omitted" do
     path =
       Path.join(
         System.tmp_dir!(),
@@ -111,7 +87,8 @@ defmodule NixSwarmPlacementTest do
     {:ok, raw} = NixSwarm.Config.load_from_path(path)
     config = NixSwarm.Config.normalize(raw)
 
-    assert hd(config.services).settings == %{domain: "gitea.example.internal", http_port: 3000}
+    refute Map.has_key?(hd(config.services), :settings)
+    refute Map.has_key?(hd(config.services), :healthcheck)
 
     File.rm_rf!(path)
   end
@@ -139,62 +116,18 @@ defmodule NixSwarmPlacementTest do
     assert multi.unit_template == "%{service}@%{slot}.service"
   end
 
-  test "placement prefers configured machines before reusing other eligible nodes" do
+  test "allowed nodes are a hard filter" do
     config =
       NixSwarm.Config.normalize(%{
         peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1", :"node-c@127.0.0.1"],
-        nodes: %{
-          :"node-a@127.0.0.1" => %{labels: ["gitea"]},
-          :"node-b@127.0.0.1" => %{labels: ["gitea"]},
-          :"node-c@127.0.0.1" => %{labels: ["gitea"]}
-        },
+        nodes: %{},
         services: [
-          %{
-            name: "gitea",
-            replicas: 2,
-            unit_template: "gitea.service",
-            constraints: ["gitea"],
-            preferred_nodes: [:"node-c@127.0.0.1", :"node-a@127.0.0.1"]
-          }
+          %{name: "api", replicas: 2, allowed_nodes: [:"node-a@127.0.0.1", :"node-b@127.0.0.1"]}
         ]
       })
 
-    owners =
-      config
-      |> NixSwarm.Placement.plan(config.peers)
-      |> Map.fetch!("gitea")
-      |> Enum.map(& &1.owner)
-
-    assert owners == [:"node-c@127.0.0.1", :"node-a@127.0.0.1"]
-  end
-
-  test "allowed nodes are a hard filter before preferred node ordering" do
-    config =
-      NixSwarm.Config.normalize(%{
-        peers: [:"node-a@127.0.0.1", :"node-b@127.0.0.1", :"node-c@127.0.0.1"],
-        nodes: %{
-          :"node-a@127.0.0.1" => %{labels: ["apps"]},
-          :"node-b@127.0.0.1" => %{labels: ["apps"]},
-          :"node-c@127.0.0.1" => %{labels: ["apps"]}
-        },
-        services: [
-          %{
-            name: "api",
-            replicas: 2,
-            constraints: ["apps"],
-            allowed_nodes: [:"node-a@127.0.0.1", :"node-b@127.0.0.1"],
-            preferred_nodes: [:"node-c@127.0.0.1", :"node-b@127.0.0.1"]
-          }
-        ]
-      })
-
-    owners =
-      config
-      |> NixSwarm.Placement.plan(config.peers)
-      |> Map.fetch!("api")
-      |> Enum.map(& &1.owner)
-
-    assert owners == [:"node-b@127.0.0.1", :"node-a@127.0.0.1"]
+    owners = Enum.map(NixSwarm.Placement.plan(config, config.peers)["api"], & &1.owner)
+    assert Enum.all?(owners, &(&1 in [:"node-a@127.0.0.1", :"node-b@127.0.0.1"]))
   end
 
   test "declaratively draining a node removes it from placement" do
@@ -204,15 +137,26 @@ defmodule NixSwarmPlacementTest do
     config =
       NixSwarm.Config.normalize(%{
         peers: [node_a, node_b],
-        nodes: %{
-          node_a => %{labels: ["apps"], availability: :draining},
-          node_b => %{labels: ["apps"], availability: :active}
-        },
-        services: [%{name: "api", replicas: 1, constraints: ["apps"]}]
+        nodes: %{node_a => %{availability: :draining}, node_b => %{availability: :active}},
+        services: [%{name: "api", replicas: 1}]
       })
 
     assert [%{owner: ^node_b}] = NixSwarm.Placement.plan(config, config.peers)["api"]
     assert config.nodes[node_a].availability == :draining
+  end
+
+  test "maintenance nodes are excluded from placement" do
+    node_a = :"node-a@127.0.0.1"
+    node_b = :"node-b@127.0.0.1"
+
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [node_a, node_b],
+        nodes: %{node_a => %{availability: :maintenance}, node_b => %{availability: :active}},
+        services: [%{name: "api", replicas: 1}]
+      })
+
+    assert [%{owner: ^node_b}] = NixSwarm.Placement.plan(config, config.peers)["api"]
   end
 
   test "zero replicas disables placement without a diagnostic" do
@@ -236,8 +180,8 @@ defmodule NixSwarmPlacementTest do
           :"node-b@127.0.0.1" => %{labels: ["edge"]}
         },
         services: [
-          %{name: "db", replicas: 2, constraints: ["ssd"]},
-          %{name: "gpu", replicas: 1, constraints: ["gpu"]}
+          %{name: "db", replicas: 2},
+          %{name: "gpu", replicas: 1, allowed_nodes: [:"missing@127.0.0.1"]}
         ]
       })
 
@@ -250,7 +194,7 @@ defmodule NixSwarmPlacementTest do
 
     assert Enum.any?(
              diagnostics,
-             &match?(%{service: "gpu", reason: :no_configured_eligible_nodes}, &1)
+             &match?(%{service: "gpu", reason: :no_eligible_nodes}, &1)
            )
 
     assert Enum.any?(
@@ -345,7 +289,7 @@ defmodule NixSwarmPlacementTest do
     assert Enum.count(owners, &(&1 == :"node-b@127.0.0.1")) == 2
   end
 
-  test "autoscaled placement stays inside code-defined per-node capacity" do
+  test "autoscaled placement cycles without per-node capacity limits" do
     nodes = [:"node-a@127.0.0.1", :"node-b@127.0.0.1"]
 
     config =
@@ -367,9 +311,53 @@ defmodule NixSwarmPlacementTest do
     owners = Enum.map(slots, & &1.owner)
 
     assert length(slots) == 5
-    assert Enum.count(owners, &(&1 == hd(nodes))) <= 2
-    assert Enum.count(owners, &(&1 == List.last(nodes))) <= 2
-    assert Enum.count(owners, &is_nil/1) == 1
+    assert Enum.sort(Enum.frequencies(owners) |> Map.values()) == [2, 3]
+    refute Enum.any?(owners, &is_nil/1)
+  end
+
+  test "normalized services expose only allowed node placement metadata" do
+    service =
+      NixSwarm.Config.normalize(%{
+        services: [
+          %{
+            name: "api",
+            replicas: 1,
+            constraints: ["apps"],
+            preferredNodes: [:"bad@127.0.0.1"],
+            maxReplicasPerNode: 2
+          }
+        ]
+      })
+      |> Map.fetch!(:services)
+      |> hd()
+
+    assert service.allowed_nodes == []
+    refute Map.has_key?(service, :constraints)
+    refute Map.has_key?(service, :preferred_nodes)
+    refute Map.has_key?(service, :max_replicas_per_node)
+  end
+
+  test "unknown allowed node leaves slots unassigned" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1"],
+        services: [%{name: "api", replicas: 1, allowed_nodes: [:"missing@127.0.0.1"]}]
+      })
+
+    assert [%{owner: nil}] = NixSwarm.Placement.plan(config, config.peers)["api"]
+  end
+
+  test "diagnostics report no eligible nodes without constraints" do
+    config =
+      NixSwarm.Config.normalize(%{
+        peers: [:"node-a@127.0.0.1"],
+        services: [%{name: "api", replicas: 1, allowed_nodes: [:"missing@127.0.0.1"]}]
+      })
+
+    assert Enum.any?(
+             NixSwarm.Placement.diagnostics(config, config.peers),
+             &match?(%{reason: :no_eligible_nodes}, &1)
+           )
   end
 
   test "diagnostics reports invalid replica count" do

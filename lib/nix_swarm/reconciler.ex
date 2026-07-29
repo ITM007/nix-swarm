@@ -3,6 +3,9 @@ defmodule NixSwarm.Reconciler do
 
   use GenServer
 
+  @readiness_timeout_sec 120
+  @readiness_stable_samples 2
+
   alias NixSwarm.Executor
   alias NixSwarm.NodeName
   alias NixSwarm.Placement
@@ -210,7 +213,6 @@ defmodule NixSwarm.Reconciler do
 
       %{
         name: service.name,
-        ports: service_ports(service),
         desired_state: if(desired_replicas > 0, do: :running, else: :stopped),
         configured_replicas: service.replicas,
         desired_replicas: desired_replicas,
@@ -269,32 +271,6 @@ defmodule NixSwarm.Reconciler do
     Node.alive?() and NodeName.control_node?(Node.self())
   end
 
-  defp service_ports(service) do
-    service
-    |> Map.get(:settings, %{})
-    |> Enum.flat_map(fn {key, value} ->
-      if String.contains?(String.downcase(to_string(key)), "port") do
-        case value do
-          port when is_integer(port) and port > 0 ->
-            [port]
-
-          port when is_binary(port) ->
-            case Integer.parse(port) do
-              {parsed, ""} when parsed > 0 -> [parsed]
-              _ -> []
-            end
-
-          _ ->
-            []
-        end
-      else
-        []
-      end
-    end)
-    |> Enum.uniq()
-    |> Enum.sort()
-  end
-
   defp systemd_health(services, owned, previous_counts) do
     {entries, counts} =
       Enum.map_reduce(services, %{}, fn service, counts_acc ->
@@ -318,10 +294,10 @@ defmodule NixSwarm.Reconciler do
         entry =
           {service.name,
            %{
-             healthy: Enum.all?(unit_counts, &(&1 >= service.readiness.stable_samples)),
+             healthy: Enum.all?(unit_counts, &(&1 >= @readiness_stable_samples)),
              source: :systemd,
-             timeout_sec: service.readiness.timeout_sec,
-             stable_samples: service.readiness.stable_samples,
+             timeout_sec: @readiness_timeout_sec,
+             stable_samples: @readiness_stable_samples,
              units: Map.new(units, &{&1, Map.get(statuses, &1, {:ok, :unknown})})
            }}
 

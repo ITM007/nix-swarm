@@ -18,7 +18,7 @@ defmodule NixSwarmDeployRolloutTest do
       target("root@node-a", :existing_outdated)
     ]
 
-    rollout = Rollout.plan(targets, max_unavailable: 1, canary_hosts: ["root@node-a"])
+    rollout = Rollout.plan(targets)
 
     assert Enum.map(rollout.bootstrap, & &1.host) == ["root@node-c"]
     assert Enum.map(rollout.existing, & &1.host) == ["root@node-a", "root@node-b"]
@@ -38,8 +38,7 @@ defmodule NixSwarmDeployRolloutTest do
         classifications: %{
           "root@node-c" => :installed_inactive,
           "root@node-a" => :existing_in_sync
-        },
-        max_unavailable: 2
+        }
       )
 
     assert Enum.map(rollout.bootstrap, & &1.host) == ["root@node-c"]
@@ -62,7 +61,7 @@ defmodule NixSwarmDeployRolloutTest do
   test "Deploy exposes the pure rollout planner" do
     targets = [target("root@node-c", :new_nixos_host), target("root@node-a", :existing_in_sync)]
 
-    rollout = NixSwarm.Deploy.rollout_plan(targets, max_unavailable: 1)
+    rollout = NixSwarm.Deploy.rollout_plan(targets)
 
     assert Enum.map(rollout.bootstrap, & &1.host) == ["root@node-c"]
     assert Enum.map(rollout.existing, & &1.host) == ["root@node-a"]

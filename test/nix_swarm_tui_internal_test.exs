@@ -2,9 +2,6 @@ defmodule NixSwarmTUIInternalTest do
   use ExUnit.Case, async: false
 
   test "state construction preserves the read-only operator context and resume state" do
-    update_fun = fn _opts, _remote -> :ok end
-    deploy_fun = fn _opts -> :ok end
-
     state =
       NixSwarm.TUI.State.new(
         [
@@ -12,8 +9,6 @@ defmodule NixSwarmTUIInternalTest do
           lines: 12,
           refresh_ms: 345,
           config_paths: %{machines: "machines.nix"},
-          update_fun: update_fun,
-          deploy_fun: deploy_fun,
           owner_pid: self(),
           test_pid: self(),
           resume_state: %{active_view: :services, flash: "resumed"}
@@ -25,8 +20,6 @@ defmodule NixSwarmTUIInternalTest do
     assert state.lines == 12
     assert state.refresh_ms == 345
     assert state.config_paths == %{machines: "machines.nix"}
-    assert state.update_fun == update_fun
-    assert state.deploy_fun == deploy_fun
     assert state.owner_pid == self()
     assert state.test_pid == self()
     assert state.active_view == :services
@@ -34,6 +27,18 @@ defmodule NixSwarmTUIInternalTest do
     assert state.operator_mode == :read_only
     assert state.cluster_metrics == %{cpu: %{pct: 0}}
     assert state.metrics_history == %{cpu: [], memory: [], disk: [], network: []}
+
+    for key <- [
+          :update_fun,
+          :deploy_fun,
+          :rollout_confirmation,
+          :action_confirmation,
+          :pending_operator_action,
+          :pending_machine_actions,
+          :apply_result
+        ] do
+      refute Map.has_key?(state, key), "mutable state key #{inspect(key)} should not exist"
+    end
   end
 
   test "runtime helpers preserve the TUI native-directory contract" do

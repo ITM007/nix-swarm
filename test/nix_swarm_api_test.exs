@@ -34,7 +34,7 @@ defmodule NixSwarmApiTest do
       assert members.queried_node == Node.self()
       assert overview.members == members
       assert overview.status.queried_node == cluster.queried_node
-      assert is_map(overview.ingress)
+      refute Map.has_key?(overview, :ingress)
     end
 
     test "reads local systemd-backed logs and status projections" do
@@ -42,7 +42,7 @@ defmodule NixSwarmApiTest do
       assert is_binary(API.local_cluster_logs(10))
       assert API.local_logs("not-configured", 10) == []
       assert API.logs("not-configured", 10) == []
-      assert is_map(API.ingress_info())
+      refute function_exported?(API, :ingress_info, 0)
     end
   end
 

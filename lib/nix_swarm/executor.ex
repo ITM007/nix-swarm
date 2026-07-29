@@ -19,6 +19,10 @@ defmodule NixSwarm.Executor do
   @callback unit_logs(String.t(), pos_integer(), map()) :: {:ok, String.t()} | {:error, term()}
   @callback unit_metrics(String.t(), map()) :: map()
   @callback unit_cpu_usage(String.t(), map()) :: non_neg_integer()
+  @callback unit_memory_usage(String.t(), map()) :: %{
+              current: non_neg_integer(),
+              max: pos_integer() | nil
+            }
 
   @unit_name_re ~r/\A[A-Za-z0-9_][A-Za-z0-9._@:\-]{0,254}\z/
 
@@ -60,6 +64,9 @@ defmodule NixSwarm.Executor do
   @spec unit_cpu_usage(String.t()) :: non_neg_integer()
   def unit_cpu_usage(unit), do: dispatch(:unit_cpu_usage, unit, [unit])
 
+  @spec unit_memory_usage(String.t()) :: %{current: non_neg_integer(), max: pos_integer() | nil}
+  def unit_memory_usage(unit), do: dispatch(:unit_memory_usage, unit, [unit])
+
   @doc "Returns `:ok` only for a command-line-safe systemd unit name."
   @spec validate_unit_name(term()) :: :ok | {:error, :invalid_unit_name}
   def validate_unit_name(unit) when is_binary(unit) do
@@ -85,6 +92,7 @@ defmodule NixSwarm.Executor do
 
   defp invalid_unit_result(:unit_metrics, _error), do: default_metrics()
   defp invalid_unit_result(:unit_cpu_usage, _error), do: 0
+  defp invalid_unit_result(:unit_memory_usage, _error), do: %{current: 0, max: nil}
   defp invalid_unit_result(:unit_status, _error), do: {:ok, :unknown}
   defp invalid_unit_result(:unit_logs, _error), do: {:error, :invalid_unit_name}
   defp invalid_unit_result(_function, error), do: error

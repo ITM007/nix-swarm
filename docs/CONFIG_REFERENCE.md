@@ -46,56 +46,38 @@ Every peer needs node metadata. Only stabilized `up`/`suspect`, active nodes are
 ```nix
 services.nix-swarm.services.api = {
   replicas = 2;
-  maxReplicasPerNode = 2;
   unitTemplate = "api@%{slot}.service";
-  constraints = [ "apps" ];
   allowedNodes = [ "nix-swarm@node-a" "nix-swarm@node-b" ];
-  preferredNodes = [ "nix-swarm@node-a" ];
-  readiness = { timeoutSec = 120; stableSamples = 2; };
   autoscaling = {
     enable = true;
     minReplicas = 2;
     maxReplicas = 8;
-    cpuTargetPercent = 65;
-    sampleWindowSec = 60;
-    scaleUpCooldownSec = 30;
-    scaleDownCooldownSec = 300;
-    maxStep = 1;
+    cpuTargetPercent = 70;
+    memoryTargetPercent = 80;
+
   };
-  settings.port = 8080;
+
 };
 ```
 
 | Field | Default | Meaning |
 |---|---:|---|
 | `replicas` | `1` | Slots, from `0` through `128`; zero disables |
-| `maxReplicasPerNode` | `null` | Optional per-node service capacity |
 | `unitTemplate` | derived | One replica: `%{service}.service`; multiple: `%{service}@%{slot}.service` |
-| `constraints` | `[]` | Required node labels |
 | `allowedNodes` | `[]` | Hard node allowlist |
-| `preferredNodes` | `[]` | Deterministic soft preference |
-| `readiness` | systemd, 120s, 2 samples | Strict systemd readiness policy |
-| `autoscaling` | disabled | CPU-only scaling bounds and stabilization policy |
-| `healthcheck` | `null` | Display-only compatibility field; shell is never executed |
-| `settings` | `{}` | Public string/int/bool metadata for TUI and ingress; never secrets |
+| `autoscaling` | disabled | CPU-and-memory bounds; fixed policy uses finite systemd `MemoryMax` |
 
 Nix-Swarm manages only the rendered unit names. Define those units in normal NixOS modules and let systemd own dependencies, credentials, readiness, restarts, cgroups, and logs.
 
-## Runtime
+Memory utilization is `MemoryCurrent / MemoryMax` per service unit. If
+`MemoryMax` is missing or unlimited, memory scaling is unavailable for that
+unit and a diagnostic is reported; CPU scaling continues without guessing host
+memory. Enabling autoscaling is the explicit assertion that concurrent
+instances are safe.
 
-```nix
-services.nix-swarm.runtime = {
-  connectIntervalMs = 500;
-  reconcileIntervalMs = 5000;
-  autoscaleIntervalMs = 10000;
-  failureGraceMs = 10000;
-  recoveryStabilizationMs = 30000;
-  commandTimeoutMs = 5000;
-  generation = "production";
-};
-```
+## Internal policy
 
-Intervals must be `100-3600000ms`; `commandTimeoutMs` is capped at `300000ms`. `failureGraceMs` prevents transient disconnects from moving work, while `recoveryStabilizationMs` prevents a flapping machine from immediately receiving it again.
+Readiness always waits up to 120 seconds and requires two healthy samples. Autoscaling samples over 60 seconds, evaluates every 10 seconds, uses 30/300 second up/down cooldowns, changes one replica per decision, and uses 70% scale-down hysteresis. These expert timings are not configuration options.
 
 ## Deployment manifest
 
@@ -112,7 +94,10 @@ in {
 };
 ```
 
-`services.nix-swarm.deployment` defines `healthTimeoutSec` (120), `stableSamples` (2), and `autoRollback` (true).
+Deployment policy is internal and fixed: one host at a time, a 120-second
+health gate with two consecutive healthy samples, and rollback attempted hosts
+after every failure. There are no deployment rollout knobs in the Nix module
+or manifest.
 
 ## Ingress
 

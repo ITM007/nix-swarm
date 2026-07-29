@@ -1,17 +1,13 @@
-# Hardened Nix-Swarm starter
+# Prepared Nix-Swarm starter
 
-This starter is a hardened **NixOS configuration example** for a machine that
-has already been prepared by its owner. Nix-Swarm does not install NixOS,
-partition disks, or operate `nixos-anywhere` or Disko.
+This starter is a small **NixOS configuration example** for one machine that
+has already been prepared by its owner. Nix-Swarm starts at SSH preflight: it
+does not install NixOS, partition disks, configure boot, or choose storage.
 
 ## Prepare the machine first
 
 Users own the installation method, disk layout, hardware configuration, boot,
-firmware, and network bring-up. `nixos-anywhere` and Disko may be used as
-optional, user-owned preparation examples, but they are not supported Nix-Swarm
-automation or release gates. Review their destructive behavior independently.
-
-Before handoff, verify:
+firmware, and network bring-up. Before handoff, verify:
 
 - the machine is already running NixOS;
 - the SSH host key is reviewed and pinned and public-key authentication works;
@@ -20,6 +16,10 @@ Before handoff, verify:
 - peers reach one another on the trusted private network;
 - the deploy host, node name, hardware configuration, and `system.stateVersion`
   are declared in the `.nix` inventory.
+
+Replace `machines/hardware-configuration.nix` with the real hardware
+configuration from the prepared host. Replace the deployment SSH public key in
+`machines/node-a.nix` before evaluating or applying the configuration.
 
 ## Bootstrap and apply
 
@@ -36,19 +36,14 @@ shared cookie when authorized, activates the complete NixOS configuration, and
 verifies convergence. The cookie is never stored in the Nix store; prefer
 sops-nix, agenix, or systemd credentials for established deployments.
 
-## Hardened baseline
+## Example service
 
-The profile provides:
+`services/example-web.nix` is the only workload example: a single bounded
+systemd service. It is declared in `machines/node-a.nix` and enabled by the
+`example-web` service entry in `cluster.nix`. Copy that `.nix` file when adding
+a workload; Nix-Swarm does not maintain a second desired-state format.
 
-- public-key-only SSH with root password login disabled;
-- no SSH agent, X11, SFTP, or unrestricted TCP forwarding;
-- default-deny firewall behavior;
-- BEAM ports only on the declared private interface;
-- unprivileged, resource-bounded `nix-swarmd`;
-- persistent bounded journald;
-- time synchronization and conservative Nix garbage collection;
-- no desktop, compiler toolchain, Git checkout, or unrelated daemon.
-
-Docker and Nix evaluation checks validate the profile contract. Native machine
-installation and bare-metal acceptance remain user-owned preparation and are
-not required to claim the Nix-Swarm release boundary.
+The flake uses the project's hardened NixOS module as a secure default. It is
+a service baseline, not a machine-installation or hardware matrix. Native
+machine preparation and bare-metal acceptance remain user-owned and are not
+required to claim the Nix-Swarm release boundary.

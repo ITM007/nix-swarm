@@ -15,31 +15,43 @@ layer for systemd services on NixOS homelabs and small-business networks.
 
 ## Supported feature set
 
-In impact-to-effort order:
+The supported public workflow is intentionally narrower than Docker Swarm:
 
-1. Declarative nodes, services, replicas, unit templates, and labels in Nix.
-2. Read-only plan, status, doctor, logs, metrics, and TUI overview.
-3. Idempotent local reconciliation against systemd unit state.
-4. Deterministic placement with allowed and preferred nodes.
-5. Durable local records of the last generation, assignment, health, and result.
-6. Native NixOS flake evaluation, health-gated deployment, upgrades, and rollback.
-7. Declarative `active` and `draining` node availability.
-8. systemd-native readiness, watchdog, restart policy, credentials, journald,
-   cgroup accounting, and `OnFailure=` notifications.
-9. Restricted SSH-to-Unix-socket operator queries without a BEAM cookie.
-10. Private-network deployment using normal firewall and VPN facilities.
-11. Optional bounded CPU autoscaling for stateless services; scaling decisions
-    are temporary observations and never override Nix-declared capacity.
+1. Declare machines and services in `.nix` and keep that tree in Git.
+2. Use `cluster plan` for a read-only preview and `cluster apply --yes` as the
+   normal mutation path.
+3. Use `cluster rollback --yes`, `cluster upgrade --yes`, and
+   `cluster credentials rotate --yes` for explicit maintenance.
+4. Use `cluster doctor`, `cluster status`, and `service logs` for read-only
+   operations, or launch the read-only TUI.
+5. Use `service restart --name NAME --yes` for one bounded maintenance action;
+   start/stop remain declarative through `replicas`.
+6. Use deterministic placement across active nodes, with `allowedNodes` as the
+   only per-service placement restriction.
+7. Use the small CPU-and-memory autoscaling policy against existing declared
+   capacity. Autoscaling does not provision machines or manage databases.
 
-## Deliberate exclusions
+## Deliberate exclusions and migration boundary
 
-- no mutable TUI controls
-- no ad-hoc service start/stop state
-- no Mnesia, custom SQL database, or distributed secret store
-- no overlay network, routing mesh, container runtime, or volume orchestration
-- no dynamic bin-packer, preemption, or multi-tenant scheduler
-- no custom logging, monitoring, notification, or PKI stack
-- no consensus dependency unless real users require automatic controller HA
+Nix-Swarm is a simple systemd orchestrator for homelabs and small businesses.
+Downtime is acceptable. Databases, volumes, storage, stateful replication,
+live migration, machine provisioning, ingress/routing, and a custom monitoring
+or secret stack are not managed by Nix-Swarm. Put those concerns in ordinary
+NixOS modules and systemd configuration.
+
+The following are not public options: ingress, healthcheck metadata, arbitrary
+settings, preferred nodes, node labels, service constraints,
+`maxReplicasPerNode`, readiness or runtime timing, autoscaling expert knobs,
+and canary/parallel rollout controls. Rollout policy is fixed and safe
+internally; operators do not select batch width, canaries, or readiness timing.
+
+The TUI never mutates state. Nix and Git remain authoritative, while runtime
+observations are diagnostics only. Removed commands must return a concise
+migration error and must not execute compatibility code: use `cluster apply`
+instead of `cluster init`/`ensure`/`rebuild`, `cluster status` instead of
+`cluster members`, `cluster credentials rotate` instead of `cluster
+credentials`, and copy/edit the starter instead of service scaffolding
+commands.
 
 If automatic manager failover becomes necessary, a small three-node Raft log is
 the next appropriate addition. It should remain optional and must not replace

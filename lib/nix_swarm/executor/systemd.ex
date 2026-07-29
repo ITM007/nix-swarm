@@ -82,6 +82,7 @@ defmodule NixSwarm.Executor.Systemd do
     properties = [
       "CPUUsageNSec",
       "MemoryCurrent",
+      "MemoryMax",
       "IPIngressBytes",
       "IPEgressBytes",
       "ActiveEnterTimestampUSec",
@@ -103,7 +104,7 @@ defmodule NixSwarm.Executor.Systemd do
 
         %{
           cpu: %{usage_ns: numeric_property(values, "CPUUsageNSec")},
-          memory: %{used: numeric_property(values, "MemoryCurrent")},
+          memory: %{used: numeric_property(values, "MemoryCurrent"), max: memory_max(values)},
           disk: %{used: disk_usage_bytes(values, config)},
           network: %{
             counter:
@@ -126,6 +127,27 @@ defmodule NixSwarm.Executor.Systemd do
       {output, 0} -> output |> parse_properties() |> numeric_property("CPUUsageNSec")
       _error -> 0
     end
+  end
+
+  def unit_memory_usage(unit, config) do
+    case system_cmd(
+           "systemctl",
+           ["show", unit, "--property=MemoryCurrent", "--property=MemoryMax"],
+           config
+         ) do
+      {output, 0} ->
+        values = parse_properties(output)
+        %{current: numeric_property(values, "MemoryCurrent"), max: memory_max(values)}
+
+      _error ->
+        %{current: 0, max: nil}
+    end
+  end
+
+  @doc false
+  def memory_percent(values) do
+    max = memory_max(values)
+    if is_integer(max), do: numeric_property(values, "MemoryCurrent") * 100.0 / max, else: nil
   end
 
   defp systemctl(args, config) do
@@ -175,6 +197,22 @@ defmodule NixSwarm.Executor.Systemd do
   end
 
   defp numeric_value(_value), do: 0
+
+  defp memory_max(values) do
+    case Map.get(values, "MemoryMax") do
+      value when is_integer(value) and value > 0 ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(String.trim(value)) do
+          {parsed, ""} when parsed > 0 -> parsed
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
 
   defp map_unit_status(values) do
     active_state = Map.get(values, "ActiveState", "")
@@ -343,7 +381,7 @@ defmodule NixSwarm.Executor.Systemd do
   defp default_metrics,
     do: %{
       cpu: %{usage_ns: 0},
-      memory: %{used: 0},
+      memory: %{used: 0, max: nil},
       disk: %{used: 0},
       network: %{counter: 0},
       started_at_ns: 0

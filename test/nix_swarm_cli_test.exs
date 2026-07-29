@@ -9,7 +9,7 @@ defmodule NixSwarmCLITest do
         assert :ok == NixSwarm.CLI.run(["help"])
       end)
 
-    assert output =~ "read-only operator TUI"
+    assert output =~ "Read-only operator TUI"
     assert output =~ "\n  nix-swarm\n"
     assert output =~ "nix-swarm --target NODE"
     assert output =~ "--cluster-file PATH"
@@ -17,6 +17,7 @@ defmodule NixSwarmCLITest do
     assert output =~ "--services-dir PATH"
     assert output =~ "nix-swarm cluster plan"
     assert output =~ "nix-swarm cluster apply"
+    assert output =~ "nix-swarm service restart --name SERVICE --target NODE --yes"
     assert output =~ "Nix code is the only desired-state mutation interface"
   end
 
@@ -57,29 +58,46 @@ defmodule NixSwarmCLITest do
     assert message =~ "nix-swarm --target NODE"
   end
 
-  test "apply requires an explicit confirmation flag" do
-    assert {:error, message} = NixSwarm.CLI.run(["cluster", "apply"])
+  test "removed commands return concise migration errors" do
+    root = Path.join(System.tmp_dir!(), "nix-swarm-removed-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    for {argv, migration} <- [
+          {["cluster", "init"], "cluster apply"},
+          {["cluster", "ensure"], "cluster apply"},
+          {["cluster", "rebuild"], "cluster apply"},
+          {["cluster", "members"], "cluster status"},
+          {["cluster", "credentials"], "cluster credentials rotate"},
+          {["cluster", "upgrade", "prepare"], "cluster upgrade"},
+          {["service", "create", "--source", root, "--name", "example"], "examples/starter"},
+          {["service", "add", "--source", root, "--name", "example"], "examples/starter"},
+          {["service", "list"], "examples/starter"}
+        ] do
+      assert {:error, message} = NixSwarm.CLI.run(argv)
+      assert message =~ "removed"
+      assert message =~ migration
+      refute message =~ "Ensuring cluster"
+      refute message =~ "Available service templates"
+    end
+  end
+
+  test "service restart requires an explicit confirmation flag" do
+    assert {:error, message} =
+             NixSwarm.CLI.run(["service", "restart", "--name", "demo", "--target", "node@host"])
+
+    assert message =~ "service restart changes machines"
     assert message =~ "repeat with --yes"
   end
 
-  test "rebuild requires an explicit confirmation flag" do
-    assert {:error, message} = NixSwarm.CLI.run(["cluster", "rebuild"])
-    assert message =~ "cluster rebuild changes machines"
+  test "apply requires an explicit confirmation flag" do
+    assert {:error, message} = NixSwarm.CLI.run(["cluster", "apply"])
     assert message =~ "repeat with --yes"
   end
 
   test "json is rejected for commands that do not define a json output contract" do
     assert {:error, message} = NixSwarm.CLI.run(["service", "list", "--json"])
     assert message =~ "--json is supported only for cluster status"
-  end
-
-  test "local service listing does not resolve deployment metadata" do
-    stderr =
-      capture_io(:stderr, fn ->
-        assert :ok == NixSwarm.CLI.run(["service", "list"])
-      end)
-
-    assert stderr == ""
   end
 
   test "plan renders the code-defined Nix deployment without mutation" do
@@ -133,90 +151,6 @@ defmodule NixSwarmCLITest do
                "--refresh-ms",
                "50"
              ])
-
-    assert {:error, "--replicas must be between 0 and 128"} =
-             NixSwarm.CLI.run(["service", "add", "--name", "web", "--replicas", "129"])
-  end
-
-  test "service create honors the selected code-first source tree" do
-    root = Path.join(System.tmp_dir!(), "nix-swarm-service-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(Path.join(root, "services"))
-    on_exit(fn -> File.rm_rf!(root) end)
-
-    output =
-      capture_io(fn ->
-        assert :ok ==
-                 NixSwarm.CLI.run([
-                   "service",
-                   "create",
-                   "--source",
-                   root,
-                   "--name",
-                   "example"
-                 ])
-      end)
-
-    assert output =~ Path.join(root, "services/example.nix")
-    assert File.exists?(Path.join(root, "services/example.nix"))
-  end
-
-  test "service add creates a matching instance unit in the selected source tree" do
-    root = Path.join(System.tmp_dir!(), "nix-swarm-add-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(Path.join(root, "services"))
-    File.mkdir_p!(Path.join(root, "machines"))
-
-    File.cp!(
-      Path.expand("../examples/starter/cluster.nix", __DIR__),
-      Path.join(root, "cluster.nix")
-    )
-
-    on_exit(fn -> File.rm_rf!(root) end)
-
-    capture_io(fn ->
-      assert :ok ==
-               NixSwarm.CLI.run([
-                 "service",
-                 "add",
-                 "--source",
-                 root,
-                 "--name",
-                 "worker",
-                 "--template",
-                 "custom",
-                 "--replicas",
-                 "2"
-               ])
-    end)
-
-    service_file = File.read!(Path.join(root, "services/worker.nix"))
-    assert service_file =~ ~s(unitTemplate = "worker@%{slot}.service";)
-    assert service_file =~ "replicas = 2;"
-    assert service_file =~ ~s(systemd.services."worker@")
-  end
-
-  test "cluster init returns an error when activation does not converge" do
-    source = Path.expand("..", __DIR__)
-
-    credentials_fun = fn _opts ->
-      %{fingerprint: "0123456789ab", hosts: ["root@node-a"]}
-    end
-
-    ensure_fun = fn _opts ->
-      %{ok: false, nodes: [%{node: "node-a", status: :error, message: "activation failed"}]}
-    end
-
-    output =
-      capture_io(fn ->
-        assert {:error, "some nodes failed; see above"} ==
-                 NixSwarm.CLI.run(
-                   ["cluster", "init", "--source", source, "--yes"],
-                   fn _ -> flunk("TUI must not launch") end,
-                   credentials_fun: credentials_fun,
-                   ensure_fun: ensure_fun
-                 )
-      end)
-
-    assert output =~ "activation failed"
   end
 
   test "run defaults target from cluster config when not provided" do
@@ -264,7 +198,7 @@ defmodule NixSwarmCLITest do
 
     assert :ok == NixSwarm.CLI.run(["--source", source], runner)
     assert_receive {:launched, opts}
-    assert Keyword.get(opts, :target) == "nix-swarm@node-c"
-    assert Keyword.get(opts, :ssh_host) == "root@node-c"
+    assert Keyword.get(opts, :target) == "nix-swarm@node-a"
+    assert Keyword.get(opts, :ssh_host) == "root@node-a"
   end
 end

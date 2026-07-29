@@ -96,7 +96,7 @@ Agents use distributed Erlang on TCP `4369` and fixed port `4370`. Keep those po
 
 Operators need only SSH. Set `operatorUsers = [ "alice" ];` on each node, then use `--ssh-host alice@node-a`; root also works. The TUI cannot mutate the cluster.
 
-Service `settings` are public metadata rendered into the Nix store. Never put credentials there; use native systemd credentials or a NixOS secret-management module.
+Configure service ports, routing, and credentials through ordinary NixOS modules. Use native systemd credentials or a NixOS secret-management module for secrets.
 
 ## Documentation
 

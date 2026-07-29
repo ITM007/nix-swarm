@@ -18,12 +18,11 @@
           inherit (nixpkgs.lib) attrValues filter foldl' recursiveUpdate;
           enabled = filter (configuration: configuration.config.services.nix-swarm.enable) (attrValues configurations);
           mergedNodes = foldl' recursiveUpdate { } (map (configuration: configuration.config.services.nix-swarm.nodes) enabled);
-          deployment = if enabled == [ ] then { } else (builtins.head enabled).config.services.nix-swarm.deployment;
+
         in
         {
           schemaVersion = 1;
           nodes = mergedNodes;
-          inherit deployment;
         };
 
       lib.nixSwarm.deploymentManifest = {
@@ -40,11 +39,7 @@
             nixosConfiguration = "example-node-b";
           };
         };
-        deployment = {
-          healthTimeoutSec = 120;
-          stableSamples = 2;
-          autoRollback = true;
-        };
+
       };
 
       packages = forAllSystems (_system: pkgs:
@@ -118,15 +113,7 @@
                   cookieFile = "/run/keys/nix-swarm.cookie";
                   peers = [ "nix-swarm@node-a.test" ];
                   nodes."nix-swarm@node-a.test" = {
-                    labels = [ "test" ];
                     deployHost = "root@node-a.test";
-                  };
-                  deployment = {
-                    canaryNodes = [ "nix-swarm@node-a.test" ];
-                    maxUnavailable = 2;
-                    healthTimeoutSec = 120;
-                    stableSamples = 2;
-                    autoRollback = true;
                   };
                   services.example.unitTemplate = "example.service";
                 };
@@ -154,7 +141,6 @@
                 cookieFile = "/run/keys/nix-swarm.cookie";
                 peers = [ "nix-swarm@node" ];
                 nodes."nix-swarm@node" = {
-                  labels = [ "test" ];
                   deployHost = "root@node";
                   nixosConfiguration = "node";
                 };
@@ -194,11 +180,10 @@
             assert builtins.isAttrs (import ./examples/starter/flake.nix);
             assert builtins.isFunction (import ./examples/starter/cluster.nix);
             assert builtins.isFunction (import ./examples/starter/machines/node-a.nix);
-            assert builtins.isFunction (import ./examples/starter/machines/hardened-node.nix);
-            assert builtins.isFunction (import ./examples/starter/machines/node-c/default.nix);
-            assert builtins.isFunction (import ./examples/starter/machines/node-c/disko.nix);
             assert builtins.isFunction (import ./examples/starter/profiles/nix-swarm-node.nix);
             assert builtins.isFunction (import ./examples/starter/services/example-web.nix);
+            assert !(builtins.pathExists ./examples/starter/disko);
+            assert !(builtins.pathExists ./examples/starter/machines/node-c);
             pkgs.runCommand "nix-swarm-starter-syntax" { } ''
               touch "$out"
             '';
@@ -217,11 +202,7 @@
                       deployHost = "root@node-a.test";
                       nixosConfiguration = "node-a";
                     };
-                    deployment = {
-                      healthTimeoutSec = 120;
-                      stableSamples = 2;
-                      autoRollback = true;
-                    };
+
                   };
                 };
             }

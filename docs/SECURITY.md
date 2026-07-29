@@ -34,7 +34,7 @@ nix-swarm cluster credentials --source . --yes
 
 `secrets/*.cookie` and `secrets/*.key` are ignored by Git and excluded from package sources. For established environments, prefer sops-nix/agenix or systemd encrypted credentials.
 
-Never put secrets in `services.nix-swarm.services.<name>.settings`; that data is copied into the world-readable Nix store.
+Configure service ports, routing, and credentials through ordinary NixOS modules rather than Nix-Swarm metadata.
 
 ## SSH and operator authorization
 
