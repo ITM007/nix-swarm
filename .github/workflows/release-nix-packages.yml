@@ -151,4 +151,4 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${TAG_NAME}" release-artifacts/* --clobber
+        run: gh release upload "${TAG_NAME}" release-artifacts/* --clobber --repo "${GITHUB_REPOSITORY}"
