@@ -321,7 +321,7 @@
             ${nixSwarm.operator}/bin/nix-swarm --help > "$TMPDIR/help"
             ${nixSwarm.operator}/bin/nix-swarm --version > "$TMPDIR/version"
             ${nixSwarm.operator}/bin/nix-swarm cluster plan --source "$TMPDIR/config" > "$TMPDIR/plan"
-            grep -q "read-only operator TUI" "$TMPDIR/help" || {
+            grep -qi "read-only operator TUI" "$TMPDIR/help" || {
               cat "$TMPDIR/help"
               exit 1
             }

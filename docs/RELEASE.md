@@ -1,6 +1,6 @@
 # Release and support policy
 
-## v1.0 release gate
+## v0.5.0 release gate
 
 The release gate starts from a clean checkout and a prepared NixOS machine for live bootstrap acceptance. Nix-Swarm does not install
 NixOS, partition disks, run Disko, or invoke `nixos-anywhere`; those are
@@ -8,7 +8,7 @@ operator-owned preparation steps. The supported handoff is documented in
 `docs/BOOTSTRAP.md`, after which Nix-Swarm begins with SSH preflight and the
 explicit `cluster plan`/`cluster apply` workflow.
 
-Before tagging v1.0, all of the following must pass:
+Before tagging v0.5.0, all of the following must pass:
 
 - `nix develop --command mix format --check-formatted`
 - `nix develop --command mix compile --warnings-as-errors`
@@ -37,7 +37,7 @@ repository `VERSION` file before building artifacts. Keep `VERSION` unchanged
 on development and release-candidate branches; update it only in the release
 commit that creates the matching tag.
 
-The supported v1.0 workload is stateless or externally backed systemd services
+The supported v0.5.0 workload is stateless or externally backed systemd services
 on NixOS. Nix-Swarm does not provide consensus, fencing, volumes, a routing
 mesh, or database replication.
 
@@ -47,13 +47,12 @@ The stable interfaces are the CLI commands, NixOS module options,
 `lib.nixSwarm.deploymentManifest` schema, and documented upgrade procedure.
 Elixir modules not described as public are internal implementation details.
 
-Release artifacts are built from a tag such as `v1.0.0`. Starter flakes and
+Release artifacts are built from a tag such as `v0.5.0`. Starter flakes and
 installation examples should pin that tag for stable deployments rather than
 tracking the moving default branch.
 
 ## Support
 
-During the pre-1.0 period, the current branch is the development target and
-0.4.x remains the latest supported release. After v1.0, security fixes cover the
-latest v1.0.x patch release and current development branch. Older releases are
+The current branch is the development target. Security fixes cover the latest
+v0.5.x patch release and current development branch. Older releases are
 unsupported after a newer patch release is published.
