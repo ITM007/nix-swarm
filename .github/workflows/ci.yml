@@ -40,7 +40,16 @@ jobs:
       - name: Audit Hex dependencies
         run: nix develop --command mix hex.audit
 
-      - name: Evaluate and build flake checks
-        # The VM checks are resource-heavy. Serialize Nix derivations so the
-        # two NixOS VMs and operator smoke check do not contend on runners.
-        run: nix flake check --print-build-logs --max-jobs 1
+      - name: Evaluate flake checks
+        run: nix flake check --no-build --print-build-logs
+
+      - name: Build flake checks serially
+        run: |
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.operator-package
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.agent-package
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.nixos-module
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.nixos-vm
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.caddy-vm
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.starter-syntax
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.operator-smoke
+          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.example-config-caddy
