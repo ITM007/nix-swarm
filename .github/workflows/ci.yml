@@ -35,7 +35,7 @@ jobs:
         run: nix develop --command mix compile --warnings-as-errors
 
       - name: Run BEAM tests
-        run: nix develop --command mix test --warnings-as-errors --cover
+        run: nix develop --command mix test --warnings-as-errors --cover --seed 0
 
       - name: Audit Hex dependencies
         run: nix develop --command mix hex.audit
