@@ -35,7 +35,7 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Run release checks
-        run: nix flake check --print-build-logs
+        run: nix flake check --print-build-logs --max-jobs 1
 
       - name: Run BEAM release checks
         run: |
