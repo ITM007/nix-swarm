@@ -134,7 +134,7 @@ jobs:
     permissions:
       contents: write
     env:
-      TAG_NAME: ${{ github.event.release.tag_name }}
+      TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
     steps:
       - name: Download verified build artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
