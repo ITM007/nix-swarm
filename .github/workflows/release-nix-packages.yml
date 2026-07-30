@@ -63,6 +63,9 @@ jobs:
       - name: Build example Caddy configuration check
         run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.example-config-caddy
 
+      - name: Fetch BEAM dependencies
+        run: nix develop --command mix deps.get
+
       - name: Run BEAM release checks
         run: |
           nix develop --command mix format --check-formatted
