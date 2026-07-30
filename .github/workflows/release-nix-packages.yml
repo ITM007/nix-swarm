@@ -66,12 +66,17 @@ jobs:
       - name: Fetch BEAM dependencies
         run: nix develop --command mix deps.get
 
-      - name: Run BEAM release checks
-        run: |
-          nix develop --command mix format --check-formatted
-          nix develop --command mix compile --warnings-as-errors
-          nix develop --command mix hex.audit
-          nix develop --command mix test --warnings-as-errors --cover --seed 0
+      - name: Check release formatting
+        run: nix develop --command mix format --check-formatted
+
+      - name: Compile release without warnings
+        run: nix develop --command mix compile --warnings-as-errors
+
+      - name: Audit release Hex dependencies
+        run: nix develop --command mix hex.audit
+
+      - name: Run release BEAM tests
+        run: nix develop --command mix test --warnings-as-errors --cover --seed 0
 
       - name: Verify release tag matches VERSION
         run: |
