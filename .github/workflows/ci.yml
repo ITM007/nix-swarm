@@ -43,13 +43,26 @@ jobs:
       - name: Evaluate flake checks
         run: nix flake check --no-build --print-build-logs
 
-      - name: Build flake checks serially
-        run: |
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.operator-package
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.agent-package
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.nixos-module
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.nixos-vm
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.caddy-vm
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.starter-syntax
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.operator-smoke
-          nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.example-config-caddy
+      - name: Build operator package check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.operator-package
+
+      - name: Build agent package check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.agent-package
+
+      - name: Build NixOS module check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.nixos-module
+
+      - name: Build NixOS VM check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.nixos-vm
+
+      - name: Build Caddy VM check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.caddy-vm
+
+      - name: Build starter syntax check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.starter-syntax
+
+      - name: Build operator smoke check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.operator-smoke
+
+      - name: Build example Caddy configuration check
+        run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.example-config-caddy
