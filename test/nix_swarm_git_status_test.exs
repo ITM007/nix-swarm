@@ -25,6 +25,12 @@ defmodule NixSwarmGitStatusTest do
     assert GitStatus.status("/nix/store/checkout", fake) == :not_a_repository
   end
 
+  test "a missing git binary reports :not_a_repository (nothing to check)" do
+    fake = fn _cmd, _args, _opts -> raise ErlangError, original: :enoent end
+
+    assert GitStatus.status("/some/path", fake) == :not_a_repository
+  end
+
   test "git failures other than not-a-repository report an error" do
     fake = fn _cmd, _args, _opts -> {"fatal: could not open repository", 128} end
 
