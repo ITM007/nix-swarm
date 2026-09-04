@@ -27,6 +27,14 @@ defmodule NixSwarm.ServiceRestart do
   defp restart_units([], _executor, _command_fun, restarted), do: {:ok, restarted}
 
   defp restart_units([%{unit: unit} = placement | rest], executor, command_fun, restarted) do
+    with :ok <- NixSwarm.Executor.validate_unit_name(unit) do
+      do_restart_unit(placement, unit, rest, executor, command_fun, restarted)
+    else
+      {:error, :invalid_unit_name} = error -> error
+    end
+  end
+
+  defp do_restart_unit(placement, unit, rest, executor, command_fun, restarted) do
     with :ok <- restart_one(unit, placement, executor, command_fun),
          :ok <- ready_one(unit, placement, executor, command_fun) do
       restart_units(rest, executor, command_fun, [placement | restarted])
