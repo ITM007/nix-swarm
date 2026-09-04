@@ -51,6 +51,15 @@ trap cleanup EXIT
 
 git worktree add --detach "$worktree" "$revision" >/dev/null
 cd "$worktree"
+starter_lock="examples/starter/flake.lock"
+if [[ -f "$starter_lock" ]]; then
+  locked_rev=$(awk '/"nix-swarm":/{seen=1} seen && /"rev":/{gsub(/[",]/, "", $2); print $2; exit}' "$starter_lock")
+  if [[ -n "$locked_rev" && "$locked_rev" != "$revision" ]]; then
+    printf 'release-check: examples/starter/flake.lock pins nix-swarm %s but releasing %s;\n' "$locked_rev" "$revision" >&2
+    printf '  refresh with: (cd examples/starter && nix flake lock --update-input nix-swarm) and commit\n' >&2
+    exit 1
+  fi
+fi
 export COMPOSE_PROJECT_NAME="$project"
 export NIX_SWARM_RELEASE_OUTPUT="$output_abs"
 args=(--output "$output_abs/evidence.txt")
