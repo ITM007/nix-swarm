@@ -30,7 +30,6 @@
           {
             name = nodeName;
             value = {
-              labels = [ "docker" "integration" ] ++ lib.optional (hostname == "node-a") "ingress";
               availability = "active";
               deployHost = "root@${hostname}";
               nixosConfiguration = hostname;
@@ -140,17 +139,8 @@
 
                   services.demo = {
                     replicas = 3;
-                    maxReplicasPerNode = 1;
                     unitTemplate = "demo@%{slot}.service";
-                    preferredNodes = peerNames;
-                    readiness = {
-                      timeoutSec = 30;
-                      stableSamples = 2;
-                    };
-                    settings = {
-                      description = "Three-node Docker/systemd integration workload";
-                      portBase = 8080;
-                    };
+                    allowedNodes = peerNames;
                   };
                 };
               })
