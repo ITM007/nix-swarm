@@ -5,6 +5,28 @@ defmodule NixSwarm.Application do
 
   @impl true
   def start(_type, _args) do
+    # `--version` and `--help` must be side-effect free: the packaged
+    # operator wrapper calls Application.ensure_all_started(:nix_swarm)
+    # before CLI.main, and booting the runtime children would log the
+    # "Starting NixSwarm supervision tree" line to stdout and create paths.
+    # Start an empty supervisor: satisfies the application contract
+    # ({:ok, pid}) with no children and no startup log.
+    if pure_invocation?() do
+      Supervisor.start_link([], strategy: :rest_for_one, name: NixSwarm.Supervisor)
+    else
+      start_runtime()
+    end
+  end
+
+  @doc """
+  True when argv requests `--version` or `--help`, in which case the
+  supervision tree must not boot (pure output, no side effects).
+  """
+  def pure_invocation?(argv \\ System.argv()) do
+    "--version" in argv or "--help" in argv
+  end
+
+  defp start_runtime do
     children = children(role())
 
     require Logger

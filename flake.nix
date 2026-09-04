@@ -320,13 +320,23 @@
             mkdir -p "$TMPDIR/config"
             cp ${planFixture}/flake.nix "$TMPDIR/config/flake.nix"
             ${nixSwarm.operator}/bin/nix-swarm --help > "$TMPDIR/help"
+            test -z "$(find "$TMPDIR/config" -mindepth 1 -not -name flake.nix -print -quit)" || {
+              echo "nix-swarm --help created files under NIX_SWARM_SOURCE:"
+              find "$TMPDIR/config" -mindepth 1 -not -name flake.nix
+              exit 1
+            }
             ${nixSwarm.operator}/bin/nix-swarm --version > "$TMPDIR/version"
             ${nixSwarm.operator}/bin/nix-swarm cluster plan --source "$TMPDIR/config" > "$TMPDIR/plan"
             grep -qi "read-only operator TUI" "$TMPDIR/help" || {
               cat "$TMPDIR/help"
               exit 1
             }
-            grep -Eq 'v?[0-9]+\.[0-9]+\.[0-9]+' "$TMPDIR/version" || {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' "$TMPDIR/version" || {
+              cat "$TMPDIR/version"
+              exit 1
+            }
+            test "$(wc -l < "$TMPDIR/version")" -eq 1 || {
+              echo "nix-swarm --version must print exactly one line:"
               cat "$TMPDIR/version"
               exit 1
             }
