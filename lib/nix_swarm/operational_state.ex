@@ -9,6 +9,8 @@ defmodule NixSwarm.OperationalState do
 
   use GenServer
 
+  require Logger
+
   @table __MODULE__.Store
 
   def start_link(opts) do
@@ -36,20 +38,48 @@ defmodule NixSwarm.OperationalState do
     path = state_path()
     File.mkdir_p!(Path.dirname(path))
 
-    case :dets.open_file(@table, file: String.to_charlist(path), type: :set, auto_save: 1_000) do
-      {:ok, @table} ->
-        snapshot = load_snapshot()
+    with {:ok, _table} <- open_store(path) do
+      snapshot = load_snapshot()
 
-        {:ok,
-         %{
-           path: path,
-           snapshot: snapshot,
-           last_reconciled_at: Map.get(snapshot, :reconciled_at)
-         }}
-
-      {:error, reason} ->
-        {:stop, {:operational_state_store_failed, path, reason}}
+      {:ok,
+       %{
+         path: path,
+         snapshot: snapshot,
+         last_reconciled_at: Map.get(snapshot, :reconciled_at)
+       }}
+    else
+      {:error, reason} -> {:stop, {:operational_state_store_failed, path, reason}}
     end
+  end
+
+  # A corrupt or truncated store must not prevent the agent from starting:
+  # rename the unreadable file aside and open a fresh table. A failure on the
+  # fresh open (for example a permissions problem) still stops the agent.
+  defp open_store(path) do
+    charlist = String.to_charlist(path)
+
+    case :dets.open_file(@table, file: charlist, type: :set, auto_save: 1_000) do
+      {:ok, @table} ->
+        {:ok, @table}
+
+      {:error, _first_reason} ->
+        case File.rename(path, corrupt_path(path)) do
+          :ok ->
+            Logger.warning("renamed corrupt operational state store aside at #{path}")
+
+            case :dets.open_file(@table, file: charlist, type: :set, auto_save: 1_000) do
+              {:ok, @table} -> {:ok, @table}
+              {:error, reason} -> {:error, reason}
+            end
+
+          {:error, reason} ->
+            {:error, {:rename_failed, reason}}
+        end
+    end
+  end
+
+  defp corrupt_path(path) do
+    "#{path}.corrupt-#{System.system_time(:second)}"
   end
 
   @impl true
