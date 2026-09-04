@@ -18,6 +18,8 @@ defmodule NixSwarmCLITest do
     assert output =~ "nix-swarm cluster plan"
     assert output =~ "nix-swarm cluster apply"
     assert output =~ "nix-swarm service restart --name SERVICE --target NODE --yes"
+    assert output =~ "--allow-dirty              deploy an uncommitted source tree"
+    assert output =~ "refuses an uncommitted source tree unless --allow-dirty"
     assert output =~ "Nix code is the only desired-state mutation interface"
   end
 
@@ -138,6 +140,35 @@ defmodule NixSwarmCLITest do
 
     assert_receive {:deploy_opts, opts}
     refute Keyword.fetch!(opts, :dry_run)
+  end
+
+  test "confirmed apply forwards --allow-dirty to the deployment boundary" do
+    source = Path.expand("..", __DIR__)
+    test_pid = self()
+
+    deploy_fun = fn opts ->
+      send(test_pid, {:deploy_opts, opts})
+
+      %{
+        source: source,
+        validation: %{commands: []},
+        batches: [],
+        dry_run: false,
+        results: []
+      }
+    end
+
+    capture_io(fn ->
+      assert :ok =
+               NixSwarm.CLI.run(
+                 ["cluster", "apply", "--source", source, "--yes", "--allow-dirty"],
+                 fn _ -> flunk("TUI must not launch") end,
+                 deploy_fun: deploy_fun
+               )
+    end)
+
+    assert_receive {:deploy_opts, opts}
+    assert Keyword.fetch!(opts, :allow_dirty)
   end
 
   test "invalid numeric options return actionable errors" do

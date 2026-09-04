@@ -9,6 +9,9 @@ defmodule NixSwarm.Deploy do
 
   alias NixSwarm.Paths
   alias NixSwarm.Deploy.{Plan, Preflight, ProbeAdapter, Rollout, Target}
+  alias NixSwarm.GitStatus
+
+  require Logger
 
   @default_timeout_ms 30 * 60 * 1_000
   @health_timeout_sec 120
@@ -43,8 +46,11 @@ defmodule NixSwarm.Deploy do
   end
 
   def run(opts) do
+    opts = normalize_opts(opts)
+    guard_source_tree!(opts)
+
     NixSwarm.Telemetry.span([:nix_swarm, :deploy], %{}, fn ->
-      plan = opts |> normalize_opts() |> plan()
+      plan = opts |> plan()
 
       if plan.dry_run do
         validate!(plan)
@@ -55,6 +61,75 @@ defmodule NixSwarm.Deploy do
         %{plan | results: results}
       end
     end)
+  end
+
+  @doc """
+  Deployments are reproducible only from a committed tree. `plan` warns and
+  proceeds on a dirty source; `apply` refuses unless `--allow-dirty` is set.
+  Sources that are not git checkouts are unaffected.
+  """
+  def guard_source_tree!(opts) when is_list(opts) do
+    source = source_root(Keyword.get(opts, :source))
+    allow_dirty = Keyword.get(opts, :allow_dirty, false)
+    dry_run = Keyword.get(opts, :dry_run, false)
+    status_fun = Keyword.get(opts, :git_status_fun, &GitStatus.status/1)
+
+    # A missing source is reported by plan/1's own validation with the
+    # actionable path message; nothing to probe here.
+    unless File.dir?(source) do
+      :ok
+    else
+      do_guard_source_tree!(source, allow_dirty, dry_run, status_fun)
+    end
+
+    :ok
+  end
+
+  defp do_guard_source_tree!(source, allow_dirty, dry_run, status_fun) do
+    case status_fun.(source) do
+      {:dirty, files} ->
+        summary =
+          files
+          |> Enum.take(5)
+          |> Enum.join(", ")
+
+        more =
+          if length(files) > 5 do
+            " (+#{length(files) - 5} more)"
+          else
+            ""
+          end
+
+        detail =
+          "source tree is dirty (#{length(files)} uncommitted change(s): #{summary}#{more})"
+
+        if dry_run do
+          Logger.warning(
+            "#{detail}; `cluster apply` will refuse this tree unless repeated with --allow-dirty"
+          )
+        else
+          if allow_dirty do
+            Logger.warning("#{detail}; deploying with --allow-dirty")
+          else
+            raise ArgumentError,
+                  "#{detail}. Commit or stash the changes, or repeat with --allow-dirty to " <>
+                    "deploy an unreproducible tree"
+          end
+        end
+
+      :clean ->
+        :ok
+
+      :not_a_repository ->
+        :ok
+
+      {:error, _exit_code, output} ->
+        raise ArgumentError,
+              "could not determine source tree cleanliness: #{output}. " <>
+                "Commit or stash changes, or repeat with --allow-dirty"
+    end
+
+    :ok
   end
 
   @doc """

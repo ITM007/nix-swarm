@@ -21,6 +21,7 @@ defmodule NixSwarm.CLI do
     hosts: :string,
     command_timeout_ms: :integer,
     yes: :boolean,
+    allow_dirty: :boolean,
     json: :boolean
   ]
 
@@ -342,7 +343,8 @@ defmodule NixSwarm.CLI do
       :hosts,
       :command_timeout_ms,
       :secret_file,
-      :rotate_credentials
+      :rotate_credentials,
+      :allow_dirty
     ])
     |> Keyword.put(:dry_run, dry_run?)
   end
@@ -530,11 +532,13 @@ defmodule NixSwarm.CLI do
       --services-dir PATH        override the services directory
       --flake REF                local deployment flake (defaults to --source)
       --yes                      confirm a mutating operation
+      --allow-dirty              deploy an uncommitted source tree (not reproducible)
       --json                     structured output for status and logs
 
     Notes:
       - Nix code is the only desired-state mutation interface.
       - Inspect `cluster plan` before every mutating operation.
+      - `apply` refuses an uncommitted source tree unless --allow-dirty.
       - Operators never receive the BEAM cluster cookie.
     """)
   end

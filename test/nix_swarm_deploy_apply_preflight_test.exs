@@ -25,6 +25,7 @@ defmodule NixSwarmDeployApplyPreflightTest do
       source: source,
       deployment_manifest: manifest(),
       health_check: false,
+      git_status_fun: fn _source -> :clean end,
       runner: runner
     ]
   end
