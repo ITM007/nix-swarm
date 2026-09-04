@@ -5,15 +5,24 @@ defmodule NixSwarm.Config do
   alias NixSwarm.Service
 
   @default_runtime %{
-    connect_interval_ms: 100,
-    reconcile_interval_ms: 100,
+    connect_interval_ms: 1_000,
+    reconcile_interval_ms: 1_000,
     autoscale_interval_ms: 1_000,
-    failure_grace_ms: 200,
-    recovery_stabilization_ms: 200,
+    failure_grace_ms: 5_000,
+    recovery_stabilization_ms: 2_000,
     command_timeout_ms: 5_000,
     executor: %{adapter: :fake, root: Path.join(System.tmp_dir!(), "nix-swarm")},
     generation: "dev"
   }
+
+  @timing_keys [
+    :connect_interval_ms,
+    :reconcile_interval_ms,
+    :autoscale_interval_ms,
+    :failure_grace_ms,
+    :recovery_stabilization_ms,
+    :command_timeout_ms
+  ]
 
   def current do
     case Application.get_env(:nix_swarm, :cluster_config) do
@@ -146,13 +155,16 @@ defmodule NixSwarm.Config do
   end
 
   defp normalize_runtime(raw_runtime) do
-    # Runtime timing is deliberately not part of the public configuration.
-    # Keep the executor adapter selectable internally, while all operational
-    # timings remain fixed policy in this module.
     executor = normalize_executor(NixSwarm.fetch_value(raw_runtime, :executor, %{}))
     generation = NixSwarm.fetch_value(raw_runtime, :generation, @default_runtime.generation)
 
+    timings =
+      Map.new(@timing_keys, fn key ->
+        {key, NixSwarm.fetch_value(raw_runtime, key, Map.fetch!(@default_runtime, key))}
+      end)
+
     @default_runtime
+    |> Map.merge(timings)
     |> Map.put(:executor, executor)
     |> Map.put(:generation, to_string(generation))
   end
@@ -228,15 +240,10 @@ defmodule NixSwarm.Config do
   end
 
   defp validate_runtime(errors, runtime) do
-    [
-      :connect_interval_ms,
-      :reconcile_interval_ms,
-      :autoscale_interval_ms,
-      :failure_grace_ms,
-      :recovery_stabilization_ms,
-      :command_timeout_ms
-    ]
-    |> Enum.reduce(errors, fn key, acc ->
+    Enum.reduce(@timing_keys, errors, fn key, acc ->
+      # Looser than the Nix module bounds (>= 500 ms) so fast, deterministic
+      # dev/test clusters remain expressible; zero and runaway values that
+      # would create busy loops or hang agents are still rejected.
       minimum = 100
       maximum = if key == :command_timeout_ms, do: 300_000, else: 3_600_000
 

@@ -20,23 +20,53 @@ defmodule NixSwarmRuntimeTest do
     assert_raise ArgumentError, ~r/invalid Nix-Swarm runtime role/, &NixSwarm.Application.role/0
   end
 
-  test "configuration ignores removed runtime and service tuning knobs" do
+  test "runtime tuning knobs from the Nix bridge are honored and bounded" do
     config =
       NixSwarm.Config.normalize(%{
-        services: [
-          %{name: "api", replicas: 2, unit_template: "api.service"}
-        ],
+        services: [%{name: "api", replicas: 2, unit_template: "api@%{slot}.service"}],
         runtime: %{
-          reconcile_interval_ms: 0,
-          command_timeout_ms: 1
+          reconcile_interval_ms: 1_234,
+          command_timeout_ms: 60_000
         }
       })
 
-    assert {:error, message} = NixSwarm.Config.validate(config)
-    assert message =~ "must contain %{slot}"
-    refute message =~ "reconcile_interval_ms"
-    assert config.runtime.reconcile_interval_ms == 100
-    assert config.runtime.command_timeout_ms == 5_000
+    assert config.runtime.reconcile_interval_ms == 1_234
+    assert config.runtime.command_timeout_ms == 60_000
+    assert config.runtime.connect_interval_ms == 1_000
+    assert config.runtime.failure_grace_ms == 5_000
+    assert config.runtime.recovery_stabilization_ms == 2_000
+    assert :ok == NixSwarm.Config.validate(config)
+
+    default = NixSwarm.Config.normalize(%{services: []})
+    assert default.runtime.connect_interval_ms == 1_000
+    assert default.runtime.reconcile_interval_ms == 1_000
+    assert default.runtime.autoscale_interval_ms == 1_000
+    assert default.runtime.failure_grace_ms == 5_000
+    assert default.runtime.recovery_stabilization_ms == 2_000
+    assert default.runtime.command_timeout_ms == 5_000
+  end
+
+  test "zero or runaway runtime values are rejected by validation" do
+    for {key, value} <- [
+          reconcile_interval_ms: 0,
+          connect_interval_ms: -1,
+          autoscale_interval_ms: 0,
+          failure_grace_ms: 50,
+          command_timeout_ms: 1,
+          recovery_stabilization_ms: 3_700_000
+        ] do
+      config = NixSwarm.Config.normalize(%{services: [], runtime: %{key => value}})
+
+      assert {:error, message} = NixSwarm.Config.validate(config)
+      assert message =~ Atom.to_string(key), "missing bound error for #{key}: #{message}"
+    end
+  end
+
+  test "removed service tuning knobs still do not leak into the public surface" do
+    config =
+      NixSwarm.Config.normalize(%{
+        services: [%{name: "api", replicas: 2, unit_template: "api@%{slot}.service"}]
+      })
 
     service = hd(config.services)
     refute Map.has_key?(service, :readiness)
