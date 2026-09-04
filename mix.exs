@@ -27,7 +27,7 @@ defmodule NixSwarm.MixProject do
 
   defp deps do
     [
-      {:ex_ratatui, "~> 0.11.1"},
+      {:ex_ratatui, "~> 0.13.1"},
       {:telemetry, "~> 1.3"}
     ]
   end

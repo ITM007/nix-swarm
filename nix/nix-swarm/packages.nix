@@ -10,7 +10,7 @@ let
 
   mixDepsHash =
     if lib.versionAtLeast beamPackages.elixir.version "1.18.0" then
-      "sha256-/kSIAgMjYEcTXms0dd6iCGnMswdrK8IVknhwL19E5lg="
+      "sha256-mYEg4g5BNLbTw1EN0lMdrUW62rCUyOPNZ+fS+iydE+4="
     else
       "sha256-vywmOaqNrGlWeE3itE85MDufVVhITz3xZmWo68rnmj4=";
 
@@ -43,22 +43,22 @@ let
     if usePrebuiltNifs then
       let
         fileNames = [
-          "libex_ratatui-v0.11.1-nif-2.16-${nifTarget}.so.tar.gz"
-          "libex_ratatui-v0.11.1-nif-2.17-${nifTarget}.so.tar.gz"
+          "libex_ratatui-v0.13.1-nif-2.16-${nifTarget}.so.tar.gz"
+          "libex_ratatui-v0.13.1-nif-2.17-${nifTarget}.so.tar.gz"
         ];
 
         artifactHashes = [
-          "sha256-iDPYcEke1dboz2HkUQBbntn/e/Z/F5L7zzjywAnjWtM="
-          "sha256-7VSGObPnmSmiIF7PkqGg/s0hN9/G4bpcaaNA3WpP90E="
+          "sha256-DEAMrwXz1ivGPLInlmO/K6TnVbtxJKzj38IuW7Q3nRY="
+          "sha256-qG1GKhz1jiryDI+YF/duKBh50d1cslsNvMms/fm+ti0="
         ];
 
         artifacts = [
           (pkgs.fetchurl {
-            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.11.1/${builtins.elemAt fileNames 0}";
+            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.13.1/${builtins.elemAt fileNames 0}";
             hash = builtins.elemAt artifactHashes 0;
           })
           (pkgs.fetchurl {
-            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.11.1/${builtins.elemAt fileNames 1}";
+            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.13.1/${builtins.elemAt fileNames 1}";
             hash = builtins.elemAt artifactHashes 1;
           })
         ];
