@@ -43,6 +43,12 @@ jobs:
       - name: Evaluate flake checks
         run: nix flake check --no-build --print-build-logs
 
+      - name: Evaluate Docker scenario flake
+        run: nix flake check --no-build --no-write-lock-file ./docker/nixos
+
+      - name: Run OTP integration release gate
+        run: nix develop --command mix run --no-start scripts/verify_cluster.exs
+
       - name: Build operator package check
         run: nix build --print-build-logs --max-jobs 1 .#checks.x86_64-linux.operator-package
 
