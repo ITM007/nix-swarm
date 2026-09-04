@@ -86,7 +86,7 @@ defmodule NixSwarmProjectPolicyTest do
     assert cluster =~ "allowedNodes"
   end
 
-  test "the Nix module does not expose compatibility or rollout tuning options" do
+  test "the Nix module exposes exactly the six operational runtime tuning options" do
     module = File.read!("nix/nix-swarm/module.nix")
 
     for forbidden <- [
@@ -102,12 +102,6 @@ defmodule NixSwarmProjectPolicyTest do
           "scaleUpCooldownSec",
           "scaleDownCooldownSec",
           "maxStep",
-          "connectIntervalMs",
-          "reconcileIntervalMs",
-          "autoscaleIntervalMs",
-          "failureGraceMs",
-          "recoveryStabilizationMs",
-          "commandTimeoutMs",
           "generation",
           "healthTimeoutSec",
           "stableSamples",
@@ -119,15 +113,26 @@ defmodule NixSwarmProjectPolicyTest do
              "#{forbidden} must not be a public Nix option"
     end
 
-    for forbidden <- [
-          "connect_interval_ms",
-          "reconcile_interval_ms",
-          "autoscale_interval_ms",
-          "failure_grace_ms",
-          "recovery_stabilization_ms",
-          "command_timeout_ms"
+    for option <- [
+          "connectIntervalMs",
+          "reconcileIntervalMs",
+          "autoscaleIntervalMs",
+          "failureGraceMs",
+          "recoveryStabilizationMs",
+          "commandTimeoutMs"
         ] do
-      refute module =~ forbidden, "#{forbidden} must not be emitted in the generated manifest"
+      assert Regex.match?(~r/#{option}\s*=/, module), "#{option} must be a public Nix option"
+    end
+
+    for emitted <- [
+          "{connect_interval_ms,",
+          "{reconcile_interval_ms,",
+          "{autoscale_interval_ms,",
+          "{failure_grace_ms,",
+          "{recovery_stabilization_ms,",
+          "{command_timeout_ms,"
+        ] do
+      assert module =~ emitted, "#{emitted} must be emitted in the rendered runtime term"
     end
   end
 

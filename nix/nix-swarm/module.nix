@@ -159,7 +159,15 @@ let
     {services, [
       ${concatMapStringsSep ",\n      " (entry: entry) (mapAttrsToList mkServiceEntry cfg.services)}
     ]}.
-    {runtime, [{executor, [{adapter, systemd}]}]}.
+    {runtime, [
+      {connect_interval_ms, ${toString cfg.runtime.connectIntervalMs}},
+      {reconcile_interval_ms, ${toString cfg.runtime.reconcileIntervalMs}},
+      {autoscale_interval_ms, ${toString cfg.runtime.autoscaleIntervalMs}},
+      {failure_grace_ms, ${toString cfg.runtime.failureGraceMs}},
+      {recovery_stabilization_ms, ${toString cfg.runtime.recoveryStabilizationMs}},
+      {command_timeout_ms, ${toString cfg.runtime.commandTimeoutMs}},
+      {executor, [{adapter, systemd}]}
+    ]}.
   '';
 
   rawRenderedConfig = pkgs.writeText "nix-swarm.config.unvalidated" renderedConfigText;
@@ -288,6 +296,50 @@ in
       type = types.port;
       default = 4370;
       description = "Fixed TCP port used by distributed Erlang between trusted Nix-Swarm agents.";
+    };
+
+    runtime = mkOption {
+      type = types.submodule {
+        options = {
+          connectIntervalMs = mkOption {
+            type = types.ints.between 500 3600000;
+            default = 1000;
+            description = "Peer reconnect probe interval in milliseconds.";
+          };
+
+          reconcileIntervalMs = mkOption {
+            type = types.ints.between 500 3600000;
+            default = 1000;
+            description = "Reconciliation tick interval in milliseconds.";
+          };
+
+          autoscaleIntervalMs = mkOption {
+            type = types.ints.between 500 3600000;
+            default = 1000;
+            description = "Autoscaler evaluation interval in milliseconds.";
+          };
+
+          failureGraceMs = mkOption {
+            type = types.ints.between 1000 3600000;
+            default = 5000;
+            description = "Grace period before a suspected peer is marked down, in milliseconds.";
+          };
+
+          recoveryStabilizationMs = mkOption {
+            type = types.ints.between 500 3600000;
+            default = 2000;
+            description = "Stabilization window before a recovering peer is marked up, in milliseconds.";
+          };
+
+          commandTimeoutMs = mkOption {
+            type = types.ints.between 1000 300000;
+            default = 5000;
+            description = "Bounded timeout for remote executor commands, in milliseconds.";
+          };
+        };
+      };
+      default = { };
+      description = "Operational timing policy for cluster discovery, reconciliation, and remote commands.";
     };
 
     enableDaemon = mkOption {
