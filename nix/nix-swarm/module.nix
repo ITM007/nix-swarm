@@ -481,7 +481,7 @@ in
           "RELEASE_NODE=${cfg.nodeName}"
           "RELEASE_DISTRIBUTION=${releaseDistribution}"
           "ERL_EPMD_PORT=${toString cfg.epmdPort}"
-          ''"ERL_AFLAGS=-kernel inet_dist_listen_min ${toString cfg.distributionPort} inet_dist_listen_max ${toString cfg.distributionPort}"''
+          ''"ERL_AFLAGS=-kernel net_ticktime 10 inet_dist_listen_min ${toString cfg.distributionPort} inet_dist_listen_max ${toString cfg.distributionPort}"''
           "NIX_SWARM_DISTRIBUTION_PORT=${toString cfg.distributionPort}"
         ];
         LoadCredential = [ "nix-swarm-cookie:${cfg.cookieFile}" ];

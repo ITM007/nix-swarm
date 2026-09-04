@@ -266,6 +266,7 @@
               agent.succeed("systemctl show nix-swarmd.service -p Type --value | grep -x notify")
               agent.succeed("systemctl show nix-swarmd.service -p User --value | grep -x nix-swarm")
               agent.succeed("! tr '\\0' ' ' </proc/$(systemctl show nix-swarmd.service -p MainPID --value)/cmdline | grep -q 0123456789abcdef")
+              agent.succeed("tr '\\0' '\\n' </proc/$(systemctl show nix-swarmd.service -p MainPID --value)/environ | grep -q '^ERL_AFLAGS=.*net_ticktime 10.*'")
               agent.succeed("test $(stat -c %a /run/nix-swarm/beam/.erlang.cookie) = 400")
               agent.succeed("test -S /run/nix-swarm/query.sock")
               agent.succeed("runuser -u operator -- nix-swarm-query Y2x1c3Rlci1tZW1iZXJz > /tmp/query-output && test -s /tmp/query-output")
