@@ -1,0 +1,21 @@
+# Automated dependency updates for Nix-Swarm.
+# Mix/Hex deps and GitHub Actions versions are bumped weekly via PRs.
+# Nix flake inputs are not covered by Dependabot (nix ecosystem support is
+# experimental) — refresh them with `nix flake update` during release prep.
+version: 2
+updates:
+  - package-ecosystem: "mix"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      mix-production:
+        applies-to: version-updates
+        dependency-type: "production"
+      mix-development:
+        applies-to: version-updates
+        dependency-type: "development"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
