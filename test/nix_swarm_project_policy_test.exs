@@ -136,6 +136,15 @@ defmodule NixSwarmProjectPolicyTest do
     end
   end
 
+  test "backup and alerting runbooks exist and are linked from operations" do
+    operations = File.read!("docs/OPERATIONS.md")
+
+    for doc <- ["docs/BACKUP_RECOVERY.md", "docs/ALERTING.md"] do
+      assert File.exists?(doc), "missing runbook #{doc}"
+      assert operations =~ Path.basename(doc), "OPERATIONS.md must link #{doc}"
+    end
+  end
+
   defp capture_help do
     ExUnit.CaptureIO.capture_io(fn -> assert :ok == NixSwarm.CLI.run(["help"]) end)
   end

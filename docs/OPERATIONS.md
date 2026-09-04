@@ -132,3 +132,15 @@ systemctl status nix-swarmd
 journalctl -u nix-swarmd -n 100 --no-pager
 systemctl show nix-swarmd -p User,MemoryCurrent,TasksCurrent
 ```
+
+## Backup, recovery, and alerting
+
+- [Backup and recovery](BACKUP_RECOVERY.md) — what to back up (source tree,
+  cookie secret, node-local state), restore order for a lost node, and
+  partition semantics.
+- [Alerting](ALERTING.md) — systemd `OnFailure=` wiring, the sd_notify
+  watchdog contract, and journald triage.
+
+Both are read-only guides: recovery mutations are explicit Nix deployments
+or `cluster rollback`, never hand edits on the node.
+
