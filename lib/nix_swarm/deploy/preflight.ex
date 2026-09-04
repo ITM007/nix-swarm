@@ -25,7 +25,9 @@ defmodule NixSwarm.Deploy.Preflight do
   @spec run(Target.t() | map(), keyword()) :: Target.t()
   def run(target, opts \\ []) when is_map(target) and is_list(opts) do
     target = normalize_target!(target)
-    probe_fun = Keyword.get(opts, :probe_fun, &default_probe/2)
+
+    probe_fun =
+      Keyword.get(opts, :probe_fun, &NixSwarm.Deploy.ProbeAdapter.probe/2)
 
     probes =
       probe_fun.(target, Keyword.get(opts, :timeout_ms, @default_timeout_ms))
@@ -89,7 +91,16 @@ defmodule NixSwarm.Deploy.Preflight do
   defp normalize_probe(value), do: %{ok: false, state: value}
 
   defp blockers(probes) do
-    []
+    missing = @required_probe_keys -- Map.keys(probes)
+
+    incomplete =
+      if missing == [] do
+        []
+      else
+        ["preflight probes incomplete: #{Enum.join(missing, ", ")}"]
+      end
+
+    incomplete
     |> add_blocker(probes, :ssh, "SSH authentication or host-key verification failed")
     |> add_blocker(probes, :nixos, "target is not a reachable NixOS system")
     |> add_blocker(
@@ -152,7 +163,4 @@ defmodule NixSwarm.Deploy.Preflight do
       {key, Map.drop(value, [:cookie, :contents, :secret, :value])}
     end)
   end
-
-  defp default_probe(_target, _timeout),
-    do: Map.new(@required_probe_keys, &{&1, %{ok: false, error: "probe adapter not configured"}})
 end

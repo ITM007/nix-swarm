@@ -15,7 +15,8 @@ defmodule NixSwarmDeployPreflightTest do
         disk: %{ok: true},
         credential: %{ok: true, state: :present},
         service: %{ok: true, state: :active},
-        query: %{ok: true, state: :in_sync}
+        query: %{ok: true, state: :in_sync},
+        protocol: %{ok: true, state: :compatible}
       },
       overrides
     )
@@ -49,6 +50,19 @@ defmodule NixSwarmDeployPreflightTest do
     assert result.classification == :incompatible
     assert Enum.any?(result.blockers, &String.contains?(&1, "SSH"))
     assert Enum.any?(result.blockers, &String.contains?(&1, "privilege"))
+  end
+
+  test "incomplete probe results fail closed instead of passing silently" do
+    result = Preflight.classify(target(), %{})
+    refute Preflight.ready?(result)
+    assert result.classification == :incompatible
+    assert Enum.any?(result.blockers, &String.contains?(&1, "probes incomplete"))
+  end
+
+  test "a partially populated probe map is incomplete" do
+    result = Preflight.classify(target(), healthy() |> Map.delete(:disk) |> Map.delete(:protocol))
+    refute Preflight.ready?(result)
+    assert Enum.any?(result.blockers, &String.contains?(&1, "disk, protocol"))
   end
 
   test "mismatched credentials fail closed without retaining secret fields" do
