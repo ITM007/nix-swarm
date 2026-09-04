@@ -679,14 +679,15 @@ defmodule NixSwarm.Deploy do
         batch_results
       rescue
         deployment_error ->
-          rollback_result = maybe_rollback_attempted(attempted, plan)
+          {rollback_status, rollback_message} = maybe_rollback_attempted(attempted, plan)
           attempted_hosts = Rollout.attempted_hosts(plan.batches, index + 1)
           unattempted_hosts = Rollout.unattempted_hosts(plan.batches, index + 1)
 
           raise RuntimeError,
                 "deployment failed in stage #{index + 1}: #{Exception.message(deployment_error)}; " <>
                   "attempted=#{inspect(attempted_hosts)}; " <>
-                  "unattempted=#{inspect(unattempted_hosts)}; #{rollback_result}"
+                  "unattempted=#{inspect(unattempted_hosts)}; #{rollback_message} " <>
+                  "(rollback_status=#{rollback_status})"
       end
 
     do_run_batches!(remaining, plan, results ++ batch_results, index + 1)
@@ -753,10 +754,11 @@ defmodule NixSwarm.Deploy do
 
     try do
       _results = run_batch!(rollback_batch, plan.command_timeout_ms, plan.runner)
-      "automatically rolled back #{length(rollback_batch)} attempted host(s)"
+
+      {:rolled_back, "automatically rolled back #{length(rollback_batch)} attempted host(s)"}
     rescue
       rollback_error ->
-        "automatic rollback also failed: #{Exception.message(rollback_error)}"
+        {:rollback_failed, "automatic rollback also failed: #{Exception.message(rollback_error)}"}
     end
   end
 
