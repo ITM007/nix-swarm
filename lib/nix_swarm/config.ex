@@ -173,22 +173,21 @@ defmodule NixSwarm.Config do
   defp normalize_executor("systemd"), do: %{adapter: :systemd}
 
   defp normalize_executor(raw_executor) when is_map(raw_executor) or is_list(raw_executor) do
-    adapter =
-      case NixSwarm.fetch_value(raw_executor, :adapter, :fake) do
-        value when value in [:systemd, "systemd"] -> :systemd
-        _ -> :fake
-      end
+    root =
+      raw_executor
+      |> NixSwarm.fetch_value(:root, @default_runtime.executor.root)
+      |> to_string()
 
-    case adapter do
-      :systemd ->
+    case NixSwarm.fetch_value(raw_executor, :adapter, :fake) do
+      value when value in [:systemd, "systemd"] ->
         %{adapter: :systemd}
 
-      :fake ->
-        root =
-          raw_executor
-          |> NixSwarm.fetch_value(:root, @default_runtime.executor.root)
-          |> to_string()
+      # A module implementing the Executor callbacks (test adapters, future
+      # embedders); keeps the fake-style root so file-backed adapters work.
+      value when is_atom(value) ->
+        %{adapter: value, root: root}
 
+      _ ->
         %{adapter: :fake, root: root}
     end
   end

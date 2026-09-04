@@ -103,7 +103,10 @@ defmodule NixSwarm.Executor do
 
     case executor_config.adapter do
       :systemd -> {NixSwarm.Executor.Systemd, executor_config}
-      _ -> {NixSwarm.Executor.Fake, executor_config}
+      :fake -> {NixSwarm.Executor.Fake, executor_config}
+      # Any module implementing the Executor callbacks can be named as the
+      # adapter (used by tests to wrap the fake with call counting).
+      module when is_atom(module) -> {module, executor_config}
     end
   end
 
