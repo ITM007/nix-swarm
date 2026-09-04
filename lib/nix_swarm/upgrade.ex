@@ -94,6 +94,7 @@ defmodule NixSwarm.Upgrade do
          ) do
       {output, 0} ->
         try do
+          gate_targets!(opts)
           deploy = deploy_fun.(Keyword.put(opts, :source, source))
           %{source: source, lock_output: String.trim(output), deploy: deploy}
         rescue
@@ -107,6 +108,48 @@ defmodule NixSwarm.Upgrade do
       {output, status} ->
         raise RuntimeError,
               "failed to update the nix-swarm flake input (#{status}): #{String.trim(output)}"
+    end
+  end
+
+  defp gate_targets!(opts) do
+    case Keyword.get(opts, :hosts) do
+      nil ->
+        # Without an explicit host list the deploy path's own preflight gates
+        # every target before mutation.
+        :ok
+
+      hosts ->
+        expected_protocol = NixSwarm.QueryProtocol.protocol_version()
+        expected_digest = NixSwarm.API.source_digest()
+        query_fun = Keyword.get(opts, :query_fun)
+
+        hosts
+        |> List.wrap()
+        |> Enum.map(&to_string/1)
+        |> Enum.each(fn host ->
+          remote =
+            if is_function(query_fun, 2),
+              do: %{ssh_host: host, query_fun: query_fun},
+              else: %{ssh_host: host}
+
+          capabilities = NixSwarm.Remote.rpc!(remote, NixSwarm.API, :capabilities, [])
+
+          cond do
+            capabilities[:protocol_version] != expected_protocol ->
+              raise RuntimeError,
+                    "upgrade blocked: agent #{host} uses query protocol " <>
+                      "#{inspect(capabilities[:protocol_version])}, expected #{expected_protocol}"
+
+            not is_nil(capabilities[:source_digest]) and
+                capabilities[:source_digest] != expected_digest ->
+              raise RuntimeError,
+                    "upgrade blocked: agent #{host} was built from a different source tree " <>
+                      "(source digest #{capabilities[:source_digest]}, expected #{expected_digest})"
+
+            true ->
+              :ok
+          end
+        end)
     end
   end
 
