@@ -8,7 +8,7 @@ defmodule NixSwarm.Deploy do
   """
 
   alias NixSwarm.Paths
-  alias NixSwarm.Deploy.{Plan, Preflight, Rollout, Target}
+  alias NixSwarm.Deploy.{Plan, Preflight, ProbeAdapter, Rollout, Target}
 
   @default_timeout_ms 30 * 60 * 1_000
   @health_timeout_sec 120
@@ -44,16 +44,60 @@ defmodule NixSwarm.Deploy do
 
   def run(opts) do
     NixSwarm.Telemetry.span([:nix_swarm, :deploy], %{}, fn ->
-      plan = opts |> normalize_opts() |> plan() |> validate!()
+      plan = opts |> normalize_opts() |> plan()
 
       if plan.dry_run do
-        plan
+        validate!(plan)
       else
+        plan = plan |> preflight_and_enroll!(opts) |> validate!()
         results = run_batches!(plan)
 
         %{plan | results: results}
       end
     end)
+  end
+
+  @doc """
+  Runs real per-host preflight probes, enrolls missing credentials, and
+  recomputes rollout stages from the preflight classifications.
+
+  Raises before any host mutation when any target is blocked. Enrollment is
+  skipped entirely when no target needs a bootstrap credential, so existing
+  clusters are never touched by credential SSH traffic on a routine apply.
+  """
+  def preflight_and_enroll!(plan, opts) when is_map(plan) and is_list(opts) do
+    probe_fun = Keyword.get(opts, :probe_fun, default_probe_fun(opts))
+
+    preflighted =
+      Enum.map(plan.results, fn result ->
+        target = %Target{host: result.host, configuration: result.configuration}
+        Preflight.run(target, probe_fun: probe_fun)
+      end)
+
+    blocked = Enum.reject(preflighted, &Preflight.ready?/1)
+
+    if blocked != [] do
+      details =
+        Enum.map_join(blocked, "; ", fn target ->
+          "#{target.host}: #{Enum.join(target.blockers, "; ")}"
+        end)
+
+      raise RuntimeError, "cluster preflight blocked; refusing to mutate any host: #{details}"
+    end
+
+    enroll_missing_credentials!(plan, preflighted, opts)
+
+    classifications = Map.new(preflighted, &{&1.host, &1.classification})
+    rollout = Rollout.plan(plan.results, classifications: classifications)
+
+    plan
+    |> Map.put(:preflight, Enum.map(preflighted, &preflight_summary/1))
+    |> Map.merge(%{
+      batches: rollout.stages,
+      rollout: rollout,
+      bootstrap_hosts: Enum.map(rollout.bootstrap, & &1.host),
+      existing_hosts: Enum.map(rollout.existing, & &1.host)
+    })
   end
 
   @doc "Runs bounded target preflight without mutating any host."
@@ -65,6 +109,62 @@ defmodule NixSwarm.Deploy do
       target = %Target{host: result.host, configuration: result.configuration}
       Preflight.run(target, probe_opts)
     end)
+  end
+
+  defp default_probe_fun(opts) do
+    secret_file =
+      Keyword.get(opts, :secret_file) ||
+        Path.join([
+          Path.expand(Keyword.get(opts, :source, Paths.default_source())),
+          "secrets",
+          "nix-swarm.cookie"
+        ])
+
+    command_fun = Keyword.get(opts, :command_fun)
+
+    fn target, timeout ->
+      adapter_opts = if is_function(command_fun, 2), do: [command_fun: command_fun], else: []
+      ProbeAdapter.probe(target, timeout, Keyword.put(adapter_opts, :secret_file, secret_file))
+    end
+  end
+
+  defp enroll_missing_credentials!(plan, preflighted, opts) do
+    bootstrap? =
+      Enum.any?(preflighted, fn target ->
+        target.classification in [:new_nixos_host, :installed_inactive]
+      end)
+
+    if bootstrap? do
+      enroll_opts = [
+        source: plan.source,
+        hosts: plan.hosts,
+        secret_file:
+          Keyword.get(opts, :secret_file) ||
+            Path.join([plan.source, "secrets", "nix-swarm.cookie"])
+      ]
+
+      enroll_opts =
+        case Keyword.get(opts, :command_fun) do
+          command_fun when is_function(command_fun, 2) ->
+            Keyword.put(enroll_opts, :command_fun, command_fun)
+
+          _ ->
+            enroll_opts
+        end
+
+      NixSwarm.Credentials.enroll_missing(enroll_opts)
+    else
+      :ok
+    end
+  end
+
+  defp preflight_summary(target) do
+    %{
+      host: target.host,
+      classification: target.classification,
+      blockers: target.blockers,
+      warnings: target.warnings
+    }
   end
 
   @doc "Returns a two-stage bootstrap/existing rollout plan without executing it."
@@ -181,6 +281,7 @@ defmodule NixSwarm.Deploy do
         cluster_file: cluster_file,
         machines_dir: machines_dir,
         hosts: target_hosts,
+        runner: Keyword.get(opts, :runner, &run_native!/4),
         batches: batches,
         rollout: rollout,
         bootstrap_hosts: Enum.map(rollout.bootstrap, & &1.host),
@@ -486,7 +587,7 @@ defmodule NixSwarm.Deploy do
 
   defp validate!(plan) do
     Enum.each(plan.validation.invocations, fn {executable, args, env} ->
-      run_native!(executable, args, env, plan.command_timeout_ms)
+      plan.runner.(executable, args, env, plan.command_timeout_ms)
     end)
 
     plan
@@ -539,12 +640,12 @@ defmodule NixSwarm.Deploy do
       raise RuntimeError, "could not execute #{executable}: #{Exception.message(error)}"
   end
 
-  defp run_batch!(batch, timeout_ms) do
+  defp run_batch!(batch, timeout_ms, runner) do
     Task.Supervisor.async_stream_nolink(
       NixSwarm.TaskSupervisor,
       batch,
       fn result ->
-        output = run_native!(result.executable, result.args, result.env, timeout_ms)
+        output = runner.(result.executable, result.args, result.env, timeout_ms)
         Map.put(result, :rebuild_output, output)
       end,
       max_concurrency: length(batch),
@@ -569,7 +670,7 @@ defmodule NixSwarm.Deploy do
 
     batch_results =
       try do
-        batch_results = run_batch!(batch, plan.command_timeout_ms)
+        batch_results = run_batch!(batch, plan.command_timeout_ms, plan.runner)
 
         if plan.health_check do
           verify_batch_health!(batch, remaining == [], plan)
@@ -651,7 +752,7 @@ defmodule NixSwarm.Deploy do
       end)
 
     try do
-      _results = run_batch!(rollback_batch, plan.command_timeout_ms)
+      _results = run_batch!(rollback_batch, plan.command_timeout_ms, plan.runner)
       "automatically rolled back #{length(rollback_batch)} attempted host(s)"
     rescue
       rollback_error ->
