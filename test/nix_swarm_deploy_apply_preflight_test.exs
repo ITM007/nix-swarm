@@ -70,8 +70,6 @@ defmodule NixSwarmDeployApplyPreflightTest do
     path
   end
 
-  defp noop_ssh(_executable, _args), do: {"", 0}
-
   test "blocked preflight aborts before any command executes" do
     parent = self()
     runner = recording_runner(parent)
@@ -178,7 +176,7 @@ defmodule NixSwarmDeployApplyPreflightTest do
     assert plan.results |> length() == 1
   end
 
-  defp collect(parent) do
+  defp collect(_parent) do
     wait = fn ->
       receive do
         {:run, executable, args} -> {:run, executable, args}
