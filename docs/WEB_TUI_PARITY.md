@@ -35,7 +35,7 @@ browser tunnel verification before the TUI retirement decision is revisited.
 
 ## Release 1 evidence record
 
-Automated evidence compiled at `2026-09-05T22:47:07Z`:
+Automated evidence compiled at `2026-09-05T22:55:59Z`:
 
 | Gate | Result |
 |---|---|
@@ -46,7 +46,7 @@ Automated evidence compiled at `2026-09-05T22:47:07Z`:
 | Core format check | passed |
 | Core compile with warnings as errors | passed |
 | Core Hex audit | passed |
-| Core tests with coverage | **452 passed**, **74.03%** |
+| Core tests with coverage | **452 passed**, **74.01%** |
 | Focused Nix module test | **3 passed** |
 | Exact `.#nix-swarm-web` package build | passed |
 | Root flake evaluation | passed |
