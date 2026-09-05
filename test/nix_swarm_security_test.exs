@@ -34,7 +34,7 @@ defmodule NixSwarmSecurityTest do
 
     response = {:ok, %{live_nodes: [:"new-node@release-test"]}}
 
-    assert {:ok, ^response} =
+    assert {:ok, {:ok, %{live_nodes: ["new-node@release-test"]}}} =
              response
              |> QueryProtocol.encode_response()
              |> elem(1)

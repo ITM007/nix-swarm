@@ -61,6 +61,7 @@ defmodule NixSwarm.Config do
     errors =
       []
       |> validate_runtime(config.runtime)
+      |> validate_nodes(config.nodes)
       |> validate_services(config.services)
 
     case Enum.reverse(errors) do
@@ -188,13 +189,15 @@ defmodule NixSwarm.Config do
         %{adapter: value, root: root}
 
       _ ->
-        %{adapter: :fake, root: root}
+        %{adapter: :invalid, root: root}
     end
   end
 
-  defp normalize_executor(_), do: @default_runtime.executor
+  defp normalize_executor(_), do: %{adapter: :invalid, root: @default_runtime.executor.root}
 
-  defp normalize_node_name(name) when is_atom(name), do: name
+  defp normalize_node_name(name) when is_atom(name),
+    do: NodeName.to_node!(name, label: "configured node name")
+
   defp normalize_node_name(name), do: NodeName.to_node!(name, label: "configured node name")
 
   defp normalize_optional_string(nil), do: nil
@@ -204,7 +207,7 @@ defmodule NixSwarm.Config do
   defp normalize_availability(value) when value in [:active, "active"], do: :active
   defp normalize_availability(value) when value in [:draining, "draining"], do: :draining
   defp normalize_availability(value) when value in [:maintenance, "maintenance"], do: :maintenance
-  defp normalize_availability(_value), do: :active
+  defp normalize_availability(_value), do: :invalid
 
   defp load_current! do
     case load_current() do
@@ -239,23 +242,40 @@ defmodule NixSwarm.Config do
   end
 
   defp validate_runtime(errors, runtime) do
-    Enum.reduce(@timing_keys, errors, fn key, acc ->
-      # Looser than the Nix module bounds (>= 500 ms) so fast, deterministic
-      # dev/test clusters remain expressible; zero and runaway values that
-      # would create busy loops or hang agents are still rejected.
-      minimum = 100
-      maximum = if key == :command_timeout_ms, do: 300_000, else: 3_600_000
+    errors =
+      Enum.reduce(@timing_keys, errors, fn key, acc ->
+        # Looser than the Nix module bounds (>= 500 ms) so fast, deterministic
+        # dev/test clusters remain expressible; zero and runaway values that
+        # would create busy loops or hang agents are still rejected.
+        minimum = 100
+        maximum = if key == :command_timeout_ms, do: 300_000, else: 3_600_000
 
-      case Map.fetch!(runtime, key) do
-        value when is_integer(value) and value >= minimum and value <= maximum ->
-          acc
+        case Map.fetch!(runtime, key) do
+          value when is_integer(value) and value >= minimum and value <= maximum ->
+            acc
 
-        value ->
-          [
-            "runtime.#{key} must be between #{minimum} and #{maximum}, got #{inspect(value)}"
-            | acc
-          ]
-      end
+          value ->
+            [
+              "runtime.#{key} must be between #{minimum} and #{maximum}, got #{inspect(value)}"
+              | acc
+            ]
+        end
+      end)
+
+    maybe_error(
+      errors,
+      runtime.executor.adapter == :invalid,
+      "runtime.executor adapter is unknown"
+    )
+  end
+
+  defp validate_nodes(errors, nodes) do
+    Enum.reduce(nodes, errors, fn {node, metadata}, acc ->
+      maybe_error(
+        acc,
+        metadata.availability not in [:active, :draining, :maintenance],
+        "node #{node} has invalid availability"
+      )
     end)
   end
 

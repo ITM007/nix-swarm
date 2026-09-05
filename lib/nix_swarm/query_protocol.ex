@@ -191,8 +191,13 @@ defmodule NixSwarm.QueryProtocol do
   defp wire_encode(value) when is_list(value), do: Enum.map(value, &wire_encode/1)
   defp wire_encode(value), do: value
 
-  defp wire_decode({:nix_swarm_node, value}) when is_binary(value),
-    do: NixSwarm.NodeName.to_node!(value)
+  defp wire_decode({:nix_swarm_node, value}) when is_binary(value) do
+    try do
+      NixSwarm.NodeName.resolve_existing!(value, [Node.self() | Node.list()])
+    rescue
+      ArgumentError -> value
+    end
+  end
 
   defp wire_decode(value) when is_map(value) do
     Map.new(value, fn {key, item} -> {wire_decode(key), wire_decode(item)} end)

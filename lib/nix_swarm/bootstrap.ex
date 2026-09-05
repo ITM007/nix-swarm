@@ -63,7 +63,7 @@ defmodule NixSwarm.Bootstrap do
       [
         "    enable = true;",
         if(package_ref, do: "    package = #{package_ref};"),
-        "    nodeName = \"#{node_name}\";",
+        "    nodeName = #{NixSwarm.nix_string_literal(node_name)};",
         "    cookieFile = #{NixSwarm.nix_string_literal(cookie_file)};"
       ]
       |> Enum.reject(&is_nil/1)

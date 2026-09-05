@@ -62,6 +62,25 @@ defmodule NixSwarmRuntimeTest do
     end
   end
 
+  test "unknown executor adapters are rejected instead of selecting fake" do
+    config = NixSwarm.Config.normalize(%{services: [], runtime: %{executor: %{adapter: "bogus"}}})
+
+    assert config.runtime.executor.adapter == :invalid
+    assert {:error, message} = NixSwarm.Config.validate(config)
+    assert message =~ "executor adapter"
+  end
+
+  test "unknown node availability is rejected" do
+    config =
+      NixSwarm.Config.normalize(%{
+        services: [],
+        nodes: %{"node-a@127.0.0.1" => %{availability: "offline"}}
+      })
+
+    assert {:error, message} = NixSwarm.Config.validate(config)
+    assert message =~ "availability"
+  end
+
   test "removed service tuning knobs still do not leak into the public surface" do
     config =
       NixSwarm.Config.normalize(%{

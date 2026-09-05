@@ -40,4 +40,17 @@ defmodule NixSwarmBootstrapTest do
     assert content =~ "package = inputs.nix-swarm.packages.${pkgs.system}.cluster;"
     assert content =~ "cookieFile = \"/etc/nixos/nix-swarm/secrets/nix-swarm.cookie\";"
   end
+
+  test "escapes the node name when rendering Nix source" do
+    content =
+      NixSwarm.Bootstrap.machine_module(%{
+        node_name: "node@host\"; evil = true; #",
+        cookie_file: "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie",
+        cluster_module: "../cluster/cluster.nix",
+        module_ref: "inputs.nix-swarm.nixosModules.default",
+        package_ref: nil
+      })
+
+    assert content =~ "nodeName = \"node@host\\\"; evil = true; #\";"
+  end
 end
