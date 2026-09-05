@@ -33,6 +33,35 @@ browser tunnel verification before the TUI retirement decision is revisited.
    stopping the agent, bounded log search, and all four download types through
    an SSH tunnel.
 
+## Release 1 evidence record
+
+Automated evidence compiled at `2026-09-05T22:47:07Z`:
+
+| Gate | Result |
+|---|---|
+| Web format check | passed |
+| Web compile with warnings as errors | passed |
+| Web Hex audit | passed |
+| Web tests with coverage | **58 passed**, **77.80%** |
+| Core format check | passed |
+| Core compile with warnings as errors | passed |
+| Core Hex audit | passed |
+| Core tests with coverage | **452 passed**, **74.03%** |
+| Focused Nix module test | **3 passed** |
+| Exact `.#nix-swarm-web` package build | passed |
+| Root flake evaluation | passed |
+| One-node web NixOS VM check | passed |
+| `git diff --check` | passed |
+
+The VM check verifies managed web-unit startup, `/healthz`, dashboard HTML,
+web-user query-socket access, outsider socket denial, and a loopback-only
+listener on port 4000.
+
+Manual browser-through-SSH-tunnel acceptance has not been run in this
+environment. LiveView reconnect, stale indication after agent stop, bounded log
+search, and all four browser downloads therefore remain operator-acceptance
+items. The TUI is not deprecated or removed.
+
 ## Non-goals
 
 The matrix does not authorize write mode, TUI deletion, streaming journald,
