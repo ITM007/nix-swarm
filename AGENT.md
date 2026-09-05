@@ -16,7 +16,8 @@ backup and verified restore-on-placement. Keep the design narrow:
 Do not add a container runtime, secret store, mutable service controls, Mnesia
 database, or consensus layer without an explicit scope change. Overlay
 networks, backup targets, and edge proxies are optional user-owned integration
-points (see docs/STATEFUL_SERVICES.md); the core never depends on one.
+points (see docs/STATEFUL_SERVICES.md and docs/INGRESS.md); the core never
+depends on one.
 Temporary duplicate instances during a network partition are an accepted
 leaderless tradeoff for stateless replicas; stateful services are
 single-writer and recover by declared restore, never by live sync.
