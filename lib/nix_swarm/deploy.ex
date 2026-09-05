@@ -362,6 +362,7 @@ defmodule NixSwarm.Deploy do
         bootstrap_hosts: Enum.map(rollout.bootstrap, & &1.host),
         existing_hosts: Enum.map(rollout.existing, & &1.host),
         configurations: configurations,
+        use_remote_sudo: Keyword.get(opts, :use_remote_sudo, true),
         command_timeout_ms: timeout_ms,
         health_check: health_check,
         health_timeout_sec: health_timeout_sec,

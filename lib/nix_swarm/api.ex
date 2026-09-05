@@ -77,7 +77,16 @@ defmodule NixSwarm.API do
       protocol_version: NixSwarm.QueryProtocol.protocol_version(),
       release: NixSwarm.release_label(),
       source_digest: source_digest(),
-      operations: [:cluster_overview, :cluster_members, :protocol_version, :capabilities],
+      operations: [
+        :cluster_overview,
+        :cluster_members,
+        :protocol_version,
+        :capabilities,
+        :operator_snapshot,
+        :logs,
+        :node_service_logs,
+        :cluster_logs
+      ],
       response_limit: NixSwarm.QueryProtocol.max_response_bytes()
     }
   end

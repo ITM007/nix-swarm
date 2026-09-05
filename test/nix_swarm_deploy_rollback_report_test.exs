@@ -95,4 +95,39 @@ defmodule NixSwarmDeployRollbackReportTest do
     assert error.message =~ "attempted=[\"#{@host}\"]"
     assert error.message =~ "unattempted=[]"
   end
+
+  test "automatic rollback preserves the remote sudo option" do
+    {:ok, commands} = Agent.start_link(fn -> [] end)
+
+    runner = fn executable, args, _env, _timeout ->
+      Agent.update(commands, &[{executable, args} | &1])
+
+      if executable == "nixos-rebuild" and Enum.member?(args, "--rollback") do
+        ""
+      else
+        if executable == "nixos-rebuild" and Enum.member?(args, "switch") do
+          raise "activation exploded"
+        end
+
+        ""
+      end
+    end
+
+    assert_raise RuntimeError, fn ->
+      Deploy.run(opts(runner) ++ [use_remote_sudo: false])
+    end
+
+    rollback_args =
+      commands
+      |> Agent.get(& &1)
+      |> Enum.find_value(fn
+        {"nixos-rebuild", args} ->
+          if Enum.member?(args, "--rollback"), do: args
+
+        _ ->
+          nil
+      end)
+
+    refute "--use-remote-sudo" in rollback_args
+  end
 end

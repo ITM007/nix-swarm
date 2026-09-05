@@ -77,6 +77,22 @@ defmodule NixSwarmSecurityTest do
              NixSwarm.QueryClient.query({:reconcile, []}, socket_path: socket_path)
   end
 
+  test "query server does not unlink a non-socket at its configured path" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "nix-swarm-query-occupied-#{System.unique_integer([:positive])}"
+      )
+
+    File.write!(path, "do not remove")
+
+    assert {:stop, {:query_socket_failed, {:socket_path_occupied, ^path}}} =
+             NixSwarm.QueryServer.init(socket_path: path)
+
+    assert File.read!(path) == "do not remove"
+    File.rm!(path)
+  end
+
   test "installed query helper round-trips only a valid protocol request" do
     request = Base.url_encode64("cluster-members", padding: false)
 

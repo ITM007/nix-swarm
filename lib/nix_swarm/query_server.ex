@@ -38,7 +38,6 @@ defmodule NixSwarm.QueryServer do
   def init(opts) do
     path = Keyword.get(opts, :socket_path, configured_socket_path())
     File.mkdir_p!(Path.dirname(path))
-    File.rm(path)
 
     listen_options = [
       :binary,
@@ -49,12 +48,13 @@ defmodule NixSwarm.QueryServer do
       ifaddr: {:local, path}
     ]
 
-    case :gen_tcp.listen(0, listen_options) do
-      {:ok, listener} ->
-        File.chmod!(path, 0o660)
-        acceptor = spawn_link(fn -> accept_loop(listener) end)
-        {:ok, %{listener: listener, acceptor: acceptor, path: path}}
-
+    with :ok <- prepare_socket_path(path),
+         {:ok, listener} <- :gen_tcp.listen(0, listen_options),
+         {:ok, %{inode: inode}} <- File.stat(path) do
+      File.chmod!(path, 0o660)
+      acceptor = spawn_link(fn -> accept_loop(listener) end)
+      {:ok, %{listener: listener, acceptor: acceptor, path: path, inode: inode}}
+    else
       {:error, reason} ->
         {:stop, {:query_socket_failed, reason}}
     end
@@ -66,8 +66,31 @@ defmodule NixSwarm.QueryServer do
   @impl true
   def terminate(_reason, state) do
     :gen_tcp.close(state.listener)
-    File.rm(state.path)
+    remove_owned_socket(state.path, state.inode)
     :ok
+  end
+
+  defp prepare_socket_path(path) do
+    case File.lstat(path) do
+      {:error, :enoent} ->
+        :ok
+
+      {:ok, %{type: :socket}} ->
+        File.rm(path)
+
+      {:ok, _metadata} ->
+        {:error, {:socket_path_occupied, path}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp remove_owned_socket(path, inode) do
+    case File.stat(path) do
+      {:ok, %{type: :socket, inode: ^inode}} -> File.rm(path)
+      _ -> :ok
+    end
   end
 
   defp accept_loop(listener) do

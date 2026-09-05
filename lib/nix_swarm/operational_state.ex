@@ -129,8 +129,15 @@ defmodule NixSwarm.OperationalState do
       {:reply, :ok, %{state | last_reconciled_at: reconciled_at}}
     else
       snapshot = Map.put(observations, :reconciled_at, reconciled_at)
-      :ok = persist(snapshot)
-      {:reply, :ok, %{state | snapshot: snapshot, last_reconciled_at: reconciled_at}}
+
+      case persist(snapshot) do
+        :ok ->
+          {:reply, :ok, %{state | snapshot: snapshot, last_reconciled_at: reconciled_at}}
+
+        {:error, reason} ->
+          Logger.error("could not persist operational state: #{inspect(reason)}")
+          {:reply, :ok, %{state | last_reconciled_at: reconciled_at}}
+      end
     end
   end
 
