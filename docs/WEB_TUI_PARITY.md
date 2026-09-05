@@ -42,7 +42,7 @@ Automated evidence compiled at `2026-09-05T22:47:07Z`:
 | Web format check | passed |
 | Web compile with warnings as errors | passed |
 | Web Hex audit | passed |
-| Web tests with coverage | **58 passed**, **77.80%** |
+| Web tests with coverage | **59 passed**, **77.88%** |
 | Core format check | passed |
 | Core compile with warnings as errors | passed |
 | Core Hex audit | passed |
@@ -57,10 +57,13 @@ The VM check verifies managed web-unit startup, `/healthz`, dashboard HTML,
 web-user query-socket access, outsider socket denial, and a loopback-only
 listener on port 4000.
 
-Manual browser-through-SSH-tunnel acceptance has not been run in this
+A direct browser smoke against a real local release verified `/healthz` and the
+dashboard. Snapshot, nodes, and services downloads returned 200; the logs
+download correctly returned a bounded 400 without a live query socket. The
+actual browser-through-SSH-tunnel acceptance has not been run in this
 environment. LiveView reconnect, stale indication after agent stop, bounded log
-search, and all four browser downloads therefore remain operator-acceptance
-items. The TUI is not deprecated or removed.
+search, and successful logs download with an agent therefore remain
+operator-acceptance items. The TUI is not deprecated or removed.
 
 ## Non-goals
 
