@@ -2,7 +2,7 @@
 
 let
   cfg = config.services.nix-swarm;
-  inherit (lib) all concatMapStringsSep elem filterAttrs genAttrs hasInfix last mapAttrs mapAttrs' mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
+  inherit (lib) all attrValues concatMapStringsSep elem filterAttrs genAttrs hasInfix last mapAttrs mapAttrs' mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
 
   escapeErlString = value:
     builtins.replaceStrings
@@ -119,6 +119,26 @@ let
           Persistent = true;
         };
       })
+    statefulBackupServices;
+
+  # Operator-invoked restore wrapper: restores the latest archive from the
+  # service's borg repository into a staging directory on this node. The
+  # repository passphrase is read from the root-only credential file, never
+  # embedded in the script or Nix.
+  restoreWrappers = mapAttrs'
+    (name: serviceCfg:
+      lib.nameValuePair "nix-swarm-restore-${name}" (
+        pkgs.writeShellScriptBin "nix-swarm-restore-${name}" ''
+          set -eu
+          if [ "$#" -lt 1 ]; then
+            echo "usage: nix-swarm-restore-${name} STAGING_DIR" >&2
+            exit 2
+          fi
+          credential_file=${cfg.backupCredentialDir}/${name}.borg-passphrase
+          export BORG_PASSPHRASE=$(${pkgs.coreutils}/bin/tr -d '\r\n' < "$credential_file")
+          exec ${pkgs.borgmatic}/bin/borgmatic restore --config ${borgmaticConfigs.${name}} --archive latest --destination "$1"
+        ''
+      ))
     statefulBackupServices;
 
   effectiveUnitTemplate = name: serviceCfg:
@@ -630,7 +650,7 @@ in
       })
     ];
 
-    environment.systemPackages = [ cfg.package ];
+    environment.systemPackages = [ cfg.package ] ++ (attrValues restoreWrappers);
 
     system.activationScripts.nixSwarmCookiePermissions.text = ''
       cookie_path=${lib.escapeShellArg cfg.cookieFile}
