@@ -23,15 +23,18 @@ defmodule NixSwarm.Proxy.Forwarder do
   def route_for(conn, %Config{} = config) do
     host = String.downcase(conn.host)
 
-    Enum.find(config.routes, fn route ->
-      String.downcase(route.host) == host and
-        String.starts_with?(conn.request_path, route.path_prefix)
+    config.routes
+    |> Enum.filter(fn route ->
+      String.downcase(route.host) == host and path_matches?(conn.request_path, route.path_prefix)
     end)
+    |> Enum.max_by(&String.length(&1.path_prefix), fn -> nil end)
   end
 
   def proxy(conn, %Config.Route{} = route) do
     case pick_upstream(route.upstreams) do
       {:ok, upstream} ->
+        conn = Plug.Conn.delete_req_header(conn, "x-forwarded-for")
+
         ReverseIt.call(
           conn,
           ReverseIt.init(
@@ -79,4 +82,14 @@ defmodule NixSwarm.Proxy.Forwarder do
         false
     end
   end
+
+  defp path_matches?(_path, prefix) when not is_binary(prefix), do: false
+  defp path_matches?(path, "/") when is_binary(path), do: String.starts_with?(path, "/")
+
+  defp path_matches?(path, prefix) when is_binary(path) do
+    prefix = String.trim_trailing(prefix, "/")
+    path == prefix or String.starts_with?(path, prefix <> "/")
+  end
+
+  defp path_matches?(_path, _prefix), do: false
 end

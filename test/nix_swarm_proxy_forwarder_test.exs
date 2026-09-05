@@ -159,6 +159,34 @@ defmodule NixSwarm.ProxyForwarderTest do
     end
   end
 
+  defp assert_specific_path do
+    config =
+      NixSwarm.Proxy.Config.normalize(%{
+        listen_port: 8080,
+        routes: [
+          %{
+            name: "public",
+            host: "app.internal",
+            path_prefix: "/",
+            upstreams: ["127.0.0.1:8081"],
+            auth: "public"
+          },
+          %{
+            name: "admin",
+            host: "app.internal",
+            path_prefix: "/admin",
+            upstreams: ["127.0.0.1:8082"],
+            auth: "oidc"
+          }
+        ]
+      })
+
+    conn = Plug.Test.conn(:get, "http://app.internal/admin/users")
+
+    assert %NixSwarm.Proxy.Config.Route{name: "admin"} =
+             NixSwarm.Proxy.Forwarder.route_for(conn, config)
+  end
+
   test "forwards to a live single upstream and sets x-forwarded-* headers" do
     upstream = start_upstream()
 
@@ -182,6 +210,29 @@ defmodule NixSwarm.ProxyForwarderTest do
     assert body =~ "x-forwarded-for="
     assert body =~ "x-forwarded-proto="
     assert body =~ "x-forwarded-host=app.internal"
+  end
+
+  test "selects the most specific matching path", do: assert_specific_path()
+
+  test "does not match a path prefix that only shares characters" do
+    config =
+      NixSwarm.Proxy.Config.normalize(%{
+        listen_port: 8080,
+        routes: [
+          %{
+            name: "app",
+            host: "app.internal",
+            path_prefix: "/app",
+            upstreams: ["127.0.0.1:8081"],
+            auth: "public"
+          }
+        ]
+      })
+
+    refute NixSwarm.Proxy.Forwarder.route_for(
+             Plug.Test.conn(:get, "http://app.internal/apple"),
+             config
+           )
   end
 
   test "byte-range requests pass through with the slice intact (206)" do

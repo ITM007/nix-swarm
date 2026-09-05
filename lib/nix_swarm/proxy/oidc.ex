@@ -43,12 +43,14 @@ defmodule NixSwarm.Proxy.Oidc do
   def authorize(%__MODULE__{} = oidc, redirect_uri, opts) when is_binary(redirect_uri) do
     state = random_value()
     pkce_verifier = random_value()
+    nonce = random_value()
 
     oidcc_opts = %{
       redirect_uri: redirect_uri,
       scopes: scopes(oidc.config.scope),
       state: state,
       pkce_verifier: pkce_verifier,
+      nonce: nonce,
       require_pkce: true
     }
 
@@ -61,7 +63,13 @@ defmodule NixSwarm.Proxy.Oidc do
            oidcc_opts
          ]) do
       {:ok, authorization_url} when is_binary(authorization_url) ->
-        {:ok, %{authorization_url: authorization_url, state: state, pkce_verifier: pkce_verifier}}
+        {:ok,
+         %{
+           authorization_url: authorization_url,
+           state: state,
+           pkce_verifier: pkce_verifier,
+           nonce: nonce
+         }}
 
       {:ok, authorization_url} ->
         {:error, {:oidc_error, {:invalid_authorization_url, authorization_url}}}
@@ -77,8 +85,36 @@ defmodule NixSwarm.Proxy.Oidc do
   @doc "Exchange an authorization code and return the validated session token shape."
   def exchange(%__MODULE__{} = oidc, code, redirect_uri, pkce_verifier)
       when is_binary(code) and is_binary(redirect_uri) and is_binary(pkce_verifier) do
+    exchange(oidc, code, redirect_uri, pkce_verifier, nil)
+  end
+
+  def exchange(_oidc, _code, _redirect_uri, _pkce_verifier),
+    do: {:error, {:invalid_exchange, :missing_parameter}}
+
+  def exchange(%__MODULE__{} = oidc, code, redirect_uri, pkce_verifier, nonce)
+      when is_binary(code) and is_binary(redirect_uri) and is_binary(pkce_verifier) and
+             is_binary(nonce) do
+    opts = %{
+      redirect_uri: redirect_uri,
+      pkce_verifier: pkce_verifier,
+      nonce: nonce,
+      require_pkce: true
+    }
+
+    retrieve_token(oidc, code, opts)
+  end
+
+  def exchange(%__MODULE__{} = oidc, code, redirect_uri, pkce_verifier, nil)
+      when is_binary(code) and is_binary(redirect_uri) and is_binary(pkce_verifier) do
     opts = %{redirect_uri: redirect_uri, pkce_verifier: pkce_verifier, require_pkce: true}
 
+    retrieve_token(oidc, code, opts)
+  end
+
+  def exchange(_oidc, _code, _redirect_uri, _pkce_verifier, _nonce),
+    do: {:error, {:invalid_exchange, :missing_parameter}}
+
+  defp retrieve_token(oidc, code, opts) do
     case call_provider(
            oidc,
            :retrieve_token,
@@ -88,9 +124,6 @@ defmodule NixSwarm.Proxy.Oidc do
       {:error, reason} -> {:error, {:oidc_error, reason}}
     end
   end
-
-  def exchange(_oidc, _code, _redirect_uri, _pkce_verifier),
-    do: {:error, {:invalid_exchange, :missing_parameter}}
 
   @doc "Refresh the session token through the provider's refresh grant."
   def refresh(%__MODULE__{} = oidc, %{refresh_token: refresh_token, claims: claims})
@@ -188,14 +221,10 @@ defmodule NixSwarm.Proxy.Oidc do
 
     with %Oidcc.Token.Id{token: id_token, claims: claims} <- id,
          %Oidcc.Token.Refresh{token: refresh_token} <- refresh,
-         %Oidcc.Token.Access{expires: expires_at} <- access do
+         %Oidcc.Token.Access{expires: expires_in} <- access,
+         {:ok, expires_at} <- absolute_expiry(expires_in) do
       {:ok,
-       %{
-         id_token: id_token,
-         refresh_token: refresh_token,
-         expires_at: expires_at,
-         claims: claims
-       }}
+       %{id_token: id_token, refresh_token: refresh_token, expires_at: expires_at, claims: claims}}
     else
       _ -> {:error, {:invalid_token, :required_fields_missing}}
     end
@@ -212,6 +241,11 @@ defmodule NixSwarm.Proxy.Oidc do
   end
 
   defp normalize_token(_token), do: {:error, {:invalid_token, :unexpected_shape}}
+
+  defp absolute_expiry(expires_in) when is_integer(expires_in) and expires_in > 0,
+    do: {:ok, System.system_time(:second) + expires_in}
+
+  defp absolute_expiry(_expires_in), do: {:error, {:invalid_token, :invalid_expiry}}
 
   defp scopes(scope) when is_binary(scope), do: String.split(scope, ~r/\s+/, trim: true)
   defp scopes(scope) when is_list(scope), do: scope

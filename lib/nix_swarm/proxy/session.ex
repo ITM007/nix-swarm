@@ -122,7 +122,7 @@ defmodule NixSwarm.Proxy.Session do
 
   defp validate_state(state) when is_map(state) do
     if is_binary(state[:state]) and is_binary(state[:pkce_verifier]) and
-         is_binary(state[:return_path]) and is_binary(state[:host]) and
+         is_binary(state[:nonce]) and is_binary(state[:return_path]) and is_binary(state[:host]) and
          is_integer(state[:expires_at]) do
       :ok
     else

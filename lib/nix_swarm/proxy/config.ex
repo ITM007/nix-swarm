@@ -98,6 +98,7 @@ defmodule NixSwarm.Proxy.Config do
       acc
       |> validate_route_name(route)
       |> validate_route_host(route)
+      |> validate_route_path(route)
       |> validate_route_upstreams(route)
       |> validate_route_auth(route, config)
     end)
@@ -120,6 +121,16 @@ defmodule NixSwarm.Proxy.Config do
     end
   end
 
+  defp validate_route_path(errors, route) do
+    if is_binary(route.path_prefix) and
+         String.starts_with?(route.path_prefix, "/") and
+         not String.contains?(route.path_prefix, ["?", "#", "\\"]) do
+      errors
+    else
+      ["route #{inspect(route.name)} path_prefix must be an absolute path" | errors]
+    end
+  end
+
   defp validate_route_upstreams(errors, route) do
     cond do
       route.upstreams == [] ->
@@ -128,7 +139,7 @@ defmodule NixSwarm.Proxy.Config do
       Enum.any?(route.upstreams, &(not is_binary(&1))) ->
         ["route #{inspect(route.name)} has a non-string upstream" | errors]
 
-      Enum.any?(route.upstreams, &(not Regex.match?(@upstream_regex, &1))) ->
+      Enum.any?(route.upstreams, &(not valid_upstream?(&1))) ->
         [
           "route #{inspect(route.name)} upstream must be host:port without scheme or path"
           | errors
@@ -180,11 +191,13 @@ defmodule NixSwarm.Proxy.Config do
   defp normalize_terms([single]) when is_list(single), do: single
   defp normalize_terms(terms) when is_list(terms), do: terms
 
-  defp normalize_oidc(block) do
+  defp normalize_oidc(block), do: normalize_oidc(block, @default_scope)
+
+  defp normalize_oidc(block, default_scope) do
     %Oidc{
       issuer: undef_to_nil(NixSwarm.fetch_value(block, :issuer, nil)),
       client_id: undef_to_nil(NixSwarm.fetch_value(block, :client_id, nil)),
-      scope: NixSwarm.fetch_value(block, :scope, @default_scope),
+      scope: undef_to_nil(NixSwarm.fetch_value(block, :scope, default_scope)) || default_scope,
       redirect_base: undef_to_nil(NixSwarm.fetch_value(block, :redirect_base, nil))
     }
   end
@@ -193,7 +206,7 @@ defmodule NixSwarm.Proxy.Config do
     oidc =
       case undef_to_nil(NixSwarm.fetch_value(route, :oidc, nil)) do
         nil -> nil
-        block -> normalize_oidc(block)
+        block -> normalize_oidc(block, nil)
       end
 
     %Route{
@@ -215,6 +228,18 @@ defmodule NixSwarm.Proxy.Config do
 
   defp undef_to_nil(:undefined), do: nil
   defp undef_to_nil(value), do: value
+
+  defp valid_upstream?(upstream) when is_binary(upstream) do
+    with true <- Regex.match?(@upstream_regex, upstream),
+         [_host, port] <- String.split(upstream, ":", parts: 2),
+         {port, ""} <- Integer.parse(port) do
+      port in 1..65_535
+    else
+      _ -> false
+    end
+  end
+
+  defp valid_upstream?(_upstream), do: false
 
   # Deep-convert proplists (`[{key, value}]`) and maps into maps with atom
   # keys, recursing into values; plain lists (e.g. the routes list) keep

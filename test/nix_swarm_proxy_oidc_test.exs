@@ -41,6 +41,18 @@ defmodule NixSwarm.ProxyOidcTest do
     end
   end
 
+  defmodule RealShapeOidcc do
+    def retrieve_token(_code, _provider, _client_id, _client_secret, _opts) do
+      {:ok,
+       %Oidcc.Token{
+         id: %Oidcc.Token.Id{token: "id-token", claims: %{"sub" => "user-1"}},
+         access: %Oidcc.Token.Access{token: "access-token", expires: 3600, type: "Bearer"},
+         refresh: %Oidcc.Token.Refresh{token: "refresh-token"},
+         scope: []
+       }}
+    end
+  end
+
   setup do
     Process.put(:oidc_test_pid, self())
 
@@ -64,6 +76,7 @@ defmodule NixSwarm.ProxyOidcTest do
     assert {:ok, result} = Oidc.authorize(oidc, "https://app.example/__auth/callback")
     assert result.state != ""
     assert result.pkce_verifier != ""
+    assert result.nonce != ""
     assert result.authorization_url =~ "state="
     assert result.authorization_url =~ "code_challenge="
 
@@ -71,8 +84,24 @@ defmodule NixSwarm.ProxyOidcTest do
     assert opts.redirect_uri == "https://app.example/__auth/callback"
     assert opts.state == result.state
     assert opts.pkce_verifier == result.pkce_verifier
+    assert opts.nonce == result.nonce
     assert opts.require_pkce
     assert opts.scopes == ["openid", "email"]
+  end
+
+  test "converts the Oidcc access-token lifetime to an absolute expiry", %{oidc: oidc} do
+    oidc = %{oidc | provider: RealShapeOidcc}
+    before = System.system_time(:second)
+
+    assert {:ok, token} =
+             Oidc.exchange(
+               oidc,
+               "authorization-code",
+               "https://app.example/__auth/callback",
+               "verifier"
+             )
+
+    assert token.expires_at in (before + 1)..(before + 3600)
   end
 
   test "exchange maps the validated oidcc token to the session shape", %{oidc: oidc} do

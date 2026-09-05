@@ -53,8 +53,9 @@ defmodule NixSwarm.Proxy.Auth do
          state <- %{
            state: auth.state,
            pkce_verifier: auth.pkce_verifier,
+           nonce: auth.nonce,
            return_path: conn.request_path,
-           return_query: conn.query_string,
+           return_query: query_suffix(conn.query_string),
            host: conn.host
          },
          {:ok, state_cookie} <- Session.encode_state(session_codec, state, now: now(opts)) do
@@ -82,7 +83,8 @@ defmodule NixSwarm.Proxy.Auth do
          code when is_binary(code) <- conn.params["code"],
          {:ok, oidc} <- oidc_client(route, opts),
          redirect_uri <- redirect_uri(route, oidc),
-         {:ok, session_data} <- Oidc.exchange(oidc, code, redirect_uri, state.pkce_verifier),
+         {:ok, session_data} <-
+           Oidc.exchange(oidc, code, redirect_uri, state.pkce_verifier, state.nonce),
          {:ok, session_cookie} <- Session.encode(session_codec, session_data, now: now(opts)) do
       conn
       |> Plug.Conn.delete_resp_cookie(@state_cookie, cookie_options(0, conn))
@@ -144,7 +146,11 @@ defmodule NixSwarm.Proxy.Auth do
 
     case {top_level, route.oidc} do
       {%Config.Oidc{} = top, %Config.Oidc{} = route_config} ->
-        %{top | redirect_base: route_config.redirect_base || top.redirect_base}
+        %{
+          top
+          | redirect_base: route_config.redirect_base || top.redirect_base,
+            scope: route_config.scope || top.scope
+        }
 
       {%Config.Oidc{} = top, _} ->
         top
@@ -157,9 +163,12 @@ defmodule NixSwarm.Proxy.Auth do
     end
   end
 
-  defp return_location(state), do: state.return_path <> Map.get(state, :return_query, "")
+  defp return_location(state),
+    do: state.return_path <> query_suffix(Map.get(state, :return_query, ""))
 
   defp put_claim_headers(conn, claims) do
+    conn = %{conn | req_headers: Enum.reject(conn.req_headers, &reserved_claim_header?/1)}
+
     Enum.reduce(claims, conn, fn
       {key, value}, conn when is_binary(value) or is_integer(value) or is_boolean(value) ->
         header = claim_header_name(key)
@@ -185,6 +194,14 @@ defmodule NixSwarm.Proxy.Auth do
       "x-auth-" <> key
     end
   end
+
+  defp reserved_claim_header?({name, _value}),
+    do: String.starts_with?(String.downcase(name), "x-auth-")
+
+  defp query_suffix(nil), do: ""
+  defp query_suffix(""), do: ""
+  defp query_suffix("?" <> _ = query), do: query
+  defp query_suffix(query) when is_binary(query), do: "?" <> query
 
   defp forward(conn, route, opts) do
     Keyword.get(opts, :forwarder, &Forwarder.proxy/2).(conn, route)

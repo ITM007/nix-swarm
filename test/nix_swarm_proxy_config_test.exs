@@ -169,6 +169,24 @@ defmodule NixSwarm.Proxy.ConfigTest do
       end
     end
 
+    test "rejects upstream ports outside the TCP range" do
+      for upstream <- ["127.0.0.1:0", "127.0.0.1:65536"] do
+        raw = %{listen_port: 8080, routes: [Map.put(valid_route(), :upstreams, [upstream])]}
+
+        assert {:error, message} = raw |> Config.normalize() |> Config.validate()
+        assert message =~ "upstream"
+      end
+    end
+
+    test "rejects malformed path prefixes" do
+      for path_prefix <- ["app", "/app?x=1", :undefined] do
+        raw = %{listen_port: 8080, routes: [Map.put(valid_route(), :path_prefix, path_prefix)]}
+
+        assert {:error, message} = raw |> Config.normalize() |> Config.validate()
+        assert message =~ "path_prefix"
+      end
+    end
+
     test "rejects an unknown auth tag" do
       raw = %{
         listen_port: 8080,

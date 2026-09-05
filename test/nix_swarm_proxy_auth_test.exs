@@ -118,6 +118,7 @@ defmodule NixSwarm.ProxyAuthTest do
         %{
           state: "state-1",
           pkce_verifier: "verifier-1",
+          nonce: "nonce-1",
           return_path: "/app/dashboard",
           host: "app.example"
         },
@@ -141,6 +142,34 @@ defmodule NixSwarm.ProxyAuthTest do
     assert_receive {:exchange, "code-1", %{pkce_verifier: "verifier-1"}}
   end
 
+  test "callback preserves the original query string", %{
+    oidc: oidc,
+    route: route,
+    session: session
+  } do
+    {:ok, state_cookie} =
+      Session.encode_state(
+        session,
+        %{
+          state: "state-1",
+          pkce_verifier: "verifier-1",
+          nonce: "nonce-1",
+          return_path: "/app/dashboard",
+          return_query: "?tab=1",
+          host: "app.example"
+        },
+        now: 1_800_000_000
+      )
+
+    conn =
+      conn(:get, "http://app.example/__auth/callback?code=code-1&state=state-1", "")
+      |> Plug.Conn.put_req_header("cookie", "nix_swarm_auth_state=#{state_cookie}")
+
+    conn = Auth.call(conn, route, oidc: oidc, session: session, now: 1_800_000_000)
+
+    assert Plug.Conn.get_resp_header(conn, "location") == ["/app/dashboard?tab=1"]
+  end
+
   test "a valid session injects claim headers and forwards", %{
     oidc: oidc,
     route: route,
@@ -158,12 +187,14 @@ defmodule NixSwarm.ProxyAuthTest do
     forwarder = fn conn, _route ->
       assert Plug.Conn.get_req_header(conn, "x-auth-sub") == ["user-1"]
       assert Plug.Conn.get_req_header(conn, "x-auth-email") == ["user@example.com"]
+      assert Plug.Conn.get_req_header(conn, "x-auth-role") == []
       Plug.Conn.send_resp(conn, 200, "authorized")
     end
 
     conn =
       conn(:get, "http://app.example/app", "")
       |> Plug.Conn.put_req_header("cookie", "nix_swarm_session=#{cookie}")
+      |> Plug.Conn.put_req_header("x-auth-role", "admin")
 
     conn =
       Auth.call(conn, route,
@@ -175,6 +206,26 @@ defmodule NixSwarm.ProxyAuthTest do
 
     assert conn.status == 200
     assert conn.resp_body == "authorized"
+  end
+
+  test "route OIDC scope overrides the top-level scope", %{
+    oidc: oidc,
+    route: route,
+    session: session
+  } do
+    route = %{route | oidc: %{oidc.config | scope: "openid profile"}}
+
+    _conn =
+      Auth.call(conn(:get, "/app/dashboard", ""), route,
+        session: session,
+        config: %{oidc: oidc.config},
+        client_secret: "client-secret",
+        provider: FakeOidcc,
+        provider_ref: :provider,
+        now: 1_800_000_000
+      )
+
+    assert_receive {:authorize, %{scopes: ["openid", "profile"]}}
   end
 
   test "an expired session starts authentication again", %{
@@ -194,6 +245,7 @@ defmodule NixSwarm.ProxyAuthTest do
     conn =
       conn(:get, "http://app.example/app", "")
       |> Plug.Conn.put_req_header("cookie", "nix_swarm_session=#{cookie}")
+      |> Plug.Conn.put_req_header("x-auth-role", "admin")
 
     conn = Auth.call(conn, route, oidc: oidc, session: session, now: 1_800_000_000)
 
@@ -212,6 +264,7 @@ defmodule NixSwarm.ProxyAuthTest do
         %{
           state: "state-1",
           pkce_verifier: "verifier-1",
+          nonce: "nonce-1",
           return_path: "https://evil.example/",
           host: "evil.example"
         },
