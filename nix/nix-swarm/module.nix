@@ -38,6 +38,45 @@ let
   mkStringList = values:
     "[${concatMapStringsSep ", " toErlTerm values}]";
 
+  mkProxyRoute = name: routeCfg: {
+    name = name;
+    host = routeCfg.host;
+    path_prefix = routeCfg.pathPrefix;
+    upstreams = routeCfg.upstreams;
+    auth = routeCfg.auth;
+    oidc =
+      if routeCfg.oidc == null then
+        null
+      else
+        {
+          redirect_base = routeCfg.oidc.redirectBase;
+          scope = routeCfg.oidc.scope;
+        };
+  };
+
+  proxyRenderedConfigText = ''
+    {listen_port, ${toString cfg.proxy.listen.port}}.
+    {session_ttl_sec, 3600}.
+    {oidc, ${toErlTerm {
+      issuer = cfg.proxy.oidc.issuer;
+      client_id = cfg.proxy.oidc.clientId;
+      scope = cfg.proxy.oidc.scope;
+      redirect_base = null;
+    }}}.
+    {routes, ${toErlTerm (mapAttrsToList mkProxyRoute cfg.proxy.routes)}}.
+  '';
+
+  rawProxyRenderedConfig = pkgs.writeText "nix-swarm.proxy.config.unvalidated" proxyRenderedConfigText;
+
+  renderedProxyConfig = pkgs.runCommand "nix-swarm.proxy.config" { } ''
+    cp ${rawProxyRenderedConfig} "$out"
+    ${pkgs.beamPackages.erlang}/bin/erl -noshell -eval 'case file:consult("'$out'") of {ok, _Terms} -> halt(0); {error, Reason} -> io:format(standard_error, "invalid nix-swarm proxy config: ~p~n", [Reason]), halt(1) end.'
+  '';
+
+  proxyStart = pkgs.writeShellScript "nix-swarm-proxy-start" ''
+    exec ${cfg.package}/bin/nix-swarmd proxy
+  '';
+
   mkNodeEntry = name: nodeCfg: ''
     {${toErlTerm name}, [
       {availability, ${toErlTerm nodeCfg.availability}},
@@ -252,6 +291,55 @@ let
         ]
       )
       (builtins.attrNames cfg.services));
+
+  proxyOidcRouteNames = builtins.attrNames (filterAttrs (_: routeCfg: routeCfg.auth == "oidc") cfg.proxy.routes);
+
+  proxyAssertions = [
+    {
+      assertion = !cfg.proxy.enable || proxyOidcRouteNames == [ ] || cfg.proxy.oidc.clientId != "";
+      message = "services.nix-swarm.proxy.oidc.clientId must not be empty when an OIDC route is configured";
+    }
+    {
+      assertion = !cfg.proxy.enable || all (routeCfg: routeCfg.host != "") (attrValues cfg.proxy.routes);
+      message = "services.nix-swarm.proxy route host must be non-empty";
+    }
+    {
+      assertion = !cfg.proxy.enable || all (routeCfg: routeCfg.upstreams != [ ]) (attrValues cfg.proxy.routes);
+      message = "services.nix-swarm.proxy route upstreams must not be empty";
+    }
+    {
+      assertion = !cfg.proxy.enable || all (routeCfg: all (upstream: builtins.match "[A-Za-z0-9.-]+:[0-9]+" upstream != null) routeCfg.upstreams) (attrValues cfg.proxy.routes);
+      message = "services.nix-swarm.proxy upstreams must match host:port without scheme or path";
+    }
+    {
+      assertion = !cfg.proxy.enable || all (name: builtins.match "[A-Za-z0-9][A-Za-z0-9._@-]*" name != null && !(hasInfix ".." name)) (builtins.attrNames cfg.proxy.routes);
+      message = "services.nix-swarm.proxy route names must contain only safe characters";
+    }
+    {
+      assertion = !cfg.proxy.enable || !cfg.proxy.openFirewall || cfg.proxy.firewallInterfaces != [ ];
+      message = "services.nix-swarm.proxy.openFirewall requires firewallInterfaces so the proxy is never exposed on every interface";
+    }
+    {
+      assertion = cfg.proxy.clientSecretFile == null || (lib.hasPrefix "/" cfg.proxy.clientSecretFile && !lib.hasPrefix "/nix/store/" cfg.proxy.clientSecretFile);
+      message = "services.nix-swarm.proxy.clientSecretFile must be an absolute, out-of-store secret path";
+    }
+    {
+      assertion = cfg.proxy.sessionSecretFile == null || (lib.hasPrefix "/" cfg.proxy.sessionSecretFile && !lib.hasPrefix "/nix/store/" cfg.proxy.sessionSecretFile);
+      message = "services.nix-swarm.proxy.sessionSecretFile must be an absolute, out-of-store secret path";
+    }
+    {
+      assertion = !cfg.proxy.enable || proxyOidcRouteNames == [ ] || cfg.proxy.clientSecretFile != null;
+      message = "services.nix-swarm.proxy.clientSecretFile is required when an OIDC route is configured";
+    }
+    {
+      assertion = !cfg.proxy.enable || proxyOidcRouteNames == [ ] || cfg.proxy.sessionSecretFile != null;
+      message = "services.nix-swarm.proxy.sessionSecretFile is required when an OIDC route is configured";
+    }
+    {
+      assertion = !cfg.proxy.enable || all (name: cfg.proxy.routes.${name}.auth != "oidc" || (cfg.proxy.routes.${name}.oidc != null && cfg.proxy.routes.${name}.oidc.redirectBase != null)) (builtins.attrNames cfg.proxy.routes);
+      message = "services.nix-swarm.proxy OIDC routes require oidc.redirectBase";
+    }
+  ];
 
   renderedConfigText = ''
     {peers, ${mkStringList cfg.peers}}.
@@ -608,11 +696,89 @@ in
       description = "Cluster services keyed by logical service name.";
     };
 
+    proxy = mkOption {
+      type = types.submodule {
+        options = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Enable the optional built-in BEAM edge proxy.";
+          };
+
+          listen.port = mkOption {
+            type = types.port;
+            default = 8080;
+            description = "TCP port on which the built-in proxy listens.";
+          };
+
+          openFirewall = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Open the proxy listen port on explicitly named firewall interfaces.";
+          };
+
+          firewallInterfaces = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = "Interfaces on which to allow proxy traffic when openFirewall is enabled.";
+          };
+
+          routes = mkOption {
+            type = types.attrsOf (types.submodule {
+              options = {
+                host = mkOption { type = types.str; default = ""; };
+                pathPrefix = mkOption { type = types.str; default = "/"; };
+                upstreams = mkOption { type = types.listOf types.str; default = [ ]; };
+                auth = mkOption { type = types.enum [ "public" "oidc" ]; default = "public"; };
+                oidc = mkOption {
+                  type = types.nullOr (types.submodule {
+                    options = {
+                      redirectBase = mkOption { type = types.nullOr types.str; default = null; };
+                      scope = mkOption { type = types.nullOr types.str; default = null; };
+                    };
+                  });
+                  default = null;
+                };
+              };
+            });
+            default = { };
+            description = "Static host/path routes and their upstreams.";
+          };
+
+          oidc = mkOption {
+            type = types.submodule {
+              options = {
+                issuer = mkOption { type = types.str; default = ""; };
+                clientId = mkOption { type = types.str; default = ""; };
+                scope = mkOption { type = types.str; default = "openid email profile"; };
+              };
+            };
+            default = { };
+            description = "Public OIDC provider configuration; credentials are supplied separately.";
+          };
+
+          clientSecretFile = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Out-of-store file loaded as the OIDC client secret.";
+          };
+
+          sessionSecretFile = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Out-of-store file loaded as the encrypted session secret.";
+          };
+        };
+      };
+      default = { };
+      description = "Optional built-in BEAM edge proxy configuration, disabled by default.";
+    };
+
 
   };
 
   config = mkIf cfg.enable {
-    assertions = topologyAssertions ++ serviceAssertions;
+    assertions = topologyAssertions ++ serviceAssertions ++ proxyAssertions;
 
     users.groups.${cfg.operatorGroup} = { };
     users.users = genAttrs cfg.operatorUsers (_: { extraGroups = [ cfg.operatorGroup ]; }) // {
@@ -646,6 +812,11 @@ in
       (mkIf (cfg.openFirewall && cfg.firewallInterfaces != [ ]) {
         interfaces = genAttrs cfg.firewallInterfaces (_: {
           allowedTCPPorts = [ cfg.epmdPort cfg.distributionPort ];
+        });
+      })
+      (mkIf (cfg.proxy.enable && cfg.proxy.openFirewall) {
+        interfaces = genAttrs cfg.proxy.firewallInterfaces (_: {
+          allowedTCPPorts = [ cfg.proxy.listen.port ];
         });
       })
     ];
@@ -735,6 +906,37 @@ in
         };
       })
       backupServices
+      (mkIf cfg.proxy.enable {
+        nix-swarm-proxy = {
+          description = "Nix-Swarm optional built-in edge proxy";
+          wantedBy = [ "multi-user.target" ];
+          after = [ "network-online.target" ];
+          wants = [ "network-online.target" ];
+          serviceConfig = {
+            User = "nix-swarm";
+            Group = cfg.operatorGroup;
+            Type = "simple";
+            Restart = "on-failure";
+            Environment = [
+              "NIX_SWARM_ROLE=proxy"
+              "NIX_SWARM_PROXY_CONFIG_PATH=${renderedProxyConfig}"
+              "HOME=/run/nix-swarm-proxy"
+            ];
+            LoadCredential =
+              (lib.optional (cfg.proxy.clientSecretFile != null) "proxy-client-secret:${cfg.proxy.clientSecretFile}")
+              ++ (lib.optional (cfg.proxy.sessionSecretFile != null) "proxy-session-secret:${cfg.proxy.sessionSecretFile}");
+            ExecStart = proxyStart;
+            RuntimeDirectory = "nix-swarm-proxy";
+            RuntimeDirectoryMode = "0700";
+            UMask = "0077";
+            NoNewPrivileges = true;
+            PrivateTmp = true;
+            ProtectHome = true;
+            ProtectSystem = "strict";
+          };
+          restartTriggers = [ renderedProxyConfig cfg.package ];
+        };
+      })
     ];
 
     systemd.timers = backupTimers;
