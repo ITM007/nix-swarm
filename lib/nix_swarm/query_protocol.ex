@@ -2,6 +2,7 @@ defmodule NixSwarm.QueryProtocol do
   @moduledoc false
 
   @protocol_version 2
+  @json_prefix "json-v1:"
   @max_lines 1_000
   @max_request_bytes 8_192
   @max_response_bytes 4 * 1_024 * 1_024
@@ -18,6 +19,25 @@ defmodule NixSwarm.QueryProtocol do
   def max_response_bytes, do: @max_response_bytes
 
   def protocol_version, do: @protocol_version
+
+  def json_request?(payload) when is_binary(payload),
+    do: String.starts_with?(payload, @json_prefix)
+
+  def json_request?(_payload), do: false
+
+  def encode_json_request(request) do
+    case encode_request(request) do
+      {:ok, payload} ->
+        payload = @json_prefix <> payload
+
+        if byte_size(payload) <= @max_request_bytes,
+          do: {:ok, payload},
+          else: {:error, :request_too_large}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   def encode_request(:protocol_version), do: {:ok, "protocol-version"}
   def encode_request(:capabilities), do: {:ok, "capabilities"}
@@ -55,6 +75,16 @@ defmodule NixSwarm.QueryProtocol do
 
   def decode_request(payload)
       when is_binary(payload) and byte_size(payload) <= @max_request_bytes do
+    if json_request?(payload) do
+      decode_json_request(payload)
+    else
+      decode_v2_request(payload)
+    end
+  end
+
+  def decode_request(_payload), do: {:error, :request_too_large}
+
+  defp decode_v2_request(payload) do
     case String.split(payload, ":", parts: 4) do
       ["protocol-version"] ->
         {:ok, :protocol_version}
@@ -102,7 +132,15 @@ defmodule NixSwarm.QueryProtocol do
     end
   end
 
-  def decode_request(_payload), do: {:error, :request_too_large}
+  defp decode_json_request(payload) do
+    payload =
+      binary_part(payload, byte_size(@json_prefix), byte_size(payload) - byte_size(@json_prefix))
+
+    case decode_v2_request(payload) do
+      {:ok, request} -> {:ok, {:json_v1, request}}
+      error -> error
+    end
+  end
 
   def encode_response(response) do
     binary = response |> wire_encode() |> :erlang.term_to_binary([:deterministic])
@@ -113,6 +151,20 @@ defmodule NixSwarm.QueryProtocol do
       {:error, :response_too_large}
     end
   end
+
+  def encode_json_response({:ok, data}) do
+    encode_json_envelope(%{schema_version: 1, ok: true, data: data})
+  end
+
+  def encode_json_response({:error, reason}) do
+    encode_json_envelope(%{
+      schema_version: 1,
+      ok: false,
+      error: %{code: json_error_code(reason)}
+    })
+  end
+
+  def encode_json_response(response), do: encode_json_response({:ok, response})
 
   def decode_response(encoded) when is_binary(encoded) do
     with {:ok, binary} <- Base.url_decode64(String.trim(encoded), padding: false),
@@ -135,6 +187,18 @@ defmodule NixSwarm.QueryProtocol do
   rescue
     ArgumentError -> {:error, :invalid_response}
   end
+
+  defp encode_json_envelope(envelope) do
+    binary = NixSwarm.JSON.encode!(envelope)
+
+    if byte_size(binary) <= @max_response_bytes,
+      do: {:ok, binary},
+      else: {:error, :response_too_large}
+  end
+
+  defp json_error_code(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp json_error_code({tag, _reason}) when is_atom(tag), do: Atom.to_string(tag)
+  defp json_error_code(_reason), do: "internal_error"
 
   defp parse_lines(value) do
     case Integer.parse(value) do

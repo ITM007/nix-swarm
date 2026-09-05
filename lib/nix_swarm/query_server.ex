@@ -133,15 +133,48 @@ defmodule NixSwarm.QueryServer do
   end
 
   defp serve(socket) do
-    response =
-      with {:ok, payload} <- :gen_tcp.recv(socket, 0, NixSwarm.rpc_timeout_ms()),
-           {:ok, request} <- QueryProtocol.decode_request(payload) do
-        Logger.info("operator query", operation: operation_name(request))
-        execute(request)
-      else
-        {:error, reason} -> {:error, reason}
+    {profile, response} =
+      case :gen_tcp.recv(socket, 0, NixSwarm.rpc_timeout_ms()) do
+        {:ok, payload} ->
+          profile = if QueryProtocol.json_request?(payload), do: :json_v1, else: :etf
+
+          response =
+            case QueryProtocol.decode_request(payload) do
+              {:ok, request} ->
+                Logger.info("operator query", operation: operation_name(request))
+                execute(request)
+
+              {:error, reason} ->
+                {:error, reason}
+            end
+
+          {profile, response}
+
+        {:error, reason} ->
+          {:etf, {:error, reason}}
       end
 
+    send_response(socket, profile, response)
+  after
+    :gen_tcp.close(socket)
+  end
+
+  defp send_response(socket, :json_v1, response) do
+    case QueryProtocol.encode_json_response(response) do
+      {:ok, binary} ->
+        :gen_tcp.send(socket, binary)
+
+      {:error, :response_too_large} ->
+        {:ok, binary} = QueryProtocol.encode_json_response({:error, :response_too_large})
+        :gen_tcp.send(socket, binary)
+
+      {:error, _reason} ->
+        {:ok, binary} = QueryProtocol.encode_json_response({:error, :internal_error})
+        :gen_tcp.send(socket, binary)
+    end
+  end
+
+  defp send_response(socket, :etf, response) do
     binary = QueryProtocol.encode_local_response(response)
 
     if byte_size(binary) <= QueryProtocol.max_response_bytes() do
@@ -149,14 +182,13 @@ defmodule NixSwarm.QueryServer do
     else
       :gen_tcp.send(socket, QueryProtocol.encode_local_response({:error, :response_too_large}))
     end
-  after
-    :gen_tcp.close(socket)
   end
 
   defp execute(:protocol_version), do: {:ok, NixSwarm.QueryProtocol.protocol_version()}
   defp execute(:capabilities), do: {:ok, NixSwarm.API.capabilities()}
   defp execute(:cluster_overview), do: {:ok, NixSwarm.API.cluster_overview()}
   defp execute(:cluster_members), do: {:ok, NixSwarm.API.cluster_members()}
+  defp execute({:json_v1, request}), do: execute(request)
 
   defp execute({:operator_snapshot, service, nil, lines}) do
     {:ok, NixSwarm.API.operator_snapshot(service, nil, lines)}
@@ -194,6 +226,7 @@ defmodule NixSwarm.QueryServer do
   end
 
   defp operation_name(operation) when is_atom(operation), do: operation
+  defp operation_name({:json_v1, request}), do: operation_name(request)
   defp operation_name({operation, _, _, _}), do: operation
   defp operation_name({operation, _, _}), do: operation
 end

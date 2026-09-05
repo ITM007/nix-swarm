@@ -77,6 +77,16 @@ defmodule NixSwarmSecurityTest do
              NixSwarm.QueryClient.query({:reconcile, []}, socket_path: socket_path)
   end
 
+  test "JSON query profile has no mutation path and preserves request bounds" do
+    assert {:error, :invalid_request} =
+             QueryProtocol.encode_json_request({:reconcile, []})
+
+    assert {:error, :unsupported_request} = QueryProtocol.decode_request("json-v1:reconcile")
+
+    oversized = "json-v1:" <> String.duplicate("x", QueryProtocol.max_request_bytes())
+    assert {:error, :request_too_large} = QueryProtocol.decode_request(oversized)
+  end
+
   test "query server does not unlink a non-socket at its configured path" do
     path =
       Path.join(
