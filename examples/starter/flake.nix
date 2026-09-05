@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nix-swarm.url = "github:ITM007/nix-swarm";
+    nix-swarm.url = "github:ITM007/nix-swarm/v0.5.0";
     nix-swarm.inputs.nixpkgs.follows = "nixpkgs";
   };
 

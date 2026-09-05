@@ -13,9 +13,16 @@ defmodule NixSwarm.ReleaseEvidence.Collector do
     {:operator_smoke, ["nix", "build", ".#checks.x86_64-linux.operator-smoke", "--no-link"]},
     {:starter_syntax, ["nix", "build", ".#checks.x86_64-linux.starter-syntax", "--no-link"]},
     {:otp_integration, ["mix", "run", "--no-start", "scripts/verify_cluster.exs"]},
-    {:docker_standard_matrix, ["docker", "compose", "ps"]},
-    {:docker_hardened_matrix, ["docker", "compose", "--profile", "hardened", "ps"]},
-    {:docker_reset, ["docker", "compose", "down", "-v", "--remove-orphans"]},
+    {:docker_standard_matrix,
+     ["bash", "scripts/docker-stack", "--profile", "standard", "status", "--assert-ready"]},
+    {:docker_hardened_matrix,
+     ["bash", "scripts/docker-stack", "--profile", "hardened", "status", "--assert-ready"]},
+    {:docker_reset,
+     [
+       "bash",
+       "-c",
+       "scripts/docker-stack --profile standard reset && scripts/docker-stack --profile hardened reset"
+     ]},
     {:clean_checkout, ["git", "status", "--short"]}
   ]
 

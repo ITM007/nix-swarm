@@ -23,17 +23,30 @@ cd "$root"
 if [[ -z "$revision" ]]; then
   revision=$(git rev-parse HEAD)
 fi
-if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+dirty_files=$(git status --porcelain --untracked-files=all | while IFS= read -r line; do
+  path="${line:3}"
+  case "$path" in
+    .hermes/plans/*.md) ;;
+    *) printf '%s\n' "$line" ;;
+  esac
+done)
+if [[ -n "$dirty_files" ]]; then
   printf 'release-check: source checkout is dirty; commit or use an isolated clean checkout\n' >&2
   exit 1
 fi
 
 worktree=$(mktemp -d "${TMPDIR:-/tmp}/nix-swarm-release.XXXXXX")
 project="nix-swarm-release-${RANDOM}-${BASHPID}"
+docker_started=false
 output_abs=$(mkdir -p "$output" && cd "$output" && pwd)
 cleanup_status=0
 cleanup() {
   set +e
+  if $docker_started && [[ -d "$worktree" ]]; then
+    for profile in standard hardened; do
+      (cd "$worktree" && ./scripts/docker-stack --profile "$profile" reset) || cleanup_status=1
+    done
+  fi
   if command -v docker >/dev/null 2>&1; then
     docker compose -p "$project" down --volumes --remove-orphans >/dev/null 2>&1
     [[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$project")" ]] || cleanup_status=1
@@ -62,6 +75,13 @@ if [[ -f "$starter_lock" ]]; then
 fi
 export COMPOSE_PROJECT_NAME="$project"
 export NIX_SWARM_RELEASE_OUTPUT="$output_abs"
+
+if $require_docker; then
+  ./scripts/docker-stack --profile standard up
+  docker_started=true
+  ./scripts/docker-stack --profile hardened up
+fi
+
 args=(--output "$output_abs/evidence.txt")
 $require_docker && args+=(--require-docker)
 

@@ -83,5 +83,6 @@ fi
 
 # This verifier starts at the prepared-NixOS boundary and records only the
 # scenario's observable result. It is deliberately injected through env vars.
-mix run --no-start "$root_dir/scripts/verify_cluster.exs"
+cd "$root_dir"
+nix develop --command mix run --no-start scripts/verify_cluster.exs
 "${stack[@]}" status --assert-ready

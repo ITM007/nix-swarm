@@ -6,8 +6,11 @@ IO.puts("verifying prepared-node scenario=#{scenario} failure_injection=#{label}
 
 {_output, status} =
   System.cmd(
-    "mix",
+    "nix",
     [
+      "develop",
+      "--command",
+      "mix",
       "test",
       "test/integration/three_node_cluster_test.exs",
       "test/integration/stateful_heal_scenario_test.exs"

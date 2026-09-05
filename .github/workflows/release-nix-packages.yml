@@ -34,6 +34,23 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ env.TAG_NAME }}
+
+      - name: Verify checked-out release provenance
+        run: |
+          set -euo pipefail
+          expected="v$(tr -d '\r\n' < VERSION)"
+          if [ "${TAG_NAME}" != "${expected}" ]; then
+            echo "release tag ${TAG_NAME} does not match ${expected}" >&2
+            exit 1
+          fi
+          checked_out=$(git rev-parse HEAD)
+          tag_target=$(git rev-parse "${TAG_NAME}^{commit}")
+          if [ "${checked_out}" != "${tag_target}" ]; then
+            echo "checked-out ${checked_out} is not ${TAG_NAME} target ${tag_target}" >&2
+            exit 1
+          fi
 
       - name: Install Nix
         uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
