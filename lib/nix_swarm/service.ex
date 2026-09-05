@@ -3,12 +3,25 @@ defmodule NixSwarm.Service do
 
   alias NixSwarm.NodeName
 
+  @state_top_level_keys [
+    :dirs,
+    :backup,
+    :restore,
+    :auto_heal,
+    :autoHeal,
+    :heal_grace_sec,
+    :healGraceSec,
+    :on_placement,
+    :onPlacement
+  ]
+
   def normalize(raw) do
     name = NixSwarm.fetch_value(raw, :name) |> to_string()
     replicas = NixSwarm.fetch_value(raw, :replicas, 1) |> normalize_integer(1)
     autoscaling = normalize_autoscaling(NixSwarm.fetch_value(raw, :autoscaling, %{}), replicas)
     replica_capacity = if autoscaling.enabled, do: autoscaling.max_replicas, else: replicas
     unit_template = normalize_unit_template(preferred_template(raw), replica_capacity)
+    state = normalize_state(NixSwarm.fetch_value(raw, :state), name)
 
     %{
       name: name,
@@ -17,9 +30,27 @@ defmodule NixSwarm.Service do
       allowed_nodes:
         NixSwarm.fetch_value(raw, :allowed_nodes, NixSwarm.fetch_value(raw, :allowedNodes, []))
         |> normalize_nodes(),
-      autoscaling: autoscaling
+      autoscaling: autoscaling,
+      state: state
     }
   end
+
+  def stateful?(%{state: nil}), do: false
+  def stateful?(%{state: _}), do: true
+
+  @doc """
+  Whether a stateful service must restore state from a snapshot before it may
+  start (as opposed to `restore: "none"`, which only governs backups and
+  fencing, never starts on a node without its state).
+  """
+  def awaiting_restore?(%{state: %{restore: restore}})
+      when restore in ["borg-latest", "litestream"],
+      do: true
+
+  def awaiting_restore?(_service), do: false
+
+  def state_dirs(%{state: %{dirs: dirs}}) when is_list(dirs), do: dirs
+  def state_dirs(_service), do: []
 
   def default_unit_template(replicas) when replicas <= 1, do: "%{service}.service"
   def default_unit_template(_replicas), do: "%{service}@%{slot}.service"
@@ -108,4 +139,164 @@ defmodule NixSwarm.Service do
 
   defp normalize_node_name(name) when is_atom(name), do: name
   defp normalize_node_name(name), do: NodeName.to_node!(name, label: "allowed node name")
+
+  defp normalize_state(nil, _service_name), do: nil
+
+  defp normalize_state(raw, service_name) when is_map(raw) do
+    reject_unknown_state_keys!(raw, service_name)
+    dirs = normalize_state_dirs!(NixSwarm.fetch_value(raw, :dirs), service_name)
+    backup = normalize_backup(NixSwarm.fetch_value(raw, :backup), service_name)
+    restore = normalize_restore(raw, backup, service_name)
+
+    auto_heal =
+      raw
+      |> NixSwarm.fetch_value(:auto_heal, NixSwarm.fetch_value(raw, :autoHeal, false))
+      |> Kernel.==(true)
+
+    heal_grace_sec =
+      raw
+      |> NixSwarm.fetch_value(
+        :heal_grace_sec,
+        NixSwarm.fetch_value(raw, :healGraceSec, 600)
+      )
+      |> normalize_positive_integer(600)
+
+    %{
+      dirs: dirs,
+      backup: backup,
+      restore: restore,
+      auto_heal: auto_heal,
+      heal_grace_sec: heal_grace_sec
+    }
+  end
+
+  defp normalize_state(raw, service_name), do: raise_state!(service_name, "state", raw)
+
+  defp normalize_state_dirs!(dirs, service_name) when is_list(dirs) do
+    normalized = Enum.map(dirs, &to_string/1)
+
+    if normalized == [] do
+      raise ArgumentError, "service #{service_name} state.dirs must not be empty"
+    end
+
+    if Enum.any?(normalized, &(not String.starts_with?(&1, "/"))) do
+      raise ArgumentError,
+            "service #{service_name} state.dirs must be absolute paths, got #{inspect(normalized)}"
+    end
+
+    normalized
+  end
+
+  defp normalize_state_dirs!(dirs, service_name) do
+    raise ArgumentError,
+          "service #{service_name} state.dirs must be a list of absolute paths, got #{inspect(dirs)}"
+  end
+
+  defp normalize_backup(backup, service_name) when backup in [nil, :undefined, "undefined"],
+    do: nil
+
+  defp normalize_backup(raw, service_name) when is_map(raw) do
+    target =
+      raw
+      |> NixSwarm.fetch_value(:target)
+      |> normalize_optional_string()
+
+    if is_nil(target) do
+      raise ArgumentError,
+            "service #{service_name} state.backup.target is required (borg repository URI)"
+    end
+
+    schedule =
+      raw
+      |> NixSwarm.fetch_value(:schedule, "hourly")
+      |> to_string()
+
+    %{schedule: schedule, target: target}
+  end
+
+  defp normalize_backup(backup, service_name),
+    do: raise_state!(service_name, "state.backup", backup)
+
+  defp normalize_restore(raw, backup, service_name) do
+    restore =
+      raw
+      |> fetch_nested_restore()
+      |> normalize_optional_string()
+
+    restore =
+      cond do
+        not is_nil(restore) ->
+          restore
+
+        not is_nil(backup) ->
+          "borg-latest"
+
+        true ->
+          "none"
+      end
+
+    if restore not in ["borg-latest", "litestream", "none"] do
+      raise ArgumentError,
+            "service #{service_name} state.restore must be one of \"borg-latest\", \"litestream\", or \"none\", got #{inspect(restore)}"
+    end
+
+    if restore != "none" and is_nil(backup) do
+      raise ArgumentError,
+            "service #{service_name} state.restore #{inspect(restore)} requires a state.backup block"
+    end
+
+    restore
+  end
+
+  defp fetch_nested_restore(raw) do
+    case NixSwarm.fetch_value(raw, :restore) do
+      nil ->
+        on_placement =
+          NixSwarm.fetch_value(raw, :on_placement, NixSwarm.fetch_value(raw, :onPlacement))
+
+        case on_placement do
+          %{} = nested -> NixSwarm.fetch_value(nested, :restore)
+          _ -> nil
+        end
+
+      restore ->
+        restore
+    end
+  end
+
+  defp reject_unknown_state_keys!(raw, service_name) do
+    allowed = Enum.map(@state_top_level_keys, &Atom.to_string/1)
+
+    raw
+    |> Enum.map(fn {key, _value} -> normalize_optional_string(key) end)
+    |> Enum.reject(&(&1 in allowed))
+    |> case do
+      [] ->
+        :ok
+
+      unknown ->
+        raise ArgumentError,
+              "service #{service_name} state has unsupported key(s): #{Enum.join(unknown, ", ")}"
+    end
+  end
+
+  defp normalize_positive_integer(value, default) when is_integer(value) and value > 0,
+    do: value
+
+  defp normalize_positive_integer(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, _} when parsed > 0 -> parsed
+      _ -> default
+    end
+  end
+
+  defp normalize_positive_integer(_value, default), do: default
+
+  defp normalize_optional_string(nil), do: nil
+  defp normalize_optional_string(value), do: to_string(value)
+
+  defp raise_state!(service_name, key, value) do
+    raise ArgumentError,
+          "service #{service_name} #{key} must be a map, got #{inspect(value)}"
+  end
 end

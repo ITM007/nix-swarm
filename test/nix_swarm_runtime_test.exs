@@ -86,7 +86,7 @@ defmodule NixSwarmRuntimeTest do
     service = hd(config.services)
 
     assert Map.keys(service) |> Enum.sort() ==
-             [:allowed_nodes, :autoscaling, :name, :replicas, :unit_template]
+             [:allowed_nodes, :autoscaling, :name, :replicas, :state, :unit_template]
 
     for removed_key <- [
           :ingress,
