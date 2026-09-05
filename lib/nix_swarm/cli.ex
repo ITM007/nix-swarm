@@ -10,6 +10,7 @@ defmodule NixSwarm.CLI do
     ssh_host: :string,
     secret_file: :string,
     name: :string,
+    node: :string,
     lines: :integer,
     refresh_ms: :integer,
     source: :string,
@@ -55,6 +56,7 @@ defmodule NixSwarm.CLI do
     credentials_fun = Keyword.get(dependencies, :credentials_fun, &NixSwarm.Credentials.install/1)
     upgrade_fun = Keyword.get(dependencies, :upgrade_fun, &NixSwarm.Upgrade.run/2)
     restart_fun = Keyword.get(dependencies, :restart_fun, &NixSwarm.ServiceRestart.run/1)
+    heal_fun = Keyword.get(dependencies, :heal_fun, &NixSwarm.Deploy.Heal.run/1)
 
     cond do
       Keyword.get(opts, :version, false) ->
@@ -64,6 +66,9 @@ defmodule NixSwarm.CLI do
       Keyword.get(opts, :help, false) ->
         print_help()
         :ok
+
+      match?(["cluster", "heal", _], args) ->
+        run_cluster_heal(args, opts, dependencies, heal_fun)
 
       args == ["cluster", "plan"] ->
         plan = plan_fun.(deploy_options(opts, true))
@@ -268,14 +273,15 @@ defmodule NixSwarm.CLI do
   end
 
   defp requires_remote_options?(args) do
-    args in [
-      [],
-      ["tui"],
-      ["cluster", "doctor"],
-      ["cluster", "status"],
-      ["service", "logs"],
-      ["service", "restart"]
-    ]
+    match?(["cluster", "heal", _], args) or
+      args in [
+        [],
+        ["tui"],
+        ["cluster", "doctor"],
+        ["cluster", "status"],
+        ["service", "logs"],
+        ["service", "restart"]
+      ]
   end
 
   defp config_paths(opts), do: NixSwarm.OperatorContext.paths(opts)
@@ -355,6 +361,134 @@ defmodule NixSwarm.CLI do
             "#{command} changes machines; inspect `nix-swarm cluster plan` first, then repeat with --yes"
     end
   end
+
+  defp require_heal_confirmation!(opts) do
+    unless Keyword.get(opts, :yes, false) do
+      raise ArgumentError,
+            "cluster heal restores backup state onto a machine and starts its unit; repeat with --yes"
+    end
+  end
+
+  defp run_cluster_heal(["cluster", "heal", service], opts, dependencies, heal_fun) do
+    require_heal_confirmation!(opts)
+    service = String.trim(service)
+
+    remote_opts = Keyword.take(opts, [:target, :ssh_host])
+
+    remote_opts =
+      case Keyword.get(dependencies, :query_fun) do
+        query_fun when is_function(query_fun, 2) ->
+          Keyword.put(remote_opts, :query_fun, query_fun)
+
+        _ ->
+          remote_opts
+      end
+
+    command_fun = Keyword.get(dependencies, :command_fun, &run_command/2)
+
+    with {:ok, target_node} <- connect_remote(remote_opts),
+         overview <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_overview, []),
+         :ok <- validate_service_name(overview, service),
+         {:ok, contract} <- find_state_contract(overview, service),
+         :ok <- require_restorable!(contract, service),
+         {:ok, placement} <- find_placement(overview, service),
+         {:ok, node_name, deploy_host} <- resolve_heal_node(overview, opts, placement) do
+      result =
+        heal_fun.(
+          service: service,
+          unit: placement.unit,
+          dirs: contract.dirs,
+          host: deploy_host,
+          node: node_name,
+          command_fun: command_fun
+        )
+
+      case result do
+        {:ok, %{restored: dirs}} ->
+          count = length(dirs)
+          plural = if count == 1, do: "y", else: "ies"
+
+          IO.puts(
+            "Healed #{service} on #{node_name} (#{deploy_host}): restored #{count} state director#{plural}, unit #{placement.unit} running."
+          )
+
+          :ok
+
+        {:error, reason} ->
+          {:error, "cluster heal failed for #{service}: #{format_heal_reason(reason)}"}
+      end
+    else
+      {:error, reason} -> {:error, "cluster heal failed: #{format_heal_reason(reason)}"}
+    end
+  end
+
+  defp find_state_contract(overview, service) do
+    case Enum.find(overview.status.state_contracts, fn {name, _} ->
+           to_string(name) == service
+         end) do
+      {_name, contract} -> {:ok, contract}
+      nil -> {:error, "service #{inspect(service)} is not stateful (no state contract)"}
+    end
+  end
+
+  defp require_restorable!(%{restore: restore}, _service)
+       when restore in ["borg-latest", "litestream"],
+       do: :ok
+
+  defp require_restorable!(_contract, service) do
+    {:error,
+     "service #{inspect(service)} declares restore \"none\"; nothing to restore — re-apply after removing the stale state directory if a fresh start is intended"}
+  end
+
+  defp find_placement(overview, service) do
+    slots =
+      Enum.find_value(overview.status.placements, [], fn {name, list} ->
+        if to_string(name) == service, do: list
+      end)
+
+    case slots do
+      [%{unit: unit, owner: owner} | _] -> {:ok, %{unit: unit, owner: owner}}
+      _ -> {:error, "service #{inspect(service)} has no live placement"}
+    end
+  end
+
+  defp resolve_heal_node(overview, opts, %{owner: owner}) do
+    configured = Map.get(overview.members, :configured_nodes, [])
+
+    with {:ok, node_name} <- requested_or_owner_node(opts, owner, configured),
+         {:ok, deploy_host} <- deploy_host_for(overview, node_name) do
+      {:ok, node_name, deploy_host}
+    end
+  end
+
+  defp requested_or_owner_node(opts, owner, configured) do
+    case Keyword.get(opts, :node) do
+      nil ->
+        {:ok, owner}
+
+      requested ->
+        case Enum.find(configured, &(to_string(&1) == requested)) do
+          nil ->
+            {:error,
+             "unknown node #{inspect(requested)}; configured nodes: #{Enum.map_join(configured, ", ", &to_string/1)}"}
+
+          node ->
+            {:ok, node}
+        end
+    end
+  end
+
+  defp deploy_host_for(overview, node_name) do
+    deploy_hosts = Map.get(overview.members, :deploy_hosts, %{})
+
+    case Map.get(deploy_hosts, node_name) || Map.get(deploy_hosts, Atom.to_string(node_name)) do
+      nil -> {:error, "no deploy host configured for #{node_name}"}
+      host -> {:ok, host}
+    end
+  end
+
+  defp format_heal_reason(reason) when is_binary(reason), do: reason
+  defp format_heal_reason(reason), do: inspect(reason)
 
   defp validate_service_name(overview, service_name) do
     known? =
@@ -511,6 +645,7 @@ defmodule NixSwarm.CLI do
       nix-swarm cluster rollback --source /path/to/checkout --yes
       nix-swarm cluster upgrade --source /path/to/checkout --yes
       nix-swarm cluster credentials rotate --source /path/to/checkout --yes
+      nix-swarm cluster heal SERVICE --yes [--node NODE]
 
     Read-only operations:
       nix-swarm cluster status --target NODE

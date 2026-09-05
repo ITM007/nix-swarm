@@ -30,7 +30,7 @@ defmodule NixSwarm.OperatorContext do
 
     remote =
       if Keyword.has_key?(opts, :target) do
-        Remote.options!(Keyword.take(opts, [:target, :ssh_host]))
+        Remote.options!(Keyword.take(opts, [:target, :ssh_host, :query_fun]))
       end
 
     %{source: paths.source, paths: paths, remote: remote, read_only?: true}

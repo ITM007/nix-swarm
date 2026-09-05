@@ -99,7 +99,7 @@ defmodule NixSwarm.Deploy.Heal do
     shell("#{shq(restore_bin)} #{shq(staging)}")
   end
 
-  defp verify_staging(dir, staging) do
+  defp verify_staging(_dir, staging) do
     shell("test -n \"$(ls -A #{shq(staging)})\" && test -d #{shq(staging)}")
   end
 

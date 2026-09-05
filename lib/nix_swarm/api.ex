@@ -141,6 +141,7 @@ defmodule NixSwarm.API do
       live_nodes: live_nodes,
       placement_nodes: placement_nodes,
       placements: Placement.plan(config, placement_nodes),
+      state_contracts: state_contracts(config),
       placement_diagnostics:
         Placement.diagnostics(config, placement_nodes) ++
           config_consistency_diagnostics(config_digests),
@@ -149,6 +150,24 @@ defmodule NixSwarm.API do
       config_consistent?: config_digests |> Map.values() |> Enum.uniq() |> length() <= 1,
       nodes: nodes
     }
+  end
+
+  # Trimmed single-writer state contract per service (no backup repository
+  # details), used by operator commands such as `cluster heal`.
+  defp state_contracts(config) do
+    config.services
+    |> Enum.filter(&NixSwarm.Service.stateful?/1)
+    |> Map.new(fn service ->
+      state = service.state
+
+      {service.name,
+       %{
+         dirs: state.dirs,
+         restore: state.restore,
+         auto_heal: state.auto_heal,
+         heal_grace_sec: state.heal_grace_sec
+       }}
+    end)
   end
 
   @doc "Returns the cluster membership view: live nodes, configured peers, and deploy hosts."
