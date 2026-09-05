@@ -28,7 +28,11 @@ defmodule NixSwarm.MixProject do
   defp deps do
     [
       {:ex_ratatui, "~> 0.13.1"},
-      {:telemetry, "~> 1.3"}
+      {:telemetry, "~> 1.3"},
+      {:bandit, "~> 1.10"},
+      {:plug, "~> 1.19"},
+      {:reverse_it, "~> 0.2.6"},
+      {:oidcc, "~> 3.8"}
     ]
   end
 

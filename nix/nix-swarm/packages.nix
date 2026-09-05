@@ -10,7 +10,7 @@ let
 
   mixDepsHash =
     if lib.versionAtLeast beamPackages.elixir.version "1.18.0" then
-      "sha256-mYEg4g5BNLbTw1EN0lMdrUW62rCUyOPNZ+fS+iydE+4="
+      "sha256-ofb88Xnsx7qwvwkOfqHLh5EH0qIRx8g9BAxjUqMVQtg="
     else
       "sha256-vywmOaqNrGlWeE3itE85MDufVVhITz3xZmWo68rnmj4=";
 
