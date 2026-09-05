@@ -1,4 +1,6 @@
-ExUnit.start()
+# The application and its test socket are process-global; lifecycle tests
+# stop/restart it, so allowing cases to overlap races with other modules.
+ExUnit.start(max_cases: 1)
 
 System.cmd("epmd", ["-daemon"])
 

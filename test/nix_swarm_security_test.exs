@@ -93,6 +93,26 @@ defmodule NixSwarmSecurityTest do
     File.rm!(path)
   end
 
+  test "query server replaces a stale Unix socket and cleans up its own socket" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "nix-swarm-query-stale-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, stale_listener} =
+      :gen_tcp.listen(0, [:binary, active: false, ifaddr: {:local, String.to_charlist(path)}])
+
+    :gen_tcp.close(stale_listener)
+    assert File.exists?(path)
+
+    assert {:ok, state} = NixSwarm.QueryServer.init(socket_path: path)
+    assert File.exists?(path)
+
+    assert :ok = NixSwarm.QueryServer.terminate(:normal, state)
+    refute File.exists?(path)
+  end
+
   test "installed query helper round-trips only a valid protocol request" do
     request = Base.url_encode64("cluster-members", padding: false)
 

@@ -3,6 +3,7 @@ defmodule NixSwarm.QueryServer do
 
   use GenServer
 
+  import Bitwise
   require Logger
 
   alias NixSwarm.QueryProtocol
@@ -75,11 +76,10 @@ defmodule NixSwarm.QueryServer do
       {:error, :enoent} ->
         :ok
 
-      {:ok, %{type: :socket}} ->
-        File.rm(path)
-
-      {:ok, _metadata} ->
-        {:error, {:socket_path_occupied, path}}
+      {:ok, metadata} ->
+        if socket_file?(metadata),
+          do: File.rm(path),
+          else: {:error, {:socket_path_occupied, path}}
 
       {:error, reason} ->
         {:error, reason}
@@ -88,10 +88,15 @@ defmodule NixSwarm.QueryServer do
 
   defp remove_owned_socket(path, inode) do
     case File.stat(path) do
-      {:ok, %{type: :socket, inode: ^inode}} -> File.rm(path)
-      _ -> :ok
+      {:ok, %{inode: ^inode} = metadata} ->
+        if socket_file?(metadata), do: File.rm(path), else: :ok
+
+      _ ->
+        :ok
     end
   end
+
+  defp socket_file?(%{mode: mode}), do: band(mode, 0o170_000) == 0o140_000
 
   defp accept_loop(listener) do
     case :gen_tcp.accept(listener) do
