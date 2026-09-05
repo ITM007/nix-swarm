@@ -98,6 +98,13 @@ restore, which is why `healGraceSec` (default 600 s) exists — it is the
 minimum downtime before an automatic heal would even be considered when
 `autoHeal` is later enabled per service.
 
+**Release decision (Phase 1): manual heal only.** `auto_heal` is parsed,
+validated, and reserved for a future release, but no code path triggers a
+heal automatically in this release. Every restore is operator-initiated via
+`cluster heal NAME --yes [--node NODE]`; the reconciler's only automatic
+actions remain holding the unit in `:awaiting_heal` (never starting it with
+missing state) and stopping a stale copy when ownership moves.
+
 ## Consistency caveats
 
 - Restore is per-directory, best-effort point-in-time. Apps whose state spans
