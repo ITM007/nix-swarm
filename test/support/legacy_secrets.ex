@@ -1,16 +1,10 @@
 defmodule NixSwarm.Secrets do
   @moduledoc """
-  Decrypts age-encrypted secrets for GitOps workflows.
+  Legacy test helper for age-encrypted cookie fixtures.
 
-  Supports:
-  - age encrypted files (via `rage` or `age` CLI)
-  - Plaintext fallback when no encrypted file exists
+  Runtime credential handling lives in `NixSwarm.Credentials`.
   """
 
-  @doc """
-  Read a cookie, trying encrypted variants first.
-  Order: swarm.cookie.age (rage decrypt) → swarm.cookie (plaintext)
-  """
   def read_cookie(cookie_path) do
     age_path = cookie_path <> ".age"
 
@@ -26,10 +20,6 @@ defmodule NixSwarm.Secrets do
     end
   end
 
-  @doc """
-  Decrypt an age-encrypted file and return the trimmed contents.
-  Uses `rage` (Rust age implementation) falling back to `age`.
-  """
   def decrypt_age(path) do
     age_bin = find_age_binary()
 
@@ -48,10 +38,6 @@ defmodule NixSwarm.Secrets do
       raise "failed to decrypt #{path}: #{inspect(error)}"
   end
 
-  @doc """
-  Encrypt a cookie with age for Git committing.
-  `recipient` is an age public key (age1...).
-  """
   def encrypt_cookie(cookie, recipient, output_path) do
     age_bin = find_age_binary()
     File.mkdir_p!(Path.dirname(Path.expand(output_path)))

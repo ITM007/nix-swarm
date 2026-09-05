@@ -138,6 +138,12 @@ defmodule NixSwarmProjectPolicyTest do
 
   test "backup and alerting runbooks exist and are linked from operations" do
     operations = File.read!("docs/OPERATIONS.md")
+    security = File.read!("docs/SECURITY.md")
+
+    assert operations =~ "nix-swarm cluster credentials rotate --source . --yes"
+    refute operations =~ "nix-swarm cluster credentials --source . --yes"
+    assert security =~ "nix-swarm cluster credentials rotate --source . --yes"
+    refute security =~ "nix-swarm cluster credentials --source . --yes"
 
     for doc <- ["docs/BACKUP_RECOVERY.md", "docs/ALERTING.md"] do
       assert File.exists?(doc), "missing runbook #{doc}"

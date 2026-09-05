@@ -29,7 +29,7 @@ The source cookie must be an absolute path outside `/nix/store`. At startup, sys
 Recommended target mode is root-owned `0400`. Generate and install it with:
 
 ```bash
-nix-swarm cluster credentials --source . --yes
+nix-swarm cluster credentials rotate --source . --yes
 ```
 
 `secrets/*.cookie` and `secrets/*.key` are ignored by Git and excluded from package sources. For established environments, prefer sops-nix/agenix or systemd encrypted credentials.

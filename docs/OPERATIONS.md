@@ -67,8 +67,7 @@ router forwarding, or an operator-managed replacement edge is available.
 ## Install or rotate the cluster credential
 
 ```bash
-nix-swarm cluster credentials --source . --yes
-nix-swarm cluster credentials --source . --rotate-credentials --yes
+nix-swarm cluster credentials rotate --source . --yes
 ```
 
 Enrollment is idempotent when the remote fingerprint already matches. It installs
