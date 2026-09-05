@@ -22,9 +22,11 @@ defmodule NixSwarm.ProxySessionTest do
   test "tampered cookies are rejected" do
     {:ok, session} = Session.new(@secret)
     {:ok, cookie} = Session.encode(session, @session, now: 1_800_000_000)
-    size = byte_size(cookie) - 1
-    <<prefix::binary-size(^size), last>> = cookie
-    tampered = prefix <> if(last == ?A, do: "B", else: "A")
+
+    [version, nonce, ciphertext, tag, signature] = String.split(cookie, ".")
+    <<first, rest::binary>> = signature
+    tampered_signature = <<if(first == ?A, do: ?B, else: ?A), rest::binary>>
+    tampered = Enum.join([version, nonce, ciphertext, tag, tampered_signature], ".")
 
     assert {:error, :invalid_cookie} = Session.decode(session, tampered, now: 1_800_000_001)
   end
