@@ -1,7 +1,8 @@
 # Nix-Swarm contributor guide
 
-Nix-Swarm is a code-first orchestrator for stateless or externally backed
-systemd services on small NixOS clusters. Keep the design narrow:
+Nix-Swarm is a code-first orchestrator for systemd services on small NixOS
+clusters: stateless replicas plus declared single-writer state with scheduled
+backup and verified restore-on-placement. Keep the design narrow:
 
 - Nix is the only desired-state model and deployment history.
 - systemd owns process lifecycle, dependencies, readiness, credentials,
@@ -12,10 +13,13 @@ systemd services on small NixOS clusters. Keep the design narrow:
 - the operator CLI and TUI are read-only except for explicit Nix deployment
   commands.
 
-Do not add a container runtime, overlay network, secret store, mutable service
-controls, Mnesia database, or consensus layer without an explicit scope change.
+Do not add a container runtime, secret store, mutable service controls, Mnesia
+database, or consensus layer without an explicit scope change. Overlay
+networks, backup targets, and edge proxies are optional user-owned integration
+points (see docs/STATEFUL_SERVICES.md); the core never depends on one.
 Temporary duplicate instances during a network partition are an accepted
-leaderless tradeoff.
+leaderless tradeoff for stateless replicas; stateful services are
+single-writer and recover by declared restore, never by live sync.
 
 ## Simplified public contract
 
@@ -26,11 +30,18 @@ The supported operator surface is deliberately small:
 - preview and mutate Nix with `cluster plan` and `cluster apply --yes`;
 - use `cluster rollback --yes`, `cluster upgrade --yes`, and
   `cluster credentials rotate --yes` for explicit deployment maintenance;
-- use `service restart --name NAME --yes` for a bounded maintenance restart.
+- use `service restart --name NAME --yes` for a bounded maintenance restart;
+- heal a stateful service onto a live eligible node with
+  `cluster heal NAME --yes` after its owner failed.
 
 Starting and stopping are declarative: set `replicas` above zero or to zero in
-Nix and apply. Databases, volumes, storage, live migration, and machine
-provisioning are outside the product. CPU-and-memory autoscaling is limited to
+Nix and apply. Machine provisioning, live migration, network-mounted storage,
+and live file sync are outside the product. Declared application state is in
+scope as single-writer state directories (`state.dirs`): Nix-Swarm schedules
+their backup (borgmatic to an operator-chosen repository) and restores the
+latest snapshot onto a surviving eligible node before starting the unit. A
+stateful service never auto-starts without its state (`:awaiting_heal`) and
+never runs with `replicas > 1`. CPU-and-memory autoscaling is limited to
 existing declared service capacity; it never rewrites Nix or manages a
 stateful workload.
 
@@ -42,9 +53,10 @@ paths. Users should replace old bootstrap aliases with `cluster apply`,
 an edited copy of `examples/starter`.
 
 Public Nix service configuration is intentionally limited to replicas, an
-optional unit template, allowed nodes, and the small autoscaling policy.
-Ingress, healthcheck metadata, arbitrary settings, preferred nodes,
-labels/constraints, per-node replica caps, readiness/runtime timing, and
+optional unit template, allowed nodes, the small autoscaling policy, and the
+optional `state` block (state directories, backup schedule and target,
+restore kind, auto-heal policy). Ingress, healthcheck metadata, arbitrary
+settings, preferred nodes, labels/constraints, per-node replica caps, and
 canary/parallel rollout controls are not product options. Configure routing,
 service readiness, credentials, and exceptional systemd behavior in the
 service's own NixOS modules or standard systemd overrides.
@@ -81,7 +93,9 @@ while peer config digests differ.
 
 - Never place cookies or other credentials in argv, environment, logs, the Nix
   store, generated public settings, or package sources.
-- Agent BEAM ports belong only on a trusted encrypted overlay interface.
+- Agent BEAM ports open only on trusted interfaces — the LAN by default, or
+  an encrypted mesh when peers span networks (`openFirewall` +
+  `firewallInterfaces`, never every interface).
 - Do not expose arbitrary Erlang MFA, unsafe ETF decoding, shell evaluation, or
   user-derived systemd unit names.
 - Keep SSH host-key verification enabled and external commands bounded.

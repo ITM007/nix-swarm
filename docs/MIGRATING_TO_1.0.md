@@ -42,7 +42,12 @@ Configure `operatorUsers` on every node and verify host keys before using
 - `active`, `draining`, and `maintenance` node availability replace ad-hoc
   runtime placement changes.
 - Autoscaling supports CPU and memory, remains bounded by Nix, and is intended
-  only for stateless or externally backed services.
+  only for stateless or externally backed services — never for stateful
+  (`state.dirs`) services, which stay single-writer.
+- Stateful third-party apps are supported through declared `state.dirs` with
+  scheduled borg backups and restore-on-placement (`cluster heal`); see
+  `docs/STATEFUL_SERVICES.md`. State is node-local and single-writer; no live
+  file sync or network-mounted state.
 
 ## CLI changes
 
