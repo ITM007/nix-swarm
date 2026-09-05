@@ -1,0 +1,5 @@
+_build/
+deps/
+
+# Local release output
+priv/static/assets/

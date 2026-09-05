@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "esbuild js/app.js --bundle --outdir=../priv/static/assets --minify"
+  }
+}
