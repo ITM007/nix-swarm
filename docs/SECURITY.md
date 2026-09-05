@@ -52,6 +52,16 @@ services.nix-swarm.operatorUsers = [ "alice" ];
 
 Then use `--ssh-host alice@node-a`. Query operations are logged in the agent's journal. TUI actions cannot change desired state, services, or hosts.
 
+## Read-only web UI
+
+The optional `nix-swarm-web` service is a separate unauthenticated projection,
+not a control plane. Its listener is hard-bound to IPv4 `127.0.0.1`; the NixOS
+module exposes no bind or firewall escape hatch. Operators should use an SSH
+tunnel or a reverse proxy that remains on the host. The web user is in the
+query-socket operator group only and receives no BEAM cookie, SSH key, Git
+source, or write path. Release 1 has no login, account, OAuth, role, restart,
+heal, deploy, or source-edit route. See [`WEB_UI.md`](WEB_UI.md).
+
 ## Failure safety
 
 - configuration, intervals, replicas, unit names, query sizes, and log counts are bounded

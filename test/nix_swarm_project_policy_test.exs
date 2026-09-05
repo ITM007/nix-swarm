@@ -86,6 +86,22 @@ defmodule NixSwarmProjectPolicyTest do
     assert cluster =~ "allowedNodes"
   end
 
+  test "the web release router exposes only read-only routes" do
+    router = File.read!("nix-swarm-web/lib/nix_swarm_web/router.ex")
+
+    assert router =~ "get(\"/healthz\", HealthController, :index)"
+    assert router =~ "live(\"/\", DashboardLive)"
+
+    for method <- ["post(", "put(", "patch(", "delete("] do
+      refute router =~ method, "web router must not expose #{method} routes"
+    end
+
+    for forbidden <- ["deploy", "apply", "rollback", "upgrade", "restart", "heal", "edit"] do
+      refute Regex.match?(~r/\b#{Regex.escape(forbidden)}\b/i, router),
+             "web router must not expose #{forbidden} controls"
+    end
+  end
+
   test "the Nix module exposes exactly the six operational runtime tuning options" do
     module = File.read!("nix/nix-swarm/module.nix")
 

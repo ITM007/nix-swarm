@@ -6,6 +6,10 @@ operators; per the product decision it is **deprecated and will retire
 once the web UI reaches parity** (status, logs + search, drift, exports).
 Until then it ships, and these tests are its contract.
 
+The web parity gate is documented in [`WEB_TUI_PARITY.md`](WEB_TUI_PARITY.md).
+The TUI remains supported until every row is green and retirement is explicitly
+approved.
+
 ## Running the suite
 
 The TUI tests live in `test/nix_swarm_tui_test.exs` (29 tests) and run as

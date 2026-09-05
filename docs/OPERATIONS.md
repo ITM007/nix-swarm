@@ -21,6 +21,15 @@ nix-swarm --target nix-swarm@node-a
 
 Use `--ssh-host user@host` when the SSH destination differs from the BEAM target name. Operators need membership in `services.nix-swarm.operatorGroup` through `operatorUsers`; root is also able to query.
 
+## Optional read-only web UI
+
+Enable the separate loopback-only release with
+`services.nix-swarm-web.enable = true`. It registers one stateless replica,
+reads the local query socket through one shared broker, and does not receive the
+BEAM cookie or any deployment credentials. Access it through an SSH tunnel;
+there is no firewall-opening or non-loopback bind option. See
+[`WEB_UI.md`](WEB_UI.md) and the [parity matrix](WEB_TUI_PARITY.md).
+
 ## Apply a change
 
 ```bash
