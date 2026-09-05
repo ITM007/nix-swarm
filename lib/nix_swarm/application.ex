@@ -43,12 +43,17 @@ defmodule NixSwarm.Application do
     case System.get_env("NIX_SWARM_ROLE") || Application.get_env(:nix_swarm, :role, :agent) do
       role when role in [:operator, "operator"] -> :operator
       role when role in [:agent, "agent"] -> :agent
+      role when role in [:proxy, "proxy"] -> :proxy
       other -> raise ArgumentError, "invalid Nix-Swarm runtime role: #{inspect(other)}"
     end
   end
 
   defp children(:operator) do
     [{Task.Supervisor, name: NixSwarm.TaskSupervisor}]
+  end
+
+  defp children(:proxy) do
+    [{NixSwarm.Proxy.Supervisor, []}]
   end
 
   defp children(:agent) do
