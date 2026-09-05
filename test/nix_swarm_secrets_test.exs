@@ -70,6 +70,18 @@ defmodule NixSwarmSecretsTest do
     assert Bitwise.band(File.stat!(Path.dirname(path)).mode, 0o777) == 0o700
   end
 
+  test "credential enrollment tightens permissions on an existing cookie", %{root: root} do
+    path = Path.join(root, "existing/nix-swarm.cookie")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, String.duplicate("a", 40) <> "\n")
+    File.chmod!(Path.dirname(path), 0o755)
+    File.chmod!(path, 0o644)
+
+    assert NixSwarm.Credentials.ensure_local_cookie!(path) == String.duplicate("a", 40)
+    assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o600
+    assert Bitwise.band(File.stat!(Path.dirname(path)).mode, 0o777) == 0o700
+  end
+
   test "credential enrollment rejects malformed existing cookies", %{root: root} do
     path = Path.join(root, "bad.cookie")
     File.write!(path, "short\n")
