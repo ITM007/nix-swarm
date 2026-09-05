@@ -3,3 +3,4 @@ deps/
 
 # Local release output
 priv/static/assets/
+cover/

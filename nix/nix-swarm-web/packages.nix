@@ -14,16 +14,20 @@ let
   release =
     if webReleaseAvailable then
       let
-        src = lib.fileset.toSource {
-          root = ../..;
-          fileset = webRoot;
+        src = lib.cleanSourceWith {
+          src = webRoot;
+          filter = path: _type:
+            !(lib.elem (baseNameOf path) [
+              "_build"
+              "cover"
+              "deps"
+              ".elixir_ls"
+            ]);
         };
         mixFodDeps = beamPackages.fetchMixDeps {
           pname = "nix-swarm-web-deps";
           inherit version src;
-          # The web application is intentionally not part of this phase. Replace
-          # this with the fixed-output hash when its lockfile is introduced.
-          hash = lib.fakeHash;
+          hash = "sha256-ZxsPUeinEvC5N7VUMY6gP0a+wsi2NzWBsIoGuhQFnJg=";
         };
       in
       (beamPackages.mixRelease {
@@ -51,13 +55,21 @@ let
     if release == null then
       unavailablePackage
     else
+      let
+        releaseLauncher = pkgs.writeShellScript "nix-swarm-web-launcher" ''
+          # This is a non-secret local release sentinel. The web release never
+          # joins Erlang distribution and never receives the Nix-Swarm cookie.
+          export RELEASE_COOKIE=nix-swarm-web-release
+          export RELEASE_DISTRIBUTION=none
+          exec ${release}/bin/nix_swarm_web "$@"
+        '';
+      in
       pkgs.runCommand "nix-swarm-web-${version}"
         {
           passthru.webReleaseAvailable = true;
         } ''
-        mkdir -p "$out"
-        cp -a ${release}/. "$out/"
-        test -x "$out/bin/nix_swarm_web"
+        mkdir -p "$out/bin"
+        install -Dm755 ${releaseLauncher} "$out/bin/nix_swarm_web"
         ln -s nix_swarm_web "$out/bin/nix-swarm-web"
       '';
 in

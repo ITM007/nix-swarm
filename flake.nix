@@ -211,6 +211,60 @@
               touch "$out"
             '';
 
+          webVmTest = pkgs.testers.runNixOSTest {
+            name = "nix-swarm-web";
+
+            nodes.agent = { lib, ... }: {
+              imports = [ self.nixosModules.nix-swarm-web ];
+              networking.hostName = "web";
+
+              users.users.operator = {
+                isNormalUser = true;
+                extraGroups = [ "nix-swarm-operators" ];
+              };
+              users.users.outsider.isNormalUser = true;
+
+              services.nix-swarm = {
+                enable = true;
+                package = nixSwarm.cluster;
+                nodeName = "nix-swarm@web";
+                cookieFile = "/run/keys/nix-swarm.cookie";
+                operatorUsers = [ "operator" ];
+                peers = [ "nix-swarm@web" ];
+                nodes."nix-swarm@web" = {
+                  deployHost = "root@web";
+                  nixosConfiguration = "web";
+                };
+              };
+
+              services.nix-swarm-web = {
+                enable = true;
+                package = nixSwarmWeb.nix-swarm-web;
+                port = 4000;
+                pollIntervalMs = 500;
+                allowedNodes = [ "nix-swarm@web" ];
+              };
+
+              systemd.tmpfiles.rules = [
+                "d /run/keys 0700 root root -"
+                "f+ /run/keys/nix-swarm.cookie 0400 root root - 0123456789abcdef0123456789abcdef"
+              ];
+            };
+
+            testScript = ''
+              agent.start()
+              agent.wait_for_unit("nix-swarmd.service")
+              agent.wait_until_succeeds("systemctl is-active nix-swarm-web.service", timeout=120)
+              agent.wait_until_succeeds("curl --fail --silent --show-error http://127.0.0.1:4000/healthz | grep -q status", timeout=60)
+              agent.wait_until_succeeds("curl --fail --silent --show-error http://127.0.0.1:4000/ | grep -q 'Cluster dashboard'", timeout=60)
+              agent.succeed("runuser -u nix-swarm-web -- nix-swarm-query Y2x1c3Rlci1tZW1iZXJz > /tmp/web-query-output")
+              agent.succeed("test -s /tmp/web-query-output")
+              agent.succeed("runuser -u outsider -- test ! -r /run/nix-swarm/query.sock")
+              agent.succeed("ss -ltn | awk '$4 ~ /:4000$/ && $4 !~ /^127\\.0\\.0\\.1:/ { exit 1 }'")
+              agent.succeed("ss -ltn | grep -Eq '127\\.0\\.0\\.1:4000'")
+            '';
+          };
+
           testNode = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = [
@@ -472,6 +526,7 @@
           operator-package = nixSwarm.operator;
           agent-package = nixSwarm.cluster;
           web-module = webModuleEval;
+          web-vm = webVmTest;
           nixos-module = testNode.config.system.build.toplevel;
           nixos-vm = vmTest;
           caddy-vm = caddyVmTest;

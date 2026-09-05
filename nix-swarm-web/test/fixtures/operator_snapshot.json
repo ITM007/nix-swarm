@@ -1,0 +1,92 @@
+{
+  "overview": {
+    "members": {
+      "queried_node": "node-a@cluster",
+      "configured_nodes": ["node-a@cluster", "node-b@cluster", "node-c@cluster"],
+      "live_nodes": ["node-a@cluster", "node-b@cluster"],
+      "placement_nodes": ["node-a@cluster", "node-b@cluster"]
+    },
+    "status": {
+      "queried_node": "node-a@cluster",
+      "live_nodes": ["node-a@cluster", "node-b@cluster"],
+      "placement_nodes": ["node-a@cluster", "node-b@cluster"],
+      "config_consistent?": false,
+      "config_digests": {
+        "node-a@cluster": "aaa111",
+        "node-b@cluster": "bbb222"
+      },
+      "placement_diagnostics": [
+        {"service": "api", "severity": "error", "reason": "unplaced_slot", "slot": 1}
+      ],
+      "desired_observed": {
+        "in_sync?": false,
+        "drift": [
+          {"field": "release_version", "desired": "2.0.0", "observed": "1.9.0"}
+        ]
+      },
+      "placements": {
+        "api": [
+          {"slot": 0, "owner": "node-a@cluster", "unit": "api@0.service"},
+          {"slot": 1, "owner": null, "unit": "api@1.service"}
+        ],
+        "worker": [
+          {"slot": 0, "owner": "node-b@cluster", "unit": "worker@0.service"}
+        ]
+      },
+      "state_contracts": {
+        "api": {"auto_heal": true, "heal_grace_sec": 30, "restore": "none", "dirs": []}
+      },
+      "nodes": [
+        ["node-a@cluster", {
+          "node": "node-a@cluster",
+          "availability": "active",
+          "version": "2.0.0",
+          "build_version": "2.0.0+aaa",
+          "release_version": "2.0.0",
+          "config_digest": "aaa111",
+          "services": [
+            {"name": "api", "desired_state": "running", "units": [
+              {"unit": "api@0.service", "status": "running", "owner": "node-a@cluster", "metrics": {"cpu": 3}}
+            ]}
+          ],
+          "metrics": {
+            "cpu": {"used": 2, "total": 4, "pct": 50},
+            "memory": {"used": 50, "total": 100, "pct": 50},
+            "disk": {"used": 70, "total": 100, "pct": 70},
+            "network": {"received": 1000, "transmitted": 500, "total": 2000},
+            "uptime": 3600
+          },
+          "network_info": {"ips": ["10.0.0.1"], "ports": [4369]}
+        }],
+        ["node-b@cluster", {
+          "node": "node-b@cluster",
+          "availability": "active",
+          "version": "1.9.0",
+          "build_version": "1.9.0+bbb",
+          "release_version": "1.9.0",
+          "config_digest": "bbb222",
+          "services": [
+            {"name": "api", "desired_state": "running", "units": [
+              {"unit": "api@1.service", "status": "awaiting_heal", "owner": null}
+            ]},
+            {"name": "worker", "desired_state": "running", "units": [
+              {"unit": "worker@0.service", "status": "running", "owner": "node-b@cluster", "metrics": {"memory": 9}}
+            ]}
+          ],
+          "metrics": {
+            "cpu": {"used": 1, "total": 4, "pct": 25},
+            "memory": {"used": 25, "total": 100, "pct": 25},
+            "disk": {"used": 20, "total": 100, "pct": 20},
+            "network": {"received": 800, "transmitted": 200, "total": 2000},
+            "uptime": 120
+          },
+          "network_info": {"ips": ["10.0.0.2"], "ports": [4369]}
+        }],
+        ["node-c@cluster", {"node": "node-c@cluster", "error": "node_unreachable", "reason": "timeout"}]
+      ]
+    }
+  },
+  "errors": [
+    {"scope": "node", "node": "node-c@cluster", "reason": "timeout"}
+  ]
+}

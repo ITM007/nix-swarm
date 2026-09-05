@@ -5,10 +5,18 @@ defmodule NixSwarmWeb.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      {Phoenix.PubSub, name: NixSwarmWeb.PubSub},
-      NixSwarmWeb.Endpoint
-    ]
+    broker_opts = Application.get_env(:nix_swarm_web, :query_broker, [])
+
+    children =
+      [
+        {Phoenix.PubSub, name: NixSwarmWeb.PubSub},
+        {NixSwarmWeb.QueryBroker, broker_opts},
+        NixSwarmWeb.Endpoint
+      ]
+      |> Enum.reject(fn
+        {NixSwarmWeb.QueryBroker, opts} -> Keyword.get(opts, :start, true) == false
+        _child -> false
+      end)
 
     opts = [strategy: :one_for_one, name: NixSwarmWeb.Supervisor]
     Supervisor.start_link(children, opts)

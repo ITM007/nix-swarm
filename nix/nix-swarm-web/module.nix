@@ -14,6 +14,7 @@ let
     chmod 0400 "$secret_file"
 
     export HOME="$RUNTIME_DIRECTORY"
+    export RELEASE_DISTRIBUTION=none
     export SECRET_KEY_BASE_FILE="$secret_file"
     exec ${cfg.package}/bin/nix-swarm-web start
   '';

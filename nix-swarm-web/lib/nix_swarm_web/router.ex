@@ -16,5 +16,18 @@ defmodule NixSwarmWeb.Router do
     pipe_through(:browser)
 
     get("/healthz", HealthController, :index)
+    live("/", DashboardLive)
+    live("/network", NetworkLive)
+    live("/nodes", NodeIndexLive)
+    live("/nodes/:node", NodeShowLive)
+    live("/services", ServiceIndexLive)
+    live("/services/:service", ServiceShowLive)
+    live("/drift", DriftLive)
+    live("/logs", LogsLive)
+
+    get("/exports/snapshot.json", ExportController, :snapshot)
+    get("/exports/nodes.csv", ExportController, :nodes)
+    get("/exports/services.csv", ExportController, :services)
+    get("/exports/logs.txt", ExportController, :logs)
   end
 end
