@@ -8,6 +8,12 @@ defmodule NixSwarmWeb.HealthControllerTest do
     assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
   end
 
+  test "unknown routes return a rendered 404 response", %{conn: conn} do
+    conn = get(conn, "/missing")
+
+    assert response(conn, 404) =~ "404"
+  end
+
   test "the web project has no database or account surface" do
     mix_source = File.read!(Path.expand("../../mix.exs", __DIR__))
     router_source = File.read!(Path.expand("../../lib/nix_swarm_web/router.ex", __DIR__))
