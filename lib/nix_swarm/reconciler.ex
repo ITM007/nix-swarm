@@ -3,6 +3,8 @@ defmodule NixSwarm.Reconciler do
 
   use GenServer
 
+  require Logger
+
   @readiness_timeout_sec 120
   @readiness_stable_samples 2
 
@@ -39,7 +41,8 @@ defmodule NixSwarm.Reconciler do
       %{
         previous_owned_units: previous_owned_units,
         healthcheck_results: %{},
-        readiness_counts: %{}
+        readiness_counts: %{},
+        awaiting_heal: %{}
       }
       |> Map.merge(state)
 
@@ -58,7 +61,7 @@ defmodule NixSwarm.Reconciler do
 
   @impl true
   def handle_call(:local_status, _from, state) do
-    {:reply, build_local_status(state.healthcheck_results), state}
+    {:reply, build_local_status(state), state}
   end
 
   @impl true
@@ -127,6 +130,20 @@ defmodule NixSwarm.Reconciler do
 
       safe_to_stop? = cluster_config_consistent?(live_nodes)
 
+      # Units of stateful services that must restore before they may start
+      # (restore "borg-latest"/"litestream"). A unit is deferred only while
+      # its declared state directories are absent on this node.
+      restore_units =
+        config.services
+        |> Enum.filter(&Service.awaiting_restore?/1)
+        |> Enum.flat_map(fn service ->
+          Enum.map(
+            Service.slots(service, Service.capacity_replicas(service)),
+            &{Service.unit_name(service, &1), service}
+          )
+        end)
+        |> Map.new()
+
       results =
         Task.Supervisor.async_stream_nolink(
           NixSwarm.TaskSupervisor,
@@ -136,7 +153,7 @@ defmodule NixSwarm.Reconciler do
 
             cond do
               MapSet.member?(desired_units, unit) and restartable_status?(status) ->
-                {unit, Executor.start_unit(unit)}
+                start_or_defer_restore(unit, Map.get(restore_units, unit))
 
               not MapSet.member?(desired_units, unit) and stoppable_status?(status) and
                   safe_to_stop? ->
@@ -159,6 +176,18 @@ defmodule NixSwarm.Reconciler do
           {:exit, reason} -> {:task_error, reason}
         end)
 
+      awaiting_heal =
+        Enum.reduce(results, %{}, fn
+          {unit, {:awaiting_heal, missing}}, acc ->
+            Map.put(acc, unit, missing)
+
+          {:task_error, _reason}, acc ->
+            acc
+
+          {unit, _outcome}, acc ->
+            Map.delete(acc, unit)
+        end)
+
       {healthcheck, readiness_counts} =
         systemd_health(config.services, owned, state.readiness_counts)
 
@@ -166,6 +195,7 @@ defmodule NixSwarm.Reconciler do
         owned_units: MapSet.to_list(desired_units),
         assignments: owned,
         results: results,
+        awaiting_heal: awaiting_heal,
         healthcheck: healthcheck,
         autoscaling_targets: NixSwarm.Autoscaler.targets(),
         membership: NixSwarm.Cluster.membership(),
@@ -180,15 +210,34 @@ defmodule NixSwarm.Reconciler do
          | previous_owned_units:
              remember_owned_units(previous_owned_units, config.services, owned),
            healthcheck_results: healthcheck,
-           readiness_counts: readiness_counts
+           readiness_counts: readiness_counts,
+           awaiting_heal: awaiting_heal
        }}
     end
   end
 
-  defp build_local_status(healthcheck_results) do
+  defp start_or_defer_restore(unit, nil), do: {unit, Executor.start_unit(unit)}
+
+  defp start_or_defer_restore(unit, service) do
+    case Enum.reject(Service.state_dirs(service), &File.dir?/1) do
+      [] ->
+        {unit, Executor.start_unit(unit)}
+
+      missing ->
+        Logger.warning(
+          "unit #{unit} not started: state directory missing (awaiting heal): #{Enum.join(missing, ", ")}"
+        )
+
+        {unit, {:awaiting_heal, missing}}
+    end
+  end
+
+  defp build_local_status(state) do
     config = NixSwarm.Config.current()
     placement = Placement.plan(config, NixSwarm.Cluster.placement_nodes())
     targets = NixSwarm.Autoscaler.targets()
+    healthcheck_results = Map.get(state, :healthcheck_results, %{})
+    awaiting_heal = Map.get(state, :awaiting_heal, %{})
 
     Enum.map(config.services, fn service ->
       slots =
@@ -196,9 +245,15 @@ defmodule NixSwarm.Reconciler do
         |> Enum.filter(&(&1.owner == Node.self()))
         |> Enum.map(fn slot ->
           status =
-            case Executor.unit_status(slot.unit) do
-              {:ok, unit_state} -> unit_state
-              {:error, _} -> :unknown
+            case Map.fetch(awaiting_heal, slot.unit) do
+              {:ok, _missing_dirs} ->
+                :awaiting_heal
+
+              :error ->
+                case Executor.unit_status(slot.unit) do
+                  {:ok, unit_state} -> unit_state
+                  {:error, _} -> :unknown
+                end
             end
 
           slot
@@ -211,6 +266,11 @@ defmodule NixSwarm.Reconciler do
           do: Map.get(targets, service.name, service.replicas),
           else: service.replicas
 
+      awaiting_units =
+        slots
+        |> Enum.filter(&(&1.status == :awaiting_heal))
+        |> Enum.map(& &1.unit)
+
       %{
         name: service.name,
         desired_state: if(desired_replicas > 0, do: :running, else: :stopped),
@@ -219,6 +279,7 @@ defmodule NixSwarm.Reconciler do
         autoscaling: service.autoscaling,
         local_owned_slots: Enum.map(slots, & &1.slot),
         units: slots,
+        awaiting_heal: awaiting_units,
         healthcheck: Map.get(healthcheck_results, service.name)
       }
     end)
