@@ -278,6 +278,14 @@ defmodule NixSwarm.Config do
         "service #{service.name} replicas must be between 0 and 128"
       )
       |> maybe_error(
+        Service.stateful?(service) and service.replicas != 1,
+        "service #{service.name} is stateful and must run single-writer (replicas must be 1)"
+      )
+      |> maybe_error(
+        Service.stateful?(service) and Service.capacity_replicas(service) > 1,
+        "service #{service.name} is stateful and must not autoscale beyond one replica"
+      )
+      |> maybe_error(
         Service.capacity_replicas(service) > 1 and
           not String.contains?(service.unit_template, "%{slot}"),
         "service #{service.name} unit template must contain %{slot} for multiple replicas"
