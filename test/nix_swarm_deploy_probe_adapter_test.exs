@@ -151,6 +151,21 @@ defmodule NixSwarm.Deploy.ProbeAdapterTest do
     assert probes.protocol == %{ok: true, state: :unknown}
   end
 
+  test "enforces the overall probe deadline" do
+    started = System.monotonic_time(:millisecond)
+
+    slow = fn _executable, _args ->
+      Process.sleep(200)
+      {"", 0}
+    end
+
+    probes = ProbeAdapter.probe(target(), 25, slow)
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    assert elapsed < 500
+    assert match?({:error, _}, probes.ssh)
+  end
+
   defp fixture_cookie do
     path =
       Path.join(System.tmp_dir!(), "nix-swarm-probe-#{System.unique_integer([:positive])}.cookie")

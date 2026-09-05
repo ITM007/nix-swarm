@@ -44,7 +44,14 @@ defmodule NixSwarm.Deploy.ProbeAdapter do
   end
 
   def probe(target, timeout_ms, opts) when is_list(opts) do
-    command_fun = Keyword.get(opts, :command_fun, &run_command/2)
+    raw_command_fun = Keyword.get(opts, :command_fun, &run_command/2)
+    deadline = System.monotonic_time(:millisecond) + max(timeout_ms, 0)
+
+    command_fun = fn executable, args ->
+      remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+      run_with_timeout(raw_command_fun, executable, args, remaining)
+    end
+
     host = to_string(Map.fetch!(target, :host))
     secret_file = Keyword.get(opts, :secret_file)
 
@@ -282,6 +289,20 @@ defmodule NixSwarm.Deploy.ProbeAdapter do
       output |> String.trim() |> String.split("\n") |> List.last() || "SSH connection failed"
 
     "#{message} (exit #{status})"
+  end
+
+  defp run_with_timeout(command_fun, executable, args, timeout_ms) do
+    task =
+      Task.Supervisor.async_nolink(NixSwarm.TaskSupervisor, fn ->
+        command_fun.(executable, args)
+      end)
+
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {output, status}} -> {to_string(output), status}
+      {:ok, _other} -> {"probe command returned an invalid result", 1}
+      {:exit, reason} -> {"probe command failed: #{inspect(reason)}", 1}
+      nil -> {"probe command timed out", 124}
+    end
   end
 
   defp run_command(executable, args), do: System.cmd(executable, args, stderr_to_stdout: true)

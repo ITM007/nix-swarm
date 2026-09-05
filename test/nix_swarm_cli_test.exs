@@ -359,21 +359,12 @@ defmodule NixSwarmCLITest do
     assert is_function(Keyword.fetch!(opts, :command_fun), 2)
   end
 
-  test "cluster heal --node targets the requested configured node" do
+  test "cluster heal rejects a node that is not the placement owner" do
     test_pid = self()
     overview = heal_overview(%{db: db_contract()})
+    deps = heal_deps(overview, fn _ -> flunk("heal must not run") end, test_pid)
 
-    deps =
-      heal_deps(
-        overview,
-        fn _opts ->
-          {:ok,
-           %{service: "db", unit: "db.service", host: "root@db-2", restored: ["/var/lib/db"]}}
-        end,
-        test_pid
-      )
-
-    assert :ok =
+    assert {:error, message} =
              NixSwarm.CLI.run(
                [
                  "cluster",
@@ -389,9 +380,8 @@ defmodule NixSwarmCLITest do
                deps
              )
 
-    assert_received {:heal_opts, opts}
-    assert Keyword.fetch!(opts, :node) == :"db@127.0.0.2"
-    assert Keyword.fetch!(opts, :host) == "root@db-2"
+    assert message =~ "must match placement owner"
+    refute_received {:heal_opts, _}
   end
 
   test "cluster heal rejects an unconfigured --node value" do

@@ -473,7 +473,12 @@ defmodule NixSwarm.CLI do
              "unknown node #{inspect(requested)}; configured nodes: #{Enum.map_join(configured, ", ", &to_string/1)}"}
 
           node ->
-            {:ok, node}
+            if to_string(node) == to_string(owner) do
+              {:ok, node}
+            else
+              {:error,
+               "requested heal node #{inspect(requested)} must match placement owner #{inspect(owner)}"}
+            end
         end
     end
   end
