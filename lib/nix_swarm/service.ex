@@ -140,9 +140,16 @@ defmodule NixSwarm.Service do
   defp normalize_node_name(name) when is_atom(name), do: name
   defp normalize_node_name(name), do: NodeName.to_node!(name, label: "allowed node name")
 
-  defp normalize_state(nil, _service_name), do: nil
+  defp normalize_state(value, _service_name) when value in [nil, :undefined], do: nil
 
-  defp normalize_state(raw, service_name) when is_map(raw) do
+  defp normalize_state(raw, service_name) do
+    raw = mapify(raw, "state", service_name)
+
+    if not is_map(raw) do
+      raise ArgumentError,
+            "service #{service_name} state must be a map, got #{inspect(raw)}"
+    end
+
     reject_unknown_state_keys!(raw, service_name)
     dirs = normalize_state_dirs!(NixSwarm.fetch_value(raw, :dirs), service_name)
     backup = normalize_backup(NixSwarm.fetch_value(raw, :backup), service_name)
@@ -170,8 +177,6 @@ defmodule NixSwarm.Service do
     }
   end
 
-  defp normalize_state(raw, service_name), do: raise_state!(service_name, "state", raw)
-
   defp normalize_state_dirs!(dirs, service_name) when is_list(dirs) do
     normalized = Enum.map(dirs, &to_string/1)
 
@@ -192,10 +197,12 @@ defmodule NixSwarm.Service do
           "service #{service_name} state.dirs must be a list of absolute paths, got #{inspect(dirs)}"
   end
 
-  defp normalize_backup(backup, service_name) when backup in [nil, :undefined, "undefined"],
+  defp normalize_backup(backup, _service_name) when backup in [nil, :undefined, "undefined"],
     do: nil
 
-  defp normalize_backup(raw, service_name) when is_map(raw) do
+  defp normalize_backup(raw, service_name) when is_map(raw) or is_list(raw) do
+    raw = mapify(raw, "state.backup", service_name)
+
     target =
       raw
       |> NixSwarm.fetch_value(:target)
@@ -280,7 +287,7 @@ defmodule NixSwarm.Service do
     end
   end
 
-  defp normalize_positive_integer(value, default) when is_integer(value) and value > 0,
+  defp normalize_positive_integer(value, _default) when is_integer(value) and value > 0,
     do: value
 
   defp normalize_positive_integer(value, default) when is_binary(value) do
@@ -292,8 +299,21 @@ defmodule NixSwarm.Service do
 
   defp normalize_positive_integer(_value, default), do: default
 
-  defp normalize_optional_string(nil), do: nil
+  defp normalize_optional_string(value) when value in [nil, :undefined, "undefined"], do: nil
   defp normalize_optional_string(value), do: to_string(value)
+
+  defp mapify(value, _label, _service_name) when is_map(value), do: value
+
+  defp mapify(value, label, service_name) when is_list(value) do
+    if Enum.all?(value, &(is_tuple(&1) and tuple_size(&1) == 2)) do
+      Map.new(value)
+    else
+      raise ArgumentError,
+            "service #{service_name} #{label} must be a map, got #{inspect(value)}"
+    end
+  end
+
+  defp mapify(value, _label, _service_name), do: value
 
   defp raise_state!(service_name, key, value) do
     raise ArgumentError,

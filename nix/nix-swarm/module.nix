@@ -2,7 +2,7 @@
 
 let
   cfg = config.services.nix-swarm;
-  inherit (lib) all concatMapStringsSep elem genAttrs hasInfix last mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
+  inherit (lib) all concatMapStringsSep elem filterAttrs genAttrs hasInfix last mapAttrs mapAttrs' mapAttrsToList mkEnableOption mkIf mkMerge mkOption splitString types;
 
   escapeErlString = value:
     builtins.replaceStrings
@@ -55,9 +55,71 @@ let
       {autoscaling, ${toErlTerm (serviceCfg.autoscaling // {
         minReplicas = if serviceCfg.autoscaling.minReplicas == null then serviceCfg.replicas else serviceCfg.autoscaling.minReplicas;
         maxReplicas = if serviceCfg.autoscaling.maxReplicas == null then serviceCfg.replicas else serviceCfg.autoscaling.maxReplicas;
-      })}}
+      })}},
+      {state, ${toErlTerm serviceCfg.state}}
     ]
   '';
+
+  effectiveRestore = serviceCfg:
+    if serviceCfg.state == null then
+      "none"
+    else if serviceCfg.state.restore != null then
+      serviceCfg.state.restore
+    else if serviceCfg.state.backup != null then
+      "borg-latest"
+    else
+      "none";
+
+  statefulBackupServices = filterAttrs
+    (_: serviceCfg: serviceCfg.state != null && serviceCfg.state.backup != null)
+    cfg.services;
+
+  borgmaticConfigs = mapAttrs (name: serviceCfg:
+    let
+      sourceLines = concatMapStringsSep "\n" (dir: "        - " + dir) serviceCfg.state.dirs;
+      header = ''
+        location:
+          source_directories:
+      '';
+      body = ''
+          repositories:
+            - path: ${serviceCfg.state.backup.target}
+        storage:
+          encryption_passcommand: cat $CREDENTIALS_DIRECTORY/borg-passphrase
+        retention:
+          keep_hourly: 24
+          keep_daily: 7
+          keep_weekly: 4
+      '';
+    in
+    pkgs.writeText "nix-swarm-borgmatic-${name}.yaml" (header + sourceLines + body)
+  ) statefulBackupServices;
+
+  backupServices = mapAttrs'
+    (name: serviceCfg:
+      lib.nameValuePair "nix-swarm-backup-${name}" {
+        description = "Nix-Swarm borg backup of ${name} state";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          LoadCredential = [ "borg-passphrase:${cfg.backupCredentialDir}/${name}.borg-passphrase" ];
+          ExecStart = "${pkgs.borgmatic}/bin/borgmatic --config ${borgmaticConfigs.${name}} --verbosity 1";
+        };
+      })
+    statefulBackupServices;
+
+  backupTimers = mapAttrs'
+    (name: serviceCfg:
+      lib.nameValuePair "nix-swarm-backup-${name}" {
+        description = "Scheduled Nix-Swarm borg backup of ${name} state";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = serviceCfg.state.backup.schedule;
+          Persistent = true;
+        };
+      })
+    statefulBackupServices;
 
   effectiveUnitTemplate = name: serviceCfg:
     if serviceCfg.unitTemplate != null then
@@ -145,6 +207,26 @@ let
           {
             assertion = allowedNodesKnown serviceCfg;
             message = "services.nix-swarm.services.${name}.allowedNodes must reference configured peers";
+          }
+          {
+            assertion = serviceCfg.state == null || serviceCfg.replicas == 1;
+            message = "services.nix-swarm.services.${name}.state requires replicas = 1 (single-writer state)";
+          }
+          {
+            assertion = serviceCfg.state == null || !serviceCfg.autoscaling.enable || effectiveMaxReplicas serviceCfg <= 1;
+            message = "services.nix-swarm.services.${name}.state must not autoscale beyond one replica";
+          }
+          {
+            assertion = serviceCfg.state == null || serviceCfg.state.dirs != [ ];
+            message = "services.nix-swarm.services.${name}.state.dirs must not be empty";
+          }
+          {
+            assertion = serviceCfg.state == null || all (dir: builtins.hasPrefix "/" dir) serviceCfg.state.dirs;
+            message = "services.nix-swarm.services.${name}.state.dirs must be absolute paths";
+          }
+          {
+            assertion = serviceCfg.state == null || serviceCfg.state.backup != null || effectiveRestore serviceCfg == "none";
+            message = "services.nix-swarm.services.${name}.state.restore requires a state.backup block";
           }
 
         ]
@@ -354,6 +436,12 @@ in
       description = "Existing systemd units triggered when nix-swarmd fails, for example a native notification service.";
     };
 
+    backupCredentialDir = mkOption {
+      type = types.str;
+      default = "/etc/nixos/nix-swarm/secrets";
+      description = "Directory holding root-only `<service>.borg-passphrase` files loaded by generated backup units through LoadCredential.";
+    };
+
     openFirewall = mkOption {
       type = types.bool;
       default = false;
@@ -444,6 +532,56 @@ in
             memoryTargetPercent = mkOption { type = types.int; default = 80; };
           };
 
+          state = mkOption {
+            type = types.nullOr (types.submodule {
+              options = {
+                dirs = mkOption {
+                  type = types.listOf types.str;
+                  default = [ ];
+                  description = "Declared absolute state directories owned by the service on its host node. The reconciler refuses to start the unit while any is absent (awaiting_heal) when a restore strategy is declared.";
+                };
+
+                backup = mkOption {
+                  type = types.nullOr (types.submodule {
+                    options = {
+                      schedule = mkOption {
+                        type = types.str;
+                        default = "hourly";
+                        description = "systemd OnCalendar schedule for the generated borgmatic timer.";
+                      };
+                      target = mkOption {
+                        type = types.str;
+                        description = "Opaque borg repository URI (local path, ssh:, or S3-compatible endpoint such as Garage). Credentials go through LoadCredential, never in the URI or Nix.";
+                      };
+                    };
+                  });
+                  default = null;
+                  description = "Declared borg backup schedule and repository for this service's state directories.";
+                };
+
+                restore = mkOption {
+                  type = types.nullOr (types.enum [ "borg-latest" "litestream" "none" ]);
+                  default = null;
+                  description = "Restore strategy before start; defaults to \"borg-latest\" when a backup block exists, otherwise \"none\".";
+                };
+
+                autoHeal = mkOption {
+                  type = types.bool;
+                  default = false;
+                  description = "Whether the cluster may heal this service onto a surviving node automatically after its owner has been down beyond healGraceSec.";
+                };
+
+                healGraceSec = mkOption {
+                  type = types.ints.between 1 31536000;
+                  default = 600;
+                  description = "Minimum owner downtime before an automatic heal is considered.";
+                };
+              };
+            });
+            default = null;
+            description = "Optional single-writer state contract: directories, backup schedule/target, restore strategy, and auto-heal policy. Requires replicas = 1.";
+          };
+
         };
       }));
       default = { };
@@ -508,7 +646,9 @@ in
       fi
     '';
 
-    systemd.services.nix-swarmd = mkIf cfg.enableDaemon {
+    systemd.services = mkMerge [
+      (mkIf cfg.enableDaemon {
+        nix-swarmd = {
       description = "Nix-Swarm leaderless node runtime";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
@@ -572,7 +712,12 @@ in
       startLimitIntervalSec = 120;
       startLimitBurst = 10;
       restartTriggers = [ renderedConfig cfg.package ];
-    };
+        };
+      })
+      backupServices
+    ];
+
+    systemd.timers = backupTimers;
 
   };
 }
