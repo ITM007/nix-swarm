@@ -126,3 +126,61 @@ The first supported design uses one explicit edge node. DNS, router
 forwarding, certificates, certificate storage, and edge-node failover remain
 operator responsibilities. Do not use automatic backend movement for
 single-writer or stateful services without application-owned coordination.
+
+## Optional built-in proxy
+
+The built-in BEAM edge is disabled by default. It is independent of the
+Nix-Swarm control path and may be enabled when a small trusted-LAN deployment
+needs static host/path routing without a separate Caddy or nginx service.
+
+```nix
+services.nix-swarm.proxy = {
+  enable = false; # set true to render nix-swarm-proxy.service
+  listen.port = 8080;
+  openFirewall = false;
+  firewallInterfaces = [ ];
+  routes = { };
+  oidc = {
+    issuer = "";
+    clientId = "";
+    scope = "openid email profile";
+  };
+  clientSecretFile = null;
+  sessionSecretFile = null;
+};
+```
+
+When enabled, the module renders a secret-free Erlang-terms configuration and
+`nix-swarm-proxy.service` with `User = nix-swarm`, `Group = operatorGroup`,
+`Type = simple`, `Restart = on-failure`, and runtime role `proxy`. The service
+uses `NIX_SWARM_PROXY_CONFIG_PATH` and `HOME=/run/nix-swarm-proxy`. Secret files
+are external absolute paths, must not be under `/nix/store`, and are delivered
+through systemd `LoadCredential` as `proxy-client-secret` and
+`proxy-session-secret`; they are read from `$CREDENTIALS_DIRECTORY`.
+
+### Proxy options
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `proxy.enable` | `false` | Render and start the optional proxy |
+| `proxy.listen.port` | `8080` | Listening TCP port |
+| `proxy.openFirewall` | `false` | Allow the port through the NixOS firewall |
+| `proxy.firewallInterfaces` | `[]` | Named interfaces for the proxy port; required when opening the firewall |
+| `proxy.routes` | `{}` | Attribute set of static routes keyed by safe route names |
+| `proxy.oidc.issuer` | `""` | OIDC issuer URL for protected routes |
+| `proxy.oidc.clientId` | `""` | OIDC client ID; required when any route uses OIDC |
+| `proxy.oidc.scope` | `openid email profile` | OIDC scope sent to the provider |
+| `proxy.clientSecretFile` | `null` | Absolute out-of-store client-secret file |
+| `proxy.sessionSecretFile` | `null` | Absolute out-of-store session-secret file |
+
+Each route supports `host`, `pathPrefix` (default `/`), `upstreams` (default
+`[]`), `auth` (`public` or `oidc`, default `public`), and optional
+`oidc.redirectBase` and `oidc.scope` overrides. An OIDC callback is served at
+`<redirectBase>/__auth/callback`; register that exact URI with the provider.
+
+The module rejects empty hosts, empty upstream lists, upstreams that are not
+strict `^[A-Za-z0-9.-]+:[0-9]+$` host:port values, unsafe route names, OIDC
+routes without a top-level client ID, secret paths that are relative or under
+`/nix/store`, and `openFirewall = true` without named interfaces. It never
+opens the proxy port globally. Plain HTTP is acceptable only on the trusted
+private network; use Caddy/nginx for public TLS and ACME policy.

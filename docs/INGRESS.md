@@ -7,7 +7,7 @@ Traefik, or an existing NixOS ACME setup fit the same pattern — is an
 **optional integration point** you add only when you want name-based or
 TLS-terminated access to an app.
 
-Nix-Swarm never configures the proxy. Caddy is an ordinary user-owned NixOS
+For the Caddy pattern, Nix-Swarm does not configure the proxy. Caddy is an ordinary user-owned NixOS
 service whose placement (`caddy.service`, one replica, an `allowedNodes`
 list) is managed like any other unit; the `services.caddy` module content is
 yours, applied as a NixOS generation, and never rewritten by Nix-Swarm or
@@ -148,6 +148,76 @@ option, not part of this release. The static health-checked pattern above is
 the supported way to route; it stays correct because of `allowedNodes`
 bounds and relocation-inside-the-list, and it keeps the edge configuration
 pure user-owned Nix with no dependency on cluster state at render time.
+
+## Built-in BEAM edge (default off)
+
+Nix-Swarm also has an optional built-in edge proxy for small trusted-LAN
+deployments. It runs as the existing Nix-Swarm release with
+`NIX_SWARM_ROLE=proxy`; it is not part of the control path and it does not
+replace the documented Caddy/nginx pattern. Leave `services.nix-swarm.proxy.enable`
+at its default `false` when an external edge is preferred. In that mode NixOS
+creates no proxy service, listener, proxy credentials, or proxy firewall rule,
+so there is no port conflict with Caddy or another edge.
+
+The v1 posture is plain HTTP on a trusted private network. Put TLS, public
+exposure, and ACME policy in an edge you operate, such as Caddy. The built-in
+proxy uses static upstreams and does not derive routes from live placement.
+
+### Example
+
+This opt-in example serves one public route and protects another with Pocket
+ID (or another OIDC provider):
+
+```nix
+services.nix-swarm.proxy = {
+  enable = true;
+  listen.port = 8080;
+  openFirewall = true;
+  firewallInterfaces = [ "netbird0" ]; # or the trusted LAN interface
+
+  oidc = {
+    issuer = "https://id.example.internal";
+    clientId = "nix-swarm-proxy";
+    scope = "openid email profile";
+  };
+
+  # These files are read on the host and are never copied into the Nix store.
+  clientSecretFile = "/etc/nixos/nix-swarm/secrets/proxy-client-secret";
+  sessionSecretFile = "/etc/nixos/nix-swarm/secrets/proxy-session-secret";
+
+  routes = {
+    public = {
+      host = "status.example.internal";
+      pathPrefix = "/";
+      upstreams = [ "10.100.0.1:8080" ];
+      auth = "public";
+    };
+    private = {
+      host = "app.example.internal";
+      pathPrefix = "/";
+      upstreams = [ "10.100.0.2:8080" "10.100.0.3:8080" ];
+      auth = "oidc";
+      oidc.redirectBase = "http://app.example.internal";
+    };
+  };
+};
+```
+
+For OIDC routes, register the callback URI
+`<redirectBase>/__auth/callback` with the provider. Create both secret files
+with at least 32 random bytes, root ownership, and mode `0400` or `0600`.
+The generated `nix-swarm-proxy.service` delivers them with systemd
+`LoadCredential`; the application reads them from `$CREDENTIALS_DIRECTORY`.
+They are not placed in generated Erlang terms, the Nix store, argv, or the
+environment.
+
+The service is `nix-swarm-proxy.service`, listens on the configured port, and
+runs only the proxy role. `openFirewall = true` is rejected unless
+`firewallInterfaces` is non-empty, and the port is opened only on those named
+interfaces. Route names, hosts, and upstreams are validated; upstreams must be
+bare `host:port` values such as `10.100.0.2:8080`, not URLs or paths. Use a
+private interface and keep the upstream list limited to nodes that may serve
+the route.
 
 ## References
 
