@@ -113,6 +113,12 @@ let
     (_: serviceCfg: serviceCfg.state != null && serviceCfg.state.backup != null)
     cfg.services;
 
+  safeBackupTarget = target:
+    !(builtins.match ".*://[^/]*@.*" target != null)
+    && !(builtins.match ".*[?&](password|passphrase|secret|token|access_key|secret_key)=[^&]*.*" target != null)
+    && !(hasInfix "\n" target)
+    && !(hasInfix "\r" target);
+
   borgmaticConfigs = mapAttrs (name: serviceCfg:
     let
       sourceLines = concatMapStringsSep "\n" (dir: "        - " + dir) serviceCfg.state.dirs;
@@ -132,6 +138,22 @@ let
       '';
     in
     pkgs.writeText "nix-swarm-borgmatic-${name}.yaml" (header + sourceLines + body)
+  ) statefulBackupServices;
+
+  restoreBorgmaticConfigs = mapAttrs (name: serviceCfg:
+    let
+      sourceLines = concatMapStringsSep "\n" (dir: "        - " + dir) serviceCfg.state.dirs;
+      credential = "${cfg.backupCredentialDir}/${name}.borg-passphrase";
+    in
+    pkgs.writeText "nix-swarm-borgmatic-restore-${name}.yaml" ''
+      location:
+        source_directories:
+      ${sourceLines}
+      repositories:
+        - path: ${serviceCfg.state.backup.target}
+      storage:
+        encryption_passcommand: cat ${lib.escapeShellArg credential}
+    ''
   ) statefulBackupServices;
 
   backupServices = mapAttrs'
@@ -173,9 +195,9 @@ let
             echo "usage: nix-swarm-restore-${name} STAGING_DIR" >&2
             exit 2
           fi
-          credential_file=${cfg.backupCredentialDir}/${name}.borg-passphrase
-          export BORG_PASSPHRASE=$(${pkgs.coreutils}/bin/tr -d '\r\n' < "$credential_file")
-          exec ${pkgs.borgmatic}/bin/borgmatic restore --config ${borgmaticConfigs.${name}} --archive latest --destination "$1"
+          credential_file=${lib.escapeShellArg "${cfg.backupCredentialDir}/${name}.borg-passphrase"}
+          test -r "$credential_file"
+          exec ${pkgs.borgmatic}/bin/borgmatic restore --config ${restoreBorgmaticConfigs.${name}} --archive latest --destination "$1"
         ''
       ))
     statefulBackupServices;
@@ -287,12 +309,31 @@ let
             assertion = serviceCfg.state == null || serviceCfg.state.backup != null || effectiveRestore serviceCfg == "none";
             message = "services.nix-swarm.services.${name}.state.restore requires a state.backup block";
           }
+          {
+            assertion = serviceCfg.state == null || serviceCfg.state.backup == null || safeBackupTarget serviceCfg.state.backup.target;
+            message = "services.nix-swarm.services.${name}.state.backup.target must not contain embedded credentials";
+          }
 
         ]
       )
       (builtins.attrNames cfg.services));
 
   proxyOidcRouteNames = builtins.attrNames (filterAttrs (_: routeCfg: routeCfg.auth == "oidc") cfg.proxy.routes);
+
+  proxyUpstreamValid = upstream:
+    let
+      match = builtins.match "([A-Za-z0-9.-]+):([0-9]+)" upstream;
+    in
+    if match == null then
+      false
+    else
+      let
+        port = lib.toInt (builtins.elemAt match 1);
+      in
+      port >= 1 && port <= 65535;
+
+  proxyIssuerValid = issuer:
+    builtins.match "https?://[^/]+" issuer != null;
 
   proxyAssertions = [
     {
@@ -308,8 +349,16 @@ let
       message = "services.nix-swarm.proxy route upstreams must not be empty";
     }
     {
-      assertion = !cfg.proxy.enable || all (routeCfg: all (upstream: builtins.match "[A-Za-z0-9.-]+:[0-9]+" upstream != null) routeCfg.upstreams) (attrValues cfg.proxy.routes);
+      assertion = !cfg.proxy.enable || all (routeCfg: all proxyUpstreamValid routeCfg.upstreams) (attrValues cfg.proxy.routes);
       message = "services.nix-swarm.proxy upstreams must match host:port without scheme or path";
+    }
+    {
+      assertion = !cfg.proxy.enable || proxyOidcRouteNames == [ ] || proxyIssuerValid cfg.proxy.oidc.issuer;
+      message = "services.nix-swarm.proxy.oidc.issuer must be an absolute http(s) URL";
+    }
+    {
+      assertion = !cfg.proxy.enable || all (routeCfg: builtins.match "/.*" routeCfg.pathPrefix != null) (attrValues cfg.proxy.routes);
+      message = "services.nix-swarm.proxy pathPrefix must be an absolute path";
     }
     {
       assertion = !cfg.proxy.enable || all (name: builtins.match "[A-Za-z0-9][A-Za-z0-9._@-]*" name != null && !(hasInfix ".." name)) (builtins.attrNames cfg.proxy.routes);
@@ -326,6 +375,10 @@ let
     {
       assertion = cfg.proxy.sessionSecretFile == null || (lib.hasPrefix "/" cfg.proxy.sessionSecretFile && !lib.hasPrefix "/nix/store/" cfg.proxy.sessionSecretFile);
       message = "services.nix-swarm.proxy.sessionSecretFile must be an absolute, out-of-store secret path";
+    }
+    {
+      assertion = lib.hasPrefix "/" cfg.backupCredentialDir && !lib.hasPrefix "/nix/store/" cfg.backupCredentialDir && !(hasInfix "\n" cfg.backupCredentialDir) && !(hasInfix "\r" cfg.backupCredentialDir);
+      message = "services.nix-swarm.backupCredentialDir must be an absolute, out-of-store path";
     }
     {
       assertion = !cfg.proxy.enable || proxyOidcRouteNames == [ ] || cfg.proxy.clientSecretFile != null;

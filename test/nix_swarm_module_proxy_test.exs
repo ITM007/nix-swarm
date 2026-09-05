@@ -142,6 +142,33 @@ defmodule NixSwarmModuleProxyTest do
       """,
       "route names must contain only safe characters"
     )
+
+    assert_eval_fails!(
+      """
+      proxy = {
+        enable = true;
+        routes.bad = {
+          host = "bad.example";
+          upstreams = [ "127.0.0.1:65536" ];
+        };
+      };
+      """,
+      "proxy upstreams must match host:port"
+    )
+
+    assert_eval_fails!(
+      """
+      proxy = {
+        enable = true;
+        routes.bad = {
+          host = "bad.example";
+          pathPrefix = "bad";
+          upstreams = [ "127.0.0.1:8080" ];
+        };
+      };
+      """,
+      "proxy pathPrefix must be an absolute path"
+    )
   end
 
   test "proxy rejects unscoped firewall and store secret paths" do
@@ -189,6 +216,24 @@ defmodule NixSwarmModuleProxyTest do
       };
       """,
       "proxy.oidc.clientId must not be empty"
+    )
+
+    assert_eval_fails!(
+      """
+      proxy = {
+        enable = true;
+        clientSecretFile = "/run/secrets/client";
+        sessionSecretFile = "/run/secrets/session";
+        oidc.clientId = "client";
+        routes.private = {
+          host = "private.example";
+          upstreams = [ "127.0.0.1:8080" ];
+          auth = "oidc";
+          oidc.redirectBase = "https://private.example";
+        };
+      };
+      """,
+      "proxy.oidc.issuer must be an absolute http(s) URL"
     )
   end
 

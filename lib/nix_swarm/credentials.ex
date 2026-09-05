@@ -310,10 +310,15 @@ defmodule NixSwarm.Credentials do
       cleanup_rotation_artifacts!(hosts, command_fun)
     rescue
       error ->
-        rollback_rotation!(hosts, command_fun)
+        case rollback_rotation!(hosts, command_fun) do
+          :ok ->
+            raise RuntimeError,
+                  "credential rotation failed; previous credential was restored and verified: #{Exception.message(error)}"
 
-        raise RuntimeError,
-              "credential rotation failed and the previous credential was restored: #{Exception.message(error)}"
+          {:error, failures} ->
+            raise RuntimeError,
+                  "credential rotation failed and rollback failed on #{Enum.join(failures, ", ")}; manual recovery is required: #{Exception.message(error)}"
+        end
     end
   end
 
@@ -322,25 +327,40 @@ defmodule NixSwarm.Credentials do
   end
 
   defp rollback_rotation!(hosts, command_fun) do
-    Enum.each(hosts, fn host ->
-      safe_ssh(command_fun, host, "systemctl stop nix-swarmd.service")
+    failures =
+      Enum.flat_map(hosts, fn host ->
+        case rollback_host(host, command_fun) do
+          :ok -> []
+          {:error, reason} -> ["#{host}: #{reason}"]
+        end
+      end)
 
-      safe_ssh(
-        command_fun,
-        host,
-        "install -o root -g root -m 0400 #{@backup_path} #{@target_path}"
-      )
+    if failures == [], do: :ok, else: {:error, failures}
+  end
 
-      safe_ssh(command_fun, host, "rm -f #{@backup_path} #{@temporary_path}")
-      safe_ssh(command_fun, host, "systemctl start nix-swarmd.service")
-    end)
+  defp rollback_host(host, command_fun) do
+    with :ok <- safe_ssh(command_fun, host, "systemctl stop nix-swarmd.service"),
+         :ok <-
+           safe_ssh(
+             command_fun,
+             host,
+             "install -o root -g root -m 0400 #{@backup_path} #{@target_path}"
+           ),
+         :ok <- safe_ssh(command_fun, host, "systemctl start nix-swarmd.service"),
+         :ok <- safe_ssh(command_fun, host, "systemctl is-active --quiet nix-swarmd.service"),
+         :ok <- safe_ssh(command_fun, host, "rm -f #{@backup_path} #{@temporary_path}") do
+      :ok
+    end
   end
 
   defp safe_ssh(command_fun, host, command) do
-    _ = command_fun.("ssh", @ssh_options ++ ["--", host, command])
-    :ok
+    case command_fun.("ssh", @ssh_options ++ ["--", host, command]) do
+      {_output, 0} -> :ok
+      {output, status} -> {:error, "ssh failed (#{status}): #{String.trim(output)}"}
+      other -> {:error, "ssh returned invalid result: #{inspect(other)}"}
+    end
   rescue
-    _ -> :ok
+    error -> {:error, "ssh raised #{Exception.message(error)}"}
   end
 
   defp run!(command_fun, executable, args) do

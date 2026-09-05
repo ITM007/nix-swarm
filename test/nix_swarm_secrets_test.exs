@@ -228,7 +228,7 @@ defmodule NixSwarmSecretsTest do
       end
     end
 
-    assert_raise RuntimeError, ~r/previous credential was restored/, fn ->
+    assert_raise RuntimeError, ~r/rollback failed/, fn ->
       NixSwarm.Credentials.install(
         source: root,
         hosts: ["root@node-a"],
