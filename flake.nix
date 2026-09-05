@@ -45,12 +45,14 @@
       packages = forAllSystems (_system: pkgs:
         let
           nixSwarm = import ./nix/nix-swarm/packages.nix { inherit pkgs; };
+          nixSwarmWeb = import ./nix/nix-swarm-web/packages.nix { inherit pkgs; };
         in
         {
           default = nixSwarm.combined;
           nix-swarm = nixSwarm.combined;
           operator = nixSwarm.operator;
           cluster = nixSwarm.cluster;
+          nix-swarm-web = nixSwarmWeb.nix-swarm-web;
           nix-swarm-operator = nixSwarm.operator;
           nix-swarm-cluster = nixSwarm.cluster;
         });
@@ -93,6 +95,121 @@
       checks = forAllSystems (system: pkgs:
         let
           nixSwarm = import ./nix/nix-swarm/packages.nix { inherit pkgs; };
+          nixSwarmWeb = import ./nix/nix-swarm-web/packages.nix { inherit pkgs; };
+
+          minimalNode = module:
+            nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [
+                module
+                ({ ... }: {
+                  boot.loader.grub.devices = [ "nodev" ];
+                  fileSystems."/" = {
+                    device = "none";
+                    fsType = "tmpfs";
+                  };
+                  system.stateVersion = "25.11";
+                })
+              ];
+            };
+
+          webBaselineNode = minimalNode self.nixosModules.nix-swarm;
+          webDisabledNode = minimalNode self.nixosModules.nix-swarm-web;
+
+          webTestPackage = pkgs.runCommand "nix-swarm-web-test-package" { } ''
+            mkdir -p "$out/bin"
+            touch "$out/bin/nix-swarm-web"
+            chmod 0755 "$out/bin/nix-swarm-web"
+          '';
+
+          webEnabledNode = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.nix-swarm-web
+              ({ ... }: {
+                boot.loader.grub.devices = [ "nodev" ];
+                fileSystems."/" = {
+                  device = "none";
+                  fsType = "tmpfs";
+                };
+                system.stateVersion = "25.11";
+
+                services.nix-swarm = {
+                  enable = true;
+                  package = pkgs.runCommand "nix-swarm-web-core-test-package" { } ''
+                    mkdir -p "$out/bin"
+                    touch "$out/bin/nix-swarmd"
+                    chmod 0755 "$out/bin/nix-swarmd"
+                  '';
+                  nodeName = "nix-swarm@web.test";
+                  cookieFile = "/run/keys/nix-swarm.cookie";
+                  peers = [ "nix-swarm@web.test" ];
+                  nodes."nix-swarm@web.test".deployHost = "root@web.test";
+                };
+
+                services.nix-swarm-web = {
+                  enable = true;
+                  package = webTestPackage;
+                };
+              })
+            ];
+          };
+
+          webModuleEval =
+            let
+              disabled = webDisabledNode.config;
+              baseline = webBaselineNode.config;
+              enabled = webEnabledNode.config;
+              service = enabled.systemd.services."nix-swarm-web";
+              serviceConfig = service.serviceConfig;
+              registration = enabled.services.nix-swarm.services."nix-swarm-web";
+              environment = serviceConfig.Environment;
+            in
+            assert disabled.environment.systemPackages == baseline.environment.systemPackages;
+            assert disabled.networking.firewall.allowedTCPPorts == baseline.networking.firewall.allowedTCPPorts;
+            assert disabled.networking.firewall.interfaces == baseline.networking.firewall.interfaces;
+            assert !(disabled.users.users ? "nix-swarm-web");
+            assert !(disabled.systemd.services ? "nix-swarm-web");
+            assert !(disabled.services.nix-swarm.services ? "nix-swarm-web");
+            assert !(builtins.elem webTestPackage enabled.environment.systemPackages);
+            assert enabled.networking.firewall.allowedTCPPorts == baseline.networking.firewall.allowedTCPPorts;
+            assert enabled.networking.firewall.interfaces == baseline.networking.firewall.interfaces;
+            assert serviceConfig.User == "nix-swarm-web";
+            assert serviceConfig.Group == "nix-swarm-web";
+            assert serviceConfig.SupplementaryGroups == [ "nix-swarm-operators" ];
+            assert serviceConfig.Type == "simple";
+            assert (service.wantedBy or [ ]) == [ ];
+            assert builtins.elem "PHX_HOST=127.0.0.1" environment;
+            assert builtins.elem "PORT=4000" environment;
+            assert builtins.elem "NIX_SWARM_QUERY_SOCKET=/run/nix-swarm/query.sock" environment;
+            assert builtins.elem "NIX_SWARM_POLL_INTERVAL_MS=5000" environment;
+            assert serviceConfig.LoadCredential == [ ];
+            assert serviceConfig.RuntimeDirectory == "nix-swarm-web";
+            assert serviceConfig.RuntimeDirectoryMode == "0700";
+            assert serviceConfig.UMask == "0077";
+            assert serviceConfig.NoNewPrivileges;
+            assert serviceConfig.PrivateTmp;
+            assert serviceConfig.ProtectSystem == "strict";
+            assert serviceConfig.ProtectHome;
+            assert serviceConfig.RestrictAddressFamilies == [ "AF_UNIX" "AF_INET" ];
+            assert serviceConfig.CapabilityBoundingSet == "";
+            assert serviceConfig.MemoryMax == "512M";
+            assert serviceConfig.TasksMax == 256;
+            assert serviceConfig.LimitNOFILE == 4096;
+            assert !(serviceConfig ? StateDirectory);
+            assert !(serviceConfig ? ReadWritePaths);
+            assert registration.replicas == 1;
+            assert registration.unitTemplate == "nix-swarm-web.service";
+            assert registration.allowedNodes == [ ];
+            assert registration.autoscaling.enable == false;
+            assert registration.autoscaling.minReplicas == 1;
+            assert registration.autoscaling.maxReplicas == 1;
+            assert registration.state == null;
+            pkgs.runCommand "nix-swarm-web-module-eval" { } ''
+              grep -q SECRET_KEY_BASE_FILE ${serviceConfig.ExecStart}
+              ! grep -Eq 'COOKIE|SSH|GIT|NIX_SWARM_SOURCE' ${serviceConfig.ExecStart}
+              touch "$out"
+            '';
 
           testNode = nixpkgs.lib.nixosSystem {
             inherit system;
@@ -354,6 +471,7 @@
         {
           operator-package = nixSwarm.operator;
           agent-package = nixSwarm.cluster;
+          web-module = webModuleEval;
           nixos-module = testNode.config.system.build.toplevel;
           nixos-vm = vmTest;
           caddy-vm = caddyVmTest;
@@ -364,6 +482,7 @@
 
       nixosModules = {
         nix-swarm = import ./nix/nix-swarm/module.nix;
+        nix-swarm-web = import ./nix/nix-swarm-web/module.nix;
         default = self.nixosModules.nix-swarm;
         hardened = {
           imports = [ self.nixosModules.nix-swarm ];
