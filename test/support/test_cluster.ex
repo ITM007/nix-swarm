@@ -1,7 +1,7 @@
 defmodule NixSwarm.TestCluster do
   @moduledoc false
 
-  def start_three_node_cluster(root) do
+  def start_three_node_cluster(root, extra_services \\ []) do
     File.rm_rf!(root)
     File.mkdir_p!(root)
 
@@ -14,20 +14,21 @@ defmodule NixSwarm.TestCluster do
         :"node-b@127.0.0.1" => %{labels: ["ssd"], deploy_host: "root@node-b"},
         :"node-c@127.0.0.1" => %{labels: ["ssd", "edge"], deploy_host: "root@node-c"}
       },
-      services: [
-        %{
-          name: "gitea",
-          replicas: 2,
-          unit_template: "gitea@%{slot}.service",
-          constraints: ["ssd"]
-        },
-        %{
-          name: "proxy",
-          replicas: 1,
-          unit_template: "proxy@%{slot}.service",
-          constraints: ["edge"]
-        }
-      ],
+      services:
+        [
+          %{
+            name: "gitea",
+            replicas: 2,
+            unit_template: "gitea@%{slot}.service",
+            constraints: ["ssd"]
+          },
+          %{
+            name: "proxy",
+            replicas: 1,
+            unit_template: "proxy@%{slot}.service",
+            constraints: ["edge"]
+          }
+        ] ++ extra_services,
       runtime: %{
         connect_interval_ms: 100,
         reconcile_interval_ms: 100,
@@ -80,6 +81,25 @@ defmodule NixSwarm.TestCluster do
     |> Enum.find_value(fn {peer, node} ->
       if node == node_name, do: peer
     end)
+  end
+
+  @doc """
+  Boots a fresh peer under an existing node name (after its original peer was
+  stopped), so a failed-over node can rejoin the cluster with the same config.
+  """
+  def restart_peer(cluster, node_name) do
+    {:ok, peer, node} =
+      :peer.start_link(%{name: node_name, longnames: true, connection: :standard_io})
+
+    :ok = :peer.call(peer, :application, :set_env, [:nix_swarm, :cluster_config, cluster.config])
+
+    Enum.each(:code.get_path(), fn path ->
+      :peer.call(peer, :code, :add_patha, [path])
+    end)
+
+    {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:nix_swarm])
+    :ok = :peer.call(peer, NixSwarm.Cluster, :connect_now, [])
+    {peer, node}
   end
 
   def remote_for(cluster, target_node) do
