@@ -119,14 +119,27 @@ let
   '';
 
   daemonWrapper = pkgs.writeShellScript "nix-swarmd" ''
-    export NIX_SWARM_ROLE=agent
+    case "''${1:-start}" in
+      proxy)
+        shift
+        export NIX_SWARM_ROLE=proxy
+        ;;
+      start)
+        shift
+        export NIX_SWARM_ROLE=agent
 
-    if [ ! -r "$HOME/.erlang.cookie" ]; then
-      echo "nix-swarmd: private HOME/.erlang.cookie is required" >&2
-      exit 1
-    fi
+        if [ ! -r "$HOME/.erlang.cookie" ]; then
+          echo "nix-swarmd: private HOME/.erlang.cookie is required" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "usage: nix-swarmd [start|proxy]" >&2
+        exit 64
+        ;;
+    esac
 
-    exec ${release}/bin/nix_swarm "$@"
+    exec ${release}/bin/nix_swarm start "$@"
   '';
 
   queryWrapper = pkgs.writeShellScript "nix-swarm-query" ''
