@@ -45,6 +45,11 @@ in `machines/node-a.nix` and enabled by the `example-web` service entry in
 module and proxies to that local service with active health checks. The Caddy
 service is declared as one `caddy.service` replica on this node.
 
+Optional ingress is a pattern, not a product feature: the edge never
+participates in the control path and direct node ports or an SSH tunnel work
+without it. For multi-node, TLS-terminated, or name-based routing, follow
+`docs/INGRESS.md` (and the two-node shape in `examples/config`).
+
 Edit either module as needed and apply the resulting NixOS generation through
 `cluster plan` and `cluster apply`. Nix-Swarm never rewrites the modules or
 calls the Caddy Admin API. Copy the `.nix` files when adding workloads;

@@ -94,5 +94,5 @@ nix-swarm cluster apply --source . --yes
 ```
 
 The starter keeps Caddy local to the single prepared node. For multi-node
-routing, copy the topology from `examples/config`, list stable candidate
-endpoints, and expose backend ports only on the trusted private interface.
+routing, follow `docs/INGRESS.md`: list stable candidate endpoints, and
+expose backend ports only on the trusted private interface.

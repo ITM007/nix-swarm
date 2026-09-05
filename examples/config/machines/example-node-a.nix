@@ -11,9 +11,10 @@
     nodeName = "nix-swarm@example-node-a.local";
     cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
     openFirewall = true;
-    # Example only: replace wg0 with your private overlay interface.
-    firewallInterfaces = [ "wg0" ];
+    # Example only: netbird0 is the optional overlay variant; on a trusted
+    # LAN name the actual LAN interface instead (see docs/INGRESS.md).
+    firewallInterfaces = [ "netbird0" ];
   };
 
-  networking.firewall.interfaces.wg0.allowedTCPPorts = [ 8080 8081 ];
+  networking.firewall.interfaces.netbird0.allowedTCPPorts = [ 8080 8081 ];
 }

@@ -11,12 +11,12 @@ The operator does not join distributed Erlang, receive the cookie, or expose arb
 
 ## Agent network
 
-Distributed Erlang is authenticated by the cookie but is not encrypted in the default configuration. Bind and firewall ports `4369/tcp` and `4370/tcp` to a trusted encrypted WireGuard/Tailscale interface. Never expose them to the Internet or an untrusted LAN.
+Distributed Erlang is authenticated by the cookie but is not encrypted in the default configuration. Bind and firewall ports `4369/tcp` and `4370/tcp` to a trusted private interface — a LAN interface by default, or an encrypted overlay (WireGuard/Tailscale/NetBird, `netbird0`) for multi-network use. Never expose them to the Internet or an untrusted LAN.
 
 ```nix
 services.nix-swarm = {
   openFirewall = true;
-  firewallInterfaces = [ "wg0" ];
+  firewallInterfaces = [ "netbird0" ];
 };
 ```
 
