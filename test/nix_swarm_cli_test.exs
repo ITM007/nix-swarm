@@ -171,6 +171,61 @@ defmodule NixSwarmCLITest do
     assert Keyword.fetch!(opts, :allow_dirty)
   end
 
+  test "confirmed rollback preserves the deployment options it accepts" do
+    test_pid = self()
+
+    rollback_fun = fn opts ->
+      send(test_pid, {:rollback_opts, opts})
+
+      %{
+        source: "/tmp/nix-swarm",
+        validation: %{commands: []},
+        batches: [],
+        dry_run: false,
+        results: []
+      }
+    end
+
+    capture_io(fn ->
+      assert :ok =
+               NixSwarm.CLI.run(
+                 [
+                   "cluster",
+                   "rollback",
+                   "--source",
+                   "/tmp/nix-swarm",
+                   "--cluster-file",
+                   "/tmp/nix-swarm/cluster.nix",
+                   "--machines-dir",
+                   "/tmp/nix-swarm/machines",
+                   "--flake",
+                   "/tmp/nix-swarm",
+                   "--host",
+                   "root@node-a",
+                   "--command-timeout-ms",
+                   "1234",
+                   "--secret-file",
+                   "/tmp/nix-swarm/secret",
+                   "--allow-dirty",
+                   "--yes"
+                 ],
+                 fn _ -> flunk("TUI must not launch") end,
+                 rollback_fun: rollback_fun
+               )
+    end)
+
+    assert_receive {:rollback_opts, opts}
+    assert Keyword.get(opts, :source) == "/tmp/nix-swarm"
+    assert Keyword.get(opts, :cluster_file) == "/tmp/nix-swarm/cluster.nix"
+    assert Keyword.get(opts, :machines_dir) == "/tmp/nix-swarm/machines"
+    assert Keyword.get(opts, :flake) == "/tmp/nix-swarm"
+    assert Keyword.get(opts, :host) == "root@node-a"
+    assert Keyword.get(opts, :command_timeout_ms) == 1234
+    assert Keyword.get(opts, :secret_file) == "/tmp/nix-swarm/secret"
+    assert Keyword.get(opts, :allow_dirty)
+    assert Keyword.get(opts, :dry_run) == false
+  end
+
   test "invalid numeric options return actionable errors" do
     assert {:error, "--lines must be between 1 and 1000"} =
              NixSwarm.CLI.run(["--target", "nix-swarm@example-node-a.local", "--lines", "-1"])

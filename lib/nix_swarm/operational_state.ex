@@ -22,21 +22,24 @@ defmodule NixSwarm.OperationalState do
   end
 
   def metadata do
-    if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, :metadata), else: %{}
+    if Process.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, :metadata),
+      else: unavailable_metadata()
   end
 
   def record_reconcile(result) when is_map(result) do
     if Process.whereis(__MODULE__) do
       GenServer.call(__MODULE__, {:record_reconcile, result})
     else
-      :ok
+      {:error, :not_running}
     end
   end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     path = state_path()
     File.mkdir_p!(Path.dirname(path))
+    persist_fun = Keyword.get(opts, :persist_fun, &persist/1)
 
     with {:ok, _table} <- open_store(path) do
       snapshot = load_snapshot()
@@ -45,7 +48,9 @@ defmodule NixSwarm.OperationalState do
        %{
          path: path,
          snapshot: snapshot,
-         last_reconciled_at: Map.get(snapshot, :reconciled_at)
+         last_reconciled_at: Map.get(snapshot, :reconciled_at),
+         persistence_error: nil,
+         persist_fun: persist_fun
        }}
     else
       {:error, reason} -> {:stop, {:operational_state_store_failed, path, reason}}
@@ -95,6 +100,7 @@ defmodule NixSwarm.OperationalState do
     snapshot = state.snapshot
 
     metadata = %{
+      status: if(is_nil(state.persistence_error), do: :ok, else: :error),
       path: state.path,
       config_digest: Map.get(snapshot, :config_digest),
       generation: Map.get(snapshot, :generation),
@@ -104,7 +110,8 @@ defmodule NixSwarm.OperationalState do
       autoscaling_targets: Map.get(snapshot, :autoscaling_targets, %{}),
       membership: Map.get(snapshot, :membership, %{}),
       result_count: snapshot |> Map.get(:results, []) |> length(),
-      failed_results: failed_results(snapshot)
+      failed_results: failed_results(snapshot),
+      persistence_error: state.persistence_error
     }
 
     {:reply, metadata, state}
@@ -130,13 +137,21 @@ defmodule NixSwarm.OperationalState do
     else
       snapshot = Map.put(observations, :reconciled_at, reconciled_at)
 
-      case persist(snapshot) do
+      case state.persist_fun.(snapshot) do
         :ok ->
-          {:reply, :ok, %{state | snapshot: snapshot, last_reconciled_at: reconciled_at}}
+          {:reply, :ok,
+           %{
+             state
+             | snapshot: snapshot,
+               last_reconciled_at: reconciled_at,
+               persistence_error: nil
+           }}
 
         {:error, reason} ->
           Logger.error("could not persist operational state: #{inspect(reason)}")
-          {:reply, :ok, %{state | last_reconciled_at: reconciled_at}}
+
+          {:reply, {:error, reason},
+           %{state | last_reconciled_at: reconciled_at, persistence_error: reason}}
       end
     end
   end
@@ -195,5 +210,9 @@ defmodule NixSwarm.OperationalState do
       end
 
     Path.join([root, node, "operational-state.dets"])
+  end
+
+  defp unavailable_metadata do
+    %{status: :unavailable, persistence_error: :not_running}
   end
 end

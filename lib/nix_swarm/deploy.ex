@@ -913,10 +913,11 @@ defmodule NixSwarm.Deploy do
           true
 
         state ->
-          (is_nil(Map.get(state, :config_digest)) and is_nil(Map.get(state, :reconciled_at))) or
-            (Map.get(state, :config_digest) == Map.get(node_status, :config_digest) and
-               not is_nil(Map.get(state, :reconciled_at)) and
-               Map.get(state, :failed_results, 0) == 0)
+          Map.get(state, :status, :ok) == :ok and
+            ((is_nil(Map.get(state, :config_digest)) and is_nil(Map.get(state, :reconciled_at))) or
+               (Map.get(state, :config_digest) == Map.get(node_status, :config_digest) and
+                  not is_nil(Map.get(state, :reconciled_at)) and
+                  Map.get(state, :failed_results, 0) == 0))
       end
     end)
   end

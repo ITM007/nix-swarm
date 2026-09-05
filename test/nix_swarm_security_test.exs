@@ -123,6 +123,22 @@ defmodule NixSwarmSecurityTest do
     refute File.exists?(path)
   end
 
+  test "query server preserves a path replaced after it starts" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "nix-swarm-query-replaced-#{System.unique_integer([:positive])}"
+      )
+
+    assert {:ok, state} = NixSwarm.QueryServer.init(socket_path: path)
+    assert :ok = File.rm(path)
+    File.write!(path, "replacement")
+
+    assert :ok = NixSwarm.QueryServer.terminate(:normal, state)
+    assert File.read!(path) == "replacement"
+    File.rm!(path)
+  end
+
   test "installed query helper round-trips only a valid protocol request" do
     request = Base.url_encode64("cluster-members", padding: false)
 

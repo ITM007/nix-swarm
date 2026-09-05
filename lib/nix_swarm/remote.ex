@@ -14,7 +14,7 @@ defmodule NixSwarm.Remote do
     {NixSwarm.API, :node_service_logs, 2},
     {NixSwarm.API, :cluster_logs, 2}
   ]
-  @reported_capabilities @allowed_calls ++ [{NixSwarm.API, :local_cluster_logs, 1}]
+  @reported_capabilities @allowed_calls
 
   defmodule Error do
     defexception [:message]

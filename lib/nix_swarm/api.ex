@@ -77,6 +77,7 @@ defmodule NixSwarm.API do
       protocol_version: NixSwarm.QueryProtocol.protocol_version(),
       release: NixSwarm.release_label(),
       source_digest: source_digest(),
+      wire_formats: %{etf: NixSwarm.QueryProtocol.protocol_version(), json: 1},
       operations: [
         :cluster_overview,
         :cluster_members,

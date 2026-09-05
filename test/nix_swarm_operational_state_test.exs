@@ -73,4 +73,20 @@ defmodule NixSwarmOperationalStateTest do
     assert snapshot == %{}
     assert NixSwarm.OperationalState.metadata().path == state_path(root)
   end
+
+  test "a failed DETS write is returned and exposed as an unhealthy observation" do
+    :sys.replace_state(NixSwarm.OperationalState, fn state ->
+      %{state | persist_fun: fn _snapshot -> {:error, :disk_full} end}
+    end)
+
+    result =
+      NixSwarm.OperationalState.record_reconcile(%{
+        owned_units: ["failed-write-#{System.unique_integer([:positive])}.service"],
+        assignments: [],
+        results: []
+      })
+
+    assert {:error, :disk_full} = result
+    assert %{status: :error, persistence_error: :disk_full} = NixSwarm.OperationalState.metadata()
+  end
 end

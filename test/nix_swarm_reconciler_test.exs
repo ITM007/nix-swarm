@@ -127,6 +127,18 @@ defmodule NixSwarmReconcilerTest do
   end
 
   describe "code-first durable state" do
+    test "reports operational-state persistence failures without stopping reconciliation" do
+      :sys.replace_state(NixSwarm.OperationalState, fn state ->
+        %{state | persist_fun: fn _snapshot -> {:error, :disk_full} end}
+      end)
+
+      result = Reconciler.reconcile_now()
+
+      assert {:error, :disk_full} = result.operational_state
+      assert Process.alive?(Process.whereis(Reconciler))
+      assert NixSwarm.OperationalState.metadata().status == :error
+    end
+
     test "records the applied Nix generation and assignments across restarts" do
       result = Reconciler.reconcile_now()
       snapshot = NixSwarm.OperationalState.snapshot()

@@ -202,7 +202,8 @@ defmodule NixSwarm.Reconciler do
         destructive_changes_allowed?: safe_to_stop?
       }
 
-      :ok = NixSwarm.OperationalState.record_reconcile(reply)
+      persistence = NixSwarm.OperationalState.record_reconcile(reply)
+      reply = Map.put(reply, :operational_state, persistence)
 
       {reply,
        %{
