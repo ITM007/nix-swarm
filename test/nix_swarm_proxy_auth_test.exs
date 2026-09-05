@@ -4,6 +4,7 @@ defmodule NixSwarm.ProxyAuthTest do
 
   alias NixSwarm.Proxy.Auth
   alias NixSwarm.Proxy.Config
+  alias NixSwarm.Proxy.Endpoint
   alias NixSwarm.Proxy.Oidc
   alias NixSwarm.Proxy.Session
 
@@ -83,6 +84,27 @@ defmodule NixSwarm.ProxyAuthTest do
     assert [set_cookie] = Plug.Conn.get_resp_header(conn, "set-cookie")
     assert set_cookie =~ "nix_swarm_auth_state="
     assert_receive {:authorize, %{require_pkce: true}}
+  end
+
+  test "the endpoint applies authentication after route matching", %{
+    oidc: oidc,
+    route: route,
+    session: session
+  } do
+    config = %Config{listen_port: 8080, routes: [route]}
+    :persistent_term.put({NixSwarm.Proxy, :config}, config)
+
+    on_exit(fn -> :persistent_term.erase({NixSwarm.Proxy, :config}) end)
+
+    conn =
+      Endpoint.call(conn(:get, "http://app.example/app/dashboard", ""),
+        oidc: oidc,
+        session: session,
+        now: 1_800_000_000
+      )
+
+    assert conn.status == 302
+    assert Plug.Conn.get_resp_header(conn, "location") |> hd() =~ "state="
   end
 
   test "callback exchanges the code, sets the session, and returns to the original path", %{
