@@ -1,4 +1,4 @@
-{ pkgs, usePrebuiltNifs ? true }:
+{ pkgs }:
 assert pkgs.stdenv.hostPlatform.system == "x86_64-linux";
 let
   lib = pkgs.lib;
@@ -6,7 +6,6 @@ let
     elixir = previous.elixir_1_20;
   });
   version = lib.strings.removeSuffix "\n" (builtins.readFile ../../VERSION);
-  nifTarget = "x86_64-unknown-linux-gnu";
 
   mixDepsHash =
     if lib.versionAtLeast beamPackages.elixir.version "1.18.0" then
@@ -39,41 +38,6 @@ let
         ELIXIR_ERL_OPTIONS = "+fnu";
       });
 
-  exRatatuiNifCache =
-    if usePrebuiltNifs then
-      let
-        fileNames = [
-          "libex_ratatui-v0.13.1-nif-2.16-${nifTarget}.so.tar.gz"
-          "libex_ratatui-v0.13.1-nif-2.17-${nifTarget}.so.tar.gz"
-        ];
-
-        artifactHashes = [
-          "sha256-DEAMrwXz1ivGPLInlmO/K6TnVbtxJKzj38IuW7Q3nRY="
-          "sha256-qG1GKhz1jiryDI+YF/duKBh50d1cslsNvMms/fm+ti0="
-        ];
-
-        artifacts = [
-          (pkgs.fetchurl {
-            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.13.1/${builtins.elemAt fileNames 0}";
-            hash = builtins.elemAt artifactHashes 0;
-          })
-          (pkgs.fetchurl {
-            url = "https://github.com/mcass19/ex_ratatui/releases/download/v0.13.1/${builtins.elemAt fileNames 1}";
-            hash = builtins.elemAt artifactHashes 1;
-          })
-        ];
-      in
-      pkgs.runCommand "ex-ratatui-precompiled-nif-cache" { } ''
-        mkdir -p "$out"
-        ln -s ${builtins.elemAt artifacts 0} "$out/${builtins.elemAt fileNames 0}"
-        ln -s ${builtins.elemAt artifacts 1} "$out/${builtins.elemAt fileNames 1}"
-      ''
-    else
-      pkgs.runCommand "ex-ratatui-source-nif-cache" { } ''
-        mkdir -p "$out"
-        echo "NIF cache built from source — place compiled .so tarballs here" > "$out/README"
-      '';
-
   release = (beamPackages.mixRelease {
     pname = "nix-swarm";
     inherit version src;
@@ -81,7 +45,6 @@ let
     inherit mixFodDeps;
   }).overrideAttrs
     (old: {
-      RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH = exRatatuiNifCache;
       ELIXIR_ERL_OPTIONS = "+fnu";
       postFixup = (old.postFixup or "") + ''
         # mixRelease normally places RELEASE_COOKIE on the ERTS command line.
@@ -157,7 +120,7 @@ let
     response=""
     while IFS= read -r line; do
       case "$line" in
-        g2*) response="$line"; break ;;
+        g2*|g3*) response="$line"; break ;;
       esac
     done <<< "$output"
 

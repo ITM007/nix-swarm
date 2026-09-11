@@ -34,4 +34,11 @@ defmodule NixSwarmRPCTest do
     missing_node = :"missing-rpc-node@127.0.0.1"
     assert {:error, {_class, _reason}} = RPC.call(missing_node, Enum, :count, [[]], 25)
   end
+
+  test "local calls honor their timeout" do
+    started = System.monotonic_time(:millisecond)
+
+    assert {:error, :timeout} = RPC.call(Node.self(), Process, :sleep, [100], 1)
+    assert System.monotonic_time(:millisecond) - started < 500
+  end
 end

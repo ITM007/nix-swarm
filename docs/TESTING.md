@@ -70,9 +70,6 @@ nix develop --command mix test \
   test/nix_swarm_deploy_preflight_test.exs --seed 0
 ```
 
-The read-only operator TUI has its own test plan (what it covers and the
-safety invariants it asserts): see [TUI test plan](TUI_TEST_PLAN.md).
-
 The release evidence collector can run the complete configured gate and records
 unavailable tools explicitly:
 

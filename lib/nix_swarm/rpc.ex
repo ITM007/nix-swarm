@@ -5,7 +5,7 @@ defmodule NixSwarm.RPC do
 
   def call(node, module, function, args, timeout \\ NixSwarm.rpc_timeout_ms()) do
     if node == Node.self() do
-      local_call(module, function, args)
+      local_call(module, function, args, timeout)
     else
       remote_call(node, module, function, args, timeout)
     end
@@ -57,12 +57,23 @@ defmodule NixSwarm.RPC do
     end
   end
 
-  defp local_call(module, function, args) do
-    {:ok, apply(module, function, args)}
-  rescue
-    error -> {:error, {:exception, error, __STACKTRACE__}}
-  catch
-    class, reason -> {:error, {class, reason}}
+  defp local_call(module, function, args, timeout) do
+    task =
+      Task.Supervisor.async_nolink(NixSwarm.TaskSupervisor, fn ->
+        try do
+          {:ok, apply(module, function, args)}
+        rescue
+          error -> {:error, {:exception, error, __STACKTRACE__}}
+        catch
+          class, reason -> {:error, {class, reason}}
+        end
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      {:exit, reason} -> {:error, reason}
+      nil -> {:error, :timeout}
+    end
   end
 
   defp remote_call(node, module, function, args, timeout) do

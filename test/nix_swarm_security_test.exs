@@ -123,6 +123,38 @@ defmodule NixSwarmSecurityTest do
     refute File.exists?(path)
   end
 
+  test "query server enforces the deadline across request execution" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "nix-swarm-query-timeout-#{System.unique_integer([:positive])}"
+      )
+
+    supervisor = Module.concat(__MODULE__, "QuerySupervisor#{System.unique_integer([:positive])}")
+    {:ok, task_supervisor} = Task.Supervisor.start_link(name: supervisor, max_children: 4)
+    Process.unlink(task_supervisor)
+
+    {:ok, state} =
+      NixSwarm.QueryServer.init(
+        socket_path: path,
+        task_supervisor: supervisor,
+        request_timeout_ms: 20,
+        execute_fun: fn _request ->
+          Process.sleep(100)
+          {:ok, %{slow: true}}
+        end
+      )
+
+    on_exit(fn ->
+      NixSwarm.QueryServer.terminate(:normal, state)
+      if Process.alive?(task_supervisor), do: Supervisor.stop(task_supervisor)
+      File.rm(path)
+    end)
+
+    assert {:ok, {:error, :timeout}} =
+             NixSwarm.QueryClient.query(:cluster_members, socket_path: path, timeout: 200)
+  end
+
   test "query server preserves a path replaced after it starts" do
     path =
       Path.join(
@@ -147,7 +179,7 @@ defmodule NixSwarmSecurityTest do
         NixSwarm.QueryCLI.main([request])
       end)
 
-    assert {:ok, {:ok, members}} = QueryProtocol.decode_response(encoded_response)
+    assert {:ok, members} = QueryProtocol.decode_response(encoded_response)
     assert is_list(members.live_nodes)
 
     invalid_response =

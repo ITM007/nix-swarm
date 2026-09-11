@@ -17,10 +17,11 @@ after adapting it.
 Nix-Swarm assumes the target is already running NixOS. Edit these values:
 
 - `flake.nix`: system architecture and flake inputs;
-- `cluster.nix`: BEAM node name, deployment host, NixOS configuration name, and
-  service placement;
+- `cluster.nix`: cluster membership and machine deployment identity;
 - `machines/node-a.nix`: hostname, deployment public key, and the original
   `system.stateVersion`;
+- `services/*.nix`: each service's NixOS/systemd behavior and its local
+  Nix-Swarm placement contract;
 - `machines/hardware-configuration.nix`: the real hardware and filesystem
   configuration from the target.
 

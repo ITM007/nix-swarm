@@ -3,51 +3,26 @@ defmodule NixSwarmCLITest do
 
   import ExUnit.CaptureIO
 
-  test "help output describes code-first commands and the read-only TUI" do
+  test "help output describes the code-first operator CLI" do
     output =
       capture_io(fn ->
         assert :ok == NixSwarm.CLI.run(["help"])
       end)
 
-    assert output =~ "Read-only operator TUI"
+    assert output =~ "Operator CLI"
     assert output =~ "\n  nix-swarm\n"
-    assert output =~ "nix-swarm --target NODE"
+    assert output =~ "--target NODE"
     assert output =~ "--cluster-file PATH"
     assert output =~ "--machines-dir PATH"
     assert output =~ "--services-dir PATH"
     assert output =~ "nix-swarm cluster plan"
     assert output =~ "nix-swarm cluster apply"
+    assert output =~ "Mutating operations:"
+    assert output =~ "service restart --name SERVICE --target NODE --yes"
     assert output =~ "nix-swarm service restart --name SERVICE --target NODE --yes"
     assert output =~ "--allow-dirty              deploy an uncommitted source tree"
     assert output =~ "refuses an uncommitted source tree unless --allow-dirty"
     assert output =~ "Nix code is the only desired-state mutation interface"
-  end
-
-  test "run delegates plain launches to the TUI runner" do
-    test_pid = self()
-
-    runner = fn opts ->
-      send(test_pid, {:launched, opts})
-      :ok
-    end
-
-    assert :ok ==
-             NixSwarm.CLI.run(
-               [
-                 "--target",
-                 "nix-swarm@example-node-a.local",
-                 "--ssh-host",
-                 "operator@example-node-a.local",
-                 "--source",
-                 "/tmp/nix-swarm"
-               ],
-               runner
-             )
-
-    assert_receive {:launched, opts}
-    assert Keyword.get(opts, :target) == "nix-swarm@example-node-a.local"
-    assert Keyword.get(opts, :ssh_host) == "operator@example-node-a.local"
-    assert Keyword.get(opts, :source) == "/tmp/nix-swarm"
   end
 
   test "unknown subcommands return a code-first usage error" do
@@ -92,6 +67,38 @@ defmodule NixSwarmCLITest do
     assert message =~ "repeat with --yes"
   end
 
+  test "service logs forwards the injected remote query seam" do
+    test_pid = self()
+    target = "node@host"
+
+    overview = %{
+      members: %{queried_node: target, live_nodes: [], configured_nodes: [], deploy_hosts: %{}},
+      status: %{placements: %{api: []}}
+    }
+
+    query_fun = fn _remote, request ->
+      send(test_pid, {:query, request})
+
+      case request do
+        :cluster_members -> {:ok, %{}}
+        :cluster_overview -> {:ok, overview}
+        {:logs, "api", 50} -> {:ok, []}
+      end
+    end
+
+    capture_io(fn ->
+      assert :ok =
+               NixSwarm.CLI.run(
+                 ["service", "logs", "--name", "api", "--target", target, "--json"],
+                 query_fun: query_fun
+               )
+    end)
+
+    assert_receive {:query, :cluster_members}
+    assert_receive {:query, :cluster_overview}
+    assert_receive {:query, {:logs, "api", 50}}
+  end
+
   test "apply requires an explicit confirmation flag" do
     assert {:error, message} = NixSwarm.CLI.run(["cluster", "apply"])
     assert message =~ "repeat with --yes"
@@ -110,7 +117,6 @@ defmodule NixSwarmCLITest do
         assert :ok =
                  NixSwarm.CLI.run(
                    ["cluster", "plan", "--source", source],
-                   fn _ -> flunk("TUI must not launch") end,
                    plan_fun: &NixSwarm.Deploy.plan/1
                  )
       end)
@@ -133,7 +139,6 @@ defmodule NixSwarmCLITest do
       assert :ok =
                NixSwarm.CLI.run(
                  ["cluster", "apply", "--source", source, "--yes"],
-                 fn _ -> flunk("TUI must not launch") end,
                  deploy_fun: deploy_fun
                )
     end)
@@ -162,7 +167,6 @@ defmodule NixSwarmCLITest do
       assert :ok =
                NixSwarm.CLI.run(
                  ["cluster", "apply", "--source", source, "--yes", "--allow-dirty"],
-                 fn _ -> flunk("TUI must not launch") end,
                  deploy_fun: deploy_fun
                )
     end)
@@ -209,7 +213,6 @@ defmodule NixSwarmCLITest do
                    "--allow-dirty",
                    "--yes"
                  ],
-                 fn _ -> flunk("TUI must not launch") end,
                  rollback_fun: rollback_fun
                )
     end)
@@ -229,63 +232,6 @@ defmodule NixSwarmCLITest do
   test "invalid numeric options return actionable errors" do
     assert {:error, "--lines must be between 1 and 1000"} =
              NixSwarm.CLI.run(["--target", "nix-swarm@example-node-a.local", "--lines", "-1"])
-
-    assert {:error, "--refresh-ms must be between 100 and 600000"} =
-             NixSwarm.CLI.run([
-               "--target",
-               "nix-swarm@example-node-a.local",
-               "--refresh-ms",
-               "50"
-             ])
-  end
-
-  test "run defaults target from cluster config when not provided" do
-    root = Path.join(System.tmp_dir!(), "nix-swarm-cli-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(Path.join(root, "cluster/services"))
-    File.mkdir_p!(Path.join(root, "machines"))
-
-    File.write!(
-      Path.join(root, "cluster/cluster.nix"),
-      """
-      { ... }:
-      {
-          services.nix-swarm = {
-            peers = [
-            "swarm@198.51.100.10"
-            ];
-          };
-        }
-      """
-    )
-
-    on_exit(fn -> File.rm_rf!(root) end)
-
-    test_pid = self()
-
-    runner = fn opts ->
-      send(test_pid, {:launched, opts})
-      :ok
-    end
-
-    assert :ok == NixSwarm.CLI.run(["--source", root], runner)
-
-    assert_receive {:launched, opts}
-    assert Keyword.get(opts, :target) == "swarm@198.51.100.10"
-  end
-
-  test "run defaults SSH access from code-defined deployment metadata" do
-    source = Path.expand("../examples/starter", __DIR__)
-    test_pid = self()
-
-    runner = fn opts ->
-      send(test_pid, {:launched, opts})
-      :ok
-    end
-
-    assert :ok == NixSwarm.CLI.run(["--source", source], runner)
-    assert_receive {:launched, opts}
-    assert Keyword.get(opts, :target) == "nix-swarm@node-a"
-    assert Keyword.get(opts, :ssh_host) == "root@node-a"
   end
 
   defp heal_query_fun(overview) do
@@ -344,7 +290,6 @@ defmodule NixSwarmCLITest do
     assert {:error, message} =
              NixSwarm.CLI.run(
                ["cluster", "heal", "nope", "--target", "db@127.0.0.1", "--yes"],
-               fn _opts -> :ok end,
                deps
              )
 
@@ -360,7 +305,6 @@ defmodule NixSwarmCLITest do
     assert {:error, message} =
              NixSwarm.CLI.run(
                ["cluster", "heal", "db", "--target", "db@127.0.0.1", "--yes"],
-               fn _opts -> :ok end,
                deps
              )
 
@@ -376,7 +320,6 @@ defmodule NixSwarmCLITest do
     assert {:error, message} =
              NixSwarm.CLI.run(
                ["cluster", "heal", "db", "--target", "db@127.0.0.1", "--yes"],
-               fn _opts -> :ok end,
                deps
              )
 
@@ -401,7 +344,6 @@ defmodule NixSwarmCLITest do
     assert :ok =
              NixSwarm.CLI.run(
                ["cluster", "heal", "db", "--target", "db@127.0.0.1", "--yes"],
-               fn _opts -> :ok end,
                deps
              )
 
@@ -431,7 +373,6 @@ defmodule NixSwarmCLITest do
                  "db@127.0.0.2",
                  "--yes"
                ],
-               fn _opts -> :ok end,
                deps
              )
 
@@ -456,7 +397,6 @@ defmodule NixSwarmCLITest do
                  "db@198.51.100.9",
                  "--yes"
                ],
-               fn _opts -> :ok end,
                deps
              )
 
@@ -474,7 +414,6 @@ defmodule NixSwarmCLITest do
     assert {:error, message} =
              NixSwarm.CLI.run(
                ["cluster", "heal", "db", "--target", "db@127.0.0.1", "--yes"],
-               fn _opts -> :ok end,
                deps
              )
 

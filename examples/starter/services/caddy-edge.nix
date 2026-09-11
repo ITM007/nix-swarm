@@ -17,4 +17,11 @@
       }
     '';
   };
+
+  # Keep the Nix-Swarm placement contract beside the edge service it owns.
+  services.nix-swarm.services.caddy = {
+    replicas = 1;
+    unitTemplate = "caddy.service";
+    allowedNodes = [ "nix-swarm@node-a" ];
+  };
 }

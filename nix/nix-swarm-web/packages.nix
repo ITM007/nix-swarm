@@ -7,6 +7,16 @@ let
   });
   version = lib.strings.removeSuffix "\n" (builtins.readFile ../../VERSION);
   webRoot = ../../nix-swarm-web;
+  daisyui = pkgs.fetchFromGitHub {
+    owner = "saadeghi";
+    repo = "daisyui";
+    rev = "22ecff57f2c391b80a75617325748cf4d13fdf47";
+    hash = "sha256-I2LI9VYVxQcvoMDgDWmvNyQToS1rFm12V167YxqDs24=";
+  };
+  daisyuiNodePath = pkgs.runCommand "daisyui-node-path" { } ''
+    mkdir -p "$out/daisyui/packages/bundle"
+    cp -r ${daisyui}/packages/bundle/. "$out/daisyui/packages/bundle/"
+  '';
   webReleaseAvailable =
     builtins.pathExists (webRoot + "/mix.exs")
     && builtins.pathExists (webRoot + "/mix.lock");
@@ -27,7 +37,7 @@ let
         mixFodDeps = beamPackages.fetchMixDeps {
           pname = "nix-swarm-web-deps";
           inherit version src;
-          hash = "sha256-ZxsPUeinEvC5N7VUMY6gP0a+wsi2NzWBsIoGuhQFnJg=";
+          hash = "sha256-1ucEPAUR20wRJi0h/ZoRA7P2z6BYedJBC6/vlDK2VtE=";
         };
       in
       (beamPackages.mixRelease {
@@ -35,7 +45,18 @@ let
         inherit version src mixFodDeps;
         mixEnv = "prod";
       }).overrideAttrs (old: {
-        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.esbuild ];
+        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.esbuild pkgs.tailwindcss_4 ];
+        postBuild = (old.postBuild or "") + ''
+          mkdir -p priv/static/assets
+          esbuild assets/js/app.js --bundle --minify --target=es2017 \
+            --alias:phoenix=$PWD/deps/phoenix/priv/static/phoenix.mjs \
+            --alias:phoenix_live_view=$PWD/deps/phoenix_live_view/priv/static/phoenix_live_view.esm.js \
+            --outdir=priv/static/assets
+          NODE_PATH="$PWD/deps:$PWD/_build/prod/lib:/build/deps:${daisyuiNodePath}" tailwindcss \
+            --input assets/css/app.css \
+            --output priv/static/assets/app.css \
+            --minify
+        '';
       })
     else
       null;

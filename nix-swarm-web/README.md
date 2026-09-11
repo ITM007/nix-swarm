@@ -22,6 +22,16 @@ not require a running Nix-Swarm agent or query socket. Production polling uses
 the local Unix query socket configured by `NIX_SWARM_QUERY_SOCKET` (default:
 `/run/nix-swarm/query.sock`).
 
+The UI uses the Phoenix 1.8 asset conventions: Tailwind CSS 4 and daisyUI 5
+are pinned in the Mix project and compiled with Nix-provided tools. The release
+has one primary LiveView surface: an interactive SVG cluster map with node and
+service-slot cards, ownership edges, pan/zoom controls, drag-to-arrange, an
+item inspector, and an accessible map-data table. Former inventory URLs land
+on the same map for bookmark compatibility. The theme selector supports
+System, Light, and Dark; explicit choices are stored in the browser under the
+Phoenix `phx:theme` key and follow system preference changes when System is
+selected.
+
 ## Running locally
 
 Development and test configuration can use the normal Phoenix server. A
@@ -44,18 +54,23 @@ ssh -N -L 4000:127.0.0.1:4000 operator@node.example
 
 Then open `http://127.0.0.1:4000/` locally.
 
+The endpoint rejects unknown HTTP Host authorities. The development tunnel
+also permits `nix-swarm-dev.localhost`; LiveView websocket origins must match
+the actual request authority, scheme, and port.
+
 ## Read-only surface
 
 The release provides:
 
-- dashboard and network/ownership map;
-- configured nodes and node details;
-- services, slots, ownership, and service details;
-- drift and consistency findings;
-- bounded cluster, node, and service logs with literal search/filtering;
+- one interactive dashboard and network/ownership map;
+- node and service-slot details through map selection and the inspector;
+- compact liveness, placement, recovery, and consistency summaries;
 - JSON, CSV, and bounded text exports.
 
-Every view shows stale, degraded, or unknown data explicitly instead of
+The health endpoint and export downloads remain ordinary HTTP endpoints; they
+are not additional interactive pages.
+
+The map surface shows stale, degraded, or unknown data explicitly instead of
 claiming a healthy result when the query is partial. The browser has no deploy,
 edit, restart, heal, source-tree, Git, SSH-key, or write route. Recovery and
 mutation remain CLI operations.
@@ -68,7 +83,6 @@ cookie, deployment credentials, Git credentials, or write access to the
 Nix-Swarm source tree. Keep the endpoint behind loopback and an operator-owned
 SSH tunnel or local reverse proxy.
 
-For the deployment and parity acceptance criteria, see:
+For the deployment and web acceptance criteria, see:
 
 - [`docs/WEB_UI.md`](../docs/WEB_UI.md)
-- [`docs/WEB_TUI_PARITY.md`](../docs/WEB_TUI_PARITY.md)

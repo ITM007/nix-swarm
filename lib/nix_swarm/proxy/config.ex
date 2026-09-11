@@ -1,7 +1,7 @@
 defmodule NixSwarm.Proxy.Config do
   @moduledoc false
 
-  # Typed config for the optional built-in edge proxy (`NIX_SWARM_ROLE=proxy`).
+  # Typed config for the built-in edge proxy (`NIX_SWARM_ROLE=proxy`).
   #
   # The NixOS module renders a public Erlang-terms file (no secrets) whose
   # body is a proplist of `{key, value}` tuples (nested attrset rendering).

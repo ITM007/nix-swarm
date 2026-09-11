@@ -114,7 +114,7 @@ defmodule NixSwarmWeb.LogsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main id="logs-page">
+    <.app_shell id="logs-page" current_path="/logs">
       <header class="page-header">
         <p class="eyebrow">Read-only observability</p>
         <h1>Logs</h1>
@@ -124,15 +124,15 @@ defmodule NixSwarmWeb.LogsLive do
 
       <form id="log-controls" phx-submit="refresh">
         <label>Scope
-          <select name="scope">
+          <select class="select select-bordered" name="scope">
             <option value="cluster" selected={@scope == "cluster"}>Cluster</option>
             <option value="node" selected={@scope == "node"}>Node</option>
             <option value="service" selected={@scope == "service"}>Service</option>
           </select>
         </label>
-        <label>Target <input name="target" value={@target} /></label>
-        <label>Lines (1–1000) <input name="lines" value={@lines} inputmode="numeric" /></label>
-        <button type="submit">Refresh logs</button>
+        <label>Target <input class="input input-bordered" name="target" value={@target} /></label>
+        <label>Lines (1–1000) <input class="input input-bordered" name="lines" value={@lines} inputmode="numeric" /></label>
+        <button class="btn btn-primary" type="submit">Refresh logs</button>
       </form>
 
       <%= if @snapshot && @snapshot.stale? do %><p class="notice notice-stale">Stale cluster snapshot: log source selection may be out of date.</p><% end %>
@@ -141,17 +141,17 @@ defmodule NixSwarmWeb.LogsLive do
       <section aria-labelledby="log-search-heading">
         <h2 id="log-search-heading">Current result filters</h2>
         <form phx-submit="search">
-          <label>Literal search <input name="query" value={if @result, do: @result.query, else: ""} /></label>
-          <button type="submit">Search</button>
+          <label>Literal search <input class="input input-bordered" name="query" value={if @result, do: @result.query, else: ""} /></label>
+          <button class="btn btn-primary" type="submit">Search</button>
         </form>
         <div class="log-filter-buttons" role="group" aria-label="Log severity filter">
-          <button type="button" phx-click="filter" phx-value-filter="all">All</button>
-          <button type="button" phx-click="filter" phx-value-filter="warnings-errors">Warnings/errors</button>
-          <button type="button" phx-click="filter" phx-value-filter="warnings">Warnings</button>
-          <button type="button" phx-click="filter" phx-value-filter="errors">Errors</button>
+          <button class="btn btn-outline btn-sm" type="button" phx-click="filter" phx-value-filter="all">All</button>
+          <button class="btn btn-outline btn-sm" type="button" phx-click="filter" phx-value-filter="warnings-errors">Warnings/errors</button>
+          <button class="btn btn-outline btn-sm" type="button" phx-click="filter" phx-value-filter="warnings">Warnings</button>
+          <button class="btn btn-outline btn-sm" type="button" phx-click="filter" phx-value-filter="errors">Errors</button>
         </div>
-        <button type="button" phx-click="previous_match">Previous match</button>
-        <button type="button" phx-click="next_match">Next match</button>
+        <button class="btn btn-ghost btn-sm" type="button" phx-click="previous_match">Previous match</button>
+        <button class="btn btn-ghost btn-sm" type="button" phx-click="next_match">Next match</button>
       </section>
 
       <%= if @result do %>
@@ -164,7 +164,7 @@ defmodule NixSwarmWeb.LogsLive do
       <% else %>
         <p role="status">No logs loaded. The default request is 200 lines; refresh explicitly to query a scope.</p>
       <% end %>
-    </main>
+    </.app_shell>
     """
   end
 

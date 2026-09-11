@@ -16,8 +16,7 @@ defmodule NixSwarmProjectPolicyTest do
     assert project[:test_coverage][:summary][:threshold] >= 65
   end
 
-  test "the TUI and runtime API enforce the code-first mutation boundary" do
-    assert NixSwarm.TUI.read_only?()
+  test "the runtime API enforces the code-first mutation boundary" do
     refute function_exported?(NixSwarm.API, :start_service, 1)
     refute function_exported?(NixSwarm.API, :stop_service, 1)
     refute function_exported?(NixSwarm.API, :restart_machine, 1)
@@ -86,6 +85,17 @@ defmodule NixSwarmProjectPolicyTest do
     assert cluster =~ "allowedNodes"
   end
 
+  test "the starter keeps service placement beside each service definition" do
+    cluster = File.read!("examples/starter/cluster.nix")
+    web = File.read!("examples/starter/services/example-web.nix")
+    caddy = File.read!("examples/starter/services/caddy-edge.nix")
+
+    refute cluster =~ "services.example-web"
+    refute cluster =~ "services.caddy"
+    assert web =~ "services.nix-swarm.services.example-web"
+    assert caddy =~ "services.nix-swarm.services.caddy"
+  end
+
   test "the web release router exposes only read-only routes" do
     router = File.read!("nix-swarm-web/lib/nix_swarm_web/router.ex")
 
@@ -150,6 +160,16 @@ defmodule NixSwarmProjectPolicyTest do
         ] do
       assert module =~ emitted, "#{emitted} must be emitted in the rendered runtime term"
     end
+  end
+
+  test "the Nix module removes only the obsolete runtime swarmd mask" do
+    module = File.read!("nix/nix-swarm/module.nix")
+
+    assert module =~ "nixSwarmLegacyRuntimeMaskCleanup"
+    assert module =~ "/run/systemd/system/swarmd.service"
+    assert module =~ ~s(readlink "$legacy_unit")
+    assert module =~ ~s(= "/dev/null")
+    refute module =~ "systemctl unmask swarmd.service"
   end
 
   test "backup and alerting runbooks exist and are linked from operations" do

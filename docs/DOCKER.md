@@ -50,7 +50,6 @@ Useful commands:
 ```bash
 ./scripts/docker-stack status
 ./scripts/docker-stack query cluster-status
-./scripts/docker-stack query cluster-members
 docker compose exec node-a systemctl status nix-swarmd.service
 docker compose exec node-a systemctl status demo@0.service
 docker compose exec node-a journalctl -u nix-swarmd.service --no-pager -n 100
@@ -66,7 +65,7 @@ To exercise recovery, stop one node and observe membership and placement:
 
 ```bash
 docker compose stop node-b
-./scripts/docker-stack query cluster-members
+./scripts/docker-stack query cluster-status
 docker compose start node-b
 ```
 

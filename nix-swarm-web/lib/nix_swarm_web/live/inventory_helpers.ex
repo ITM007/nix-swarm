@@ -1,6 +1,8 @@
 defmodule NixSwarmWeb.InventoryHelpers do
   @moduledoc false
 
+  alias NixSwarmWeb.Format
+
   def encode_identifier(value), do: Base.url_encode64(to_string(value), padding: false)
 
   def decode_identifier(value) when is_binary(value) do
@@ -27,7 +29,7 @@ defmodule NixSwarmWeb.InventoryHelpers do
   def metric_label(value, kind \\ :number)
   def metric_label(nil, _kind), do: "Unknown"
   def metric_label(%{status: "unknown"}, _kind), do: "Unknown"
-  def metric_label(value, :percent) when is_number(value), do: "#{value}%"
+  def metric_label(value, :percent) when is_number(value), do: Format.percent(value)
   def metric_label(value, :bytes) when is_number(value), do: "#{value} bytes"
   def metric_label(value, _kind) when is_number(value), do: to_string(value)
   def metric_label(value, _kind), do: to_string(value)

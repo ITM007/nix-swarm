@@ -62,7 +62,7 @@ defmodule NixSwarmWeb.DriftLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main id="drift-page">
+    <.app_shell id="drift-page" current_path="/drift">
       <header class="page-header">
         <p class="eyebrow">Read-only consistency</p>
         <h1>Configuration drift</h1>
@@ -100,7 +100,7 @@ defmodule NixSwarmWeb.DriftLive do
       <% else %>
         <p role="status">Loading drift status.</p>
       <% end %>
-    </main>
+    </.app_shell>
     """
   end
 

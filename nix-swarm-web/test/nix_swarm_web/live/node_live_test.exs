@@ -20,7 +20,7 @@ defmodule NixSwarmWeb.NodeLiveTest do
     assert html =~ "node_unreachable"
     assert html =~ "2.0.0+aaa"
     assert html =~ "10.0.0.1"
-    assert html =~ "50%"
+    assert html =~ "50.0%"
     assert html =~ "api@0.service"
     assert html =~ ~s(href="/nodes/bm9kZS1hQGNsdXN0ZXI")
   end

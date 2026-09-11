@@ -1,6 +1,6 @@
 defmodule NixSwarm.OperatorContext do
   @moduledoc """
-  Shared normalized inputs for the CLI and read-only TUI.
+  Shared normalized inputs for CLI commands.
 
   This is an ephemeral operator context, not a desired-state store. Durable
   configuration remains in the evaluated Nix source tree.

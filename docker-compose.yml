@@ -4,7 +4,11 @@ services:
   node-a:
     image: nix-swarm/nixos-node-a:${NIX_SWARM_DOCKER_IMAGE_TAG:-dev}
     hostname: node-a
-    privileged: true
+    cgroup: private
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
     init: false
     stop_signal: SIGRTMIN+3
     restart: unless-stopped
@@ -12,6 +16,8 @@ services:
       - /run
       - /run/lock
       - /tmp
+    ports:
+      - "127.0.0.1:${NIX_SWARM_DOCKER_SSH_PORT:-2221}:22"
     volumes:
       - ${NIX_SWARM_DOCKER_SECRETS_DIR:-./docker/nixos/secrets}/nix-swarm.cookie:/etc/nix-swarm-cookie-source:ro
       - ${NIX_SWARM_DOCKER_SECRETS_DIR:-./docker/nixos/secrets}/id_ed25519.pub:/etc/nix-swarm-authorized_keys:ro
@@ -28,7 +34,11 @@ services:
   node-b:
     image: nix-swarm/nixos-node-b:${NIX_SWARM_DOCKER_IMAGE_TAG:-dev}
     hostname: node-b
-    privileged: true
+    cgroup: private
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
     init: false
     stop_signal: SIGRTMIN+3
     restart: unless-stopped
@@ -52,7 +62,11 @@ services:
   node-c:
     image: nix-swarm/nixos-node-c:${NIX_SWARM_DOCKER_IMAGE_TAG:-dev}
     hostname: node-c
-    privileged: true
+    cgroup: private
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
     init: false
     stop_signal: SIGRTMIN+3
     restart: unless-stopped

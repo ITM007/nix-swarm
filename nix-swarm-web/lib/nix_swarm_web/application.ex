@@ -10,6 +10,7 @@ defmodule NixSwarmWeb.Application do
     children =
       [
         {Phoenix.PubSub, name: NixSwarmWeb.PubSub},
+        {Task.Supervisor, name: NixSwarmWeb.QueryTaskSupervisor, max_children: 8},
         {NixSwarmWeb.QueryBroker, broker_opts},
         NixSwarmWeb.Endpoint
       ]

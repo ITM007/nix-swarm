@@ -14,4 +14,11 @@
       ProtectHome = true;
     };
   };
+
+  # Keep the Nix-Swarm placement contract beside the systemd service it owns.
+  services.nix-swarm.services.example-web = {
+    replicas = 1;
+    unitTemplate = "example-web.service";
+    allowedNodes = [ "nix-swarm@node-a" ];
+  };
 }

@@ -9,6 +9,7 @@ defmodule NixSwarm.QueryServer do
   alias NixSwarm.QueryProtocol
 
   @default_socket "/run/nix-swarm/query.sock"
+  @response_reserve_ms 10
   @test_build Mix.env() == :test
 
   def start_link(opts \\ []) do
@@ -38,6 +39,13 @@ defmodule NixSwarm.QueryServer do
   @impl true
   def init(opts) do
     path = Keyword.get(opts, :socket_path, configured_socket_path())
+    task_supervisor = Keyword.get(opts, :task_supervisor, NixSwarm.QueryTaskSupervisor)
+
+    request_timeout_ms =
+      bounded_timeout(Keyword.get(opts, :request_timeout_ms, NixSwarm.rpc_timeout_ms()))
+
+    execute_fun = Keyword.get(opts, :execute_fun, &execute/1)
+
     File.mkdir_p!(Path.dirname(path))
 
     listen_options = [
@@ -45,6 +53,8 @@ defmodule NixSwarm.QueryServer do
       active: false,
       packet: 4,
       packet_size: QueryProtocol.max_request_bytes(),
+      send_timeout: request_timeout_ms,
+      send_timeout_close: true,
       reuseaddr: true,
       ifaddr: {:local, path}
     ]
@@ -53,8 +63,22 @@ defmodule NixSwarm.QueryServer do
          {:ok, listener} <- :gen_tcp.listen(0, listen_options),
          {:ok, %{inode: inode}} <- File.stat(path) do
       File.chmod!(path, 0o660)
-      acceptor = spawn_link(fn -> accept_loop(listener) end)
-      {:ok, %{listener: listener, acceptor: acceptor, path: path, inode: inode}}
+
+      acceptor =
+        spawn_link(fn ->
+          accept_loop(listener, task_supervisor, request_timeout_ms, execute_fun)
+        end)
+
+      {:ok,
+       %{
+         listener: listener,
+         acceptor: acceptor,
+         path: path,
+         inode: inode,
+         task_supervisor: task_supervisor,
+         request_timeout_ms: request_timeout_ms,
+         execute_fun: execute_fun
+       }}
     else
       {:error, reason} ->
         {:stop, {:query_socket_failed, reason}}
@@ -98,12 +122,12 @@ defmodule NixSwarm.QueryServer do
 
   defp socket_file?(%{mode: mode}), do: band(mode, 0o170_000) == 0o140_000
 
-  defp accept_loop(listener) do
+  defp accept_loop(listener, task_supervisor, request_timeout_ms, execute_fun) do
     case :gen_tcp.accept(listener) do
       {:ok, socket} ->
-        hand_off(socket)
+        hand_off(socket, task_supervisor, request_timeout_ms, execute_fun)
 
-        accept_loop(listener)
+        accept_loop(listener, task_supervisor, request_timeout_ms, execute_fun)
 
       {:error, :closed} ->
         :ok
@@ -113,12 +137,13 @@ defmodule NixSwarm.QueryServer do
     end
   end
 
-  defp hand_off(socket) do
-    case Task.Supervisor.start_child(NixSwarm.TaskSupervisor, fn ->
+  defp hand_off(socket, task_supervisor, request_timeout_ms, execute_fun) do
+    case Task.Supervisor.start_child(task_supervisor, fn ->
            receive do
-             {:serve, owned_socket} -> serve(owned_socket)
+             {:serve, owned_socket} ->
+               serve(owned_socket, task_supervisor, request_timeout_ms, execute_fun)
            after
-             NixSwarm.rpc_timeout_ms() -> :ok
+             request_timeout_ms -> :ok
            end
          end) do
       {:ok, pid} ->
@@ -132,9 +157,11 @@ defmodule NixSwarm.QueryServer do
     end
   end
 
-  defp serve(socket) do
+  defp serve(socket, task_supervisor, request_timeout_ms, execute_fun) do
+    deadline = System.monotonic_time(:millisecond) + request_timeout_ms
+
     {profile, response} =
-      case :gen_tcp.recv(socket, 0, NixSwarm.rpc_timeout_ms()) do
+      case :gen_tcp.recv(socket, 0, remaining_ms(deadline)) do
         {:ok, payload} ->
           profile = if QueryProtocol.json_request?(payload), do: :json_v1, else: :etf
 
@@ -142,7 +169,7 @@ defmodule NixSwarm.QueryServer do
             case QueryProtocol.decode_request(payload) do
               {:ok, request} ->
                 Logger.info("operator query", operation: operation_name(request))
-                execute(request)
+                execute_with_deadline(request, deadline, task_supervisor, execute_fun)
 
               {:error, reason} ->
                 {:error, reason}
@@ -154,35 +181,73 @@ defmodule NixSwarm.QueryServer do
           {:etf, {:error, reason}}
       end
 
-    send_response(socket, profile, response)
+    send_response(socket, profile, response, deadline)
   after
     :gen_tcp.close(socket)
   end
 
-  defp send_response(socket, :json_v1, response) do
+  defp send_response(socket, :json_v1, response, deadline) do
     case QueryProtocol.encode_json_response(response) do
       {:ok, binary} ->
-        :gen_tcp.send(socket, binary)
+        send_with_deadline(socket, binary, deadline)
 
       {:error, :response_too_large} ->
         {:ok, binary} = QueryProtocol.encode_json_response({:error, :response_too_large})
-        :gen_tcp.send(socket, binary)
+        send_with_deadline(socket, binary, deadline)
 
       {:error, _reason} ->
         {:ok, binary} = QueryProtocol.encode_json_response({:error, :internal_error})
+        send_with_deadline(socket, binary, deadline)
+    end
+  end
+
+  defp send_response(socket, :etf, response, deadline) do
+    binary = QueryProtocol.encode_local_response(response)
+
+    if byte_size(binary) <= QueryProtocol.max_response_bytes() do
+      send_with_deadline(socket, binary, deadline)
+    else
+      send_with_deadline(
+        socket,
+        QueryProtocol.encode_local_response({:error, :response_too_large}),
+        deadline
+      )
+    end
+  end
+
+  defp execute_with_deadline(request, deadline, task_supervisor, execute_fun) do
+    execution_budget = max(remaining_ms(deadline) - @response_reserve_ms, 0)
+
+    if execution_budget == 0 do
+      {:error, :timeout}
+    else
+      task = Task.Supervisor.async_nolink(task_supervisor, fn -> execute_fun.(request) end)
+
+      case Task.yield(task, execution_budget) || Task.shutdown(task, :brutal_kill) do
+        {:ok, response} -> response
+        {:exit, reason} -> {:error, reason}
+        nil -> {:error, :timeout}
+      end
+    end
+  catch
+    :exit, _reason -> {:error, :busy}
+  end
+
+  defp send_with_deadline(socket, binary, deadline) do
+    case remaining_ms(deadline) do
+      0 ->
+        {:error, :timeout}
+
+      timeout ->
+        :inet.setopts(socket, send_timeout: timeout, send_timeout_close: true)
         :gen_tcp.send(socket, binary)
     end
   end
 
-  defp send_response(socket, :etf, response) do
-    binary = QueryProtocol.encode_local_response(response)
+  defp remaining_ms(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
-    if byte_size(binary) <= QueryProtocol.max_response_bytes() do
-      :gen_tcp.send(socket, binary)
-    else
-      :gen_tcp.send(socket, QueryProtocol.encode_local_response({:error, :response_too_large}))
-    end
-  end
+  defp bounded_timeout(value) when is_integer(value) and value > 0, do: min(value, 60_000)
+  defp bounded_timeout(_value), do: NixSwarm.rpc_timeout_ms()
 
   defp execute(:protocol_version), do: {:ok, NixSwarm.QueryProtocol.protocol_version()}
   defp execute(:capabilities), do: {:ok, NixSwarm.API.capabilities()}

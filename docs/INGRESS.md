@@ -1,8 +1,8 @@
 # Optional ingress (edge routing)
 
-A Nix-Swarm cluster needs **no proxy and no edge**. Operator access, the
-control path, and application traffic all work over the trusted private
-network or an SSH tunnel. An edge — Caddy in these examples, though nginx,
+A Nix-Swarm cluster needs **no external proxy and no external edge**. Operator
+access, the control path, and application traffic all work over the trusted
+private network or an SSH tunnel. An edge — Caddy in these examples, though nginx,
 Traefik, or an existing NixOS ACME setup fit the same pattern — is an
 **optional integration point** you add only when you want name-based or
 TLS-terminated access to an app.
@@ -15,7 +15,7 @@ touched through the Admin API.
 
 ## Why an edge is optional
 
-- **The control path has no HTTP dependency.** The CLI, TUI, query socket,
+- **The control path has no HTTP dependency.** The CLI, query socket,
   and Erlang distribution (EPMD/distribution ports) connect directly to
   nodes. Nothing in Nix-Swarm reverse-proxies or URL-routes control traffic.
 - **Direct access works.** On a trusted LAN, reach an app at
@@ -149,15 +149,19 @@ the supported way to route; it stays correct because of `allowedNodes`
 bounds and relocation-inside-the-list, and it keeps the edge configuration
 pure user-owned Nix with no dependency on cluster state at render time.
 
-## Built-in BEAM edge (default off)
+## Built-in BEAM edge (default on)
 
-Nix-Swarm also has an optional built-in edge proxy for small trusted-LAN
+Nix-Swarm also has a built-in edge proxy for small trusted-LAN
 deployments. It runs as the existing Nix-Swarm release with
 `NIX_SWARM_ROLE=proxy`; it is not part of the control path and it does not
-replace the documented Caddy/nginx pattern. Leave `services.nix-swarm.proxy.enable`
-at its default `false` when an external edge is preferred. In that mode NixOS
-creates no proxy service, listener, proxy credentials, or proxy firewall rule,
-so there is no port conflict with Caddy or another edge.
+replace the documented Caddy/nginx pattern. Set
+`services.nix-swarm.proxy.enable = false` when an external edge is preferred.
+In that mode NixOS creates no proxy service, listener, proxy credentials, or
+proxy firewall rule, so there is no port conflict with Caddy or another edge.
+
+The default listener is `8080` and the default firewall setting remains closed;
+configure `openFirewall` only for a named trusted interface. A default-enabled
+proxy with no routes is harmless but returns `502` until routes are declared.
 
 The v1 posture is plain HTTP on a trusted private network. Put TLS, public
 exposure, and ACME policy in an edge you operate, such as Caddy. The built-in

@@ -39,6 +39,20 @@ nix-swarm-*.tar
 .env.*
 !.env.example
 
+# Sensitive credentials and key material.
+**/secrets/*
+!**/secrets/.gitignore
+*.cookie
+*.credentials
+*.key
+*.kdbx
+*.p12
+*.pem
+*.pfx
+*.secret
+id_rsa
+id_ed25519
+
 # Generated project outputs.
 /result
 /result-*

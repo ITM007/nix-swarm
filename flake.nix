@@ -84,6 +84,12 @@
               beamPackages.elixir_1_20
               beamPackages.erlang
               beamPackages.rebar3
+              pkgs.nushell
+              pkgs.openssh
+              pkgs.openssl
+              pkgs.systemd
+              pkgs.esbuild
+              pkgs.tailwindcss_4
               pkgs.git
               pkgs.nixpkgs-fmt
             ];
@@ -256,7 +262,7 @@
               agent.wait_for_unit("nix-swarmd.service")
               agent.wait_until_succeeds("systemctl is-active nix-swarm-web.service", timeout=120)
               agent.wait_until_succeeds("curl --fail --silent --show-error http://127.0.0.1:4000/healthz | grep -q status", timeout=60)
-              agent.wait_until_succeeds("curl --fail --silent --show-error http://127.0.0.1:4000/ | grep -q 'Cluster dashboard'", timeout=60)
+              agent.wait_until_succeeds("curl --fail --silent --show-error http://127.0.0.1:4000/ | grep -q 'Cluster map'", timeout=60)
               agent.succeed("runuser -u nix-swarm-web -- nix-swarm-query Y2x1c3Rlci1tZW1iZXJz > /tmp/web-query-output")
               agent.succeed("test -s /tmp/web-query-output")
               agent.succeed("runuser -u outsider -- test ! -r /run/nix-swarm/query.sock")
@@ -498,7 +504,7 @@
             }
             ${nixSwarm.operator}/bin/nix-swarm --version > "$TMPDIR/version"
             ${nixSwarm.operator}/bin/nix-swarm cluster plan --source "$TMPDIR/config" > "$TMPDIR/plan"
-            grep -qi "read-only operator TUI" "$TMPDIR/help" || {
+            grep -qi "operator CLI" "$TMPDIR/help" || {
               cat "$TMPDIR/help"
               exit 1
             }

@@ -53,6 +53,12 @@ defmodule NixSwarm.API do
     build_version = version()
     config = NixSwarm.Config.current()
     node_metadata = Map.get(config.nodes, Node.self(), %{})
+    proxy = Map.get(config, :proxy, %{enabled?: false, listen_port: nil, routes: []})
+
+    proxy =
+      if proxy.enabled?,
+        do: Map.put(proxy, :metrics, Executor.unit_metrics("nix-swarm-proxy.service")),
+        else: proxy
 
     %{
       node: Node.self(),
@@ -67,7 +73,8 @@ defmodule NixSwarm.API do
       services: Reconciler.local_status(),
       operational_state: NixSwarm.OperationalState.metadata(),
       metrics: node_metrics(),
-      network_info: network_info()
+      network_info: network_info(),
+      proxy: proxy
     }
   end
 
@@ -91,6 +98,9 @@ defmodule NixSwarm.API do
       response_limit: NixSwarm.QueryProtocol.max_response_bytes()
     }
   end
+
+  @doc "Returns the read-only query protocol version."
+  def protocol_version, do: NixSwarm.QueryProtocol.protocol_version()
 
   @doc "Returns the sha256 identity digest of the built source tree."
   def source_digest, do: @source_version_digest
@@ -194,7 +204,7 @@ defmodule NixSwarm.API do
     }
   end
 
-  @doc "Returns the combined cluster overview (members + status) for the TUI dashboard."
+  @doc "Returns the combined cluster overview (members + status) for operator clients."
   def cluster_overview do
     %{
       members: cluster_members(),

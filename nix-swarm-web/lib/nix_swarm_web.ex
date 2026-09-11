@@ -21,8 +21,9 @@ defmodule NixSwarmWeb do
 
   def live_view do
     quote do
-      use Phoenix.LiveView,
-        layout: {NixSwarmWeb.Layouts, :root}
+      use Phoenix.LiveView
+
+      import NixSwarmWeb.LayoutComponents
     end
   end
 

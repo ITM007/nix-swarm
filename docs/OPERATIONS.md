@@ -28,7 +28,7 @@ Enable the separate loopback-only release with
 reads the local query socket through one shared broker, and does not receive the
 BEAM cookie or any deployment credentials. Access it through an SSH tunnel;
 there is no firewall-opening or non-loopback bind option. See
-[`WEB_UI.md`](WEB_UI.md) and the [parity matrix](WEB_TUI_PARITY.md).
+[`WEB_UI.md`](WEB_UI.md).
 
 ## Apply a change
 
@@ -119,8 +119,8 @@ Rollback activates each target's previous NixOS generation and runs the same hea
 
 ## Phase 5 diagnostics and context
 
-`cluster doctor` and the read-only TUI share one normalized operator context for
-source paths, machine/service directories, cluster file, target, and SSH host.
+`cluster doctor` uses one normalized operator context for source paths,
+machine/service directories, cluster file, target, and SSH host.
 The context is ephemeral; Git and evaluated Nix remain authoritative.
 
 Diagnostics identify actionable classes including unknown or unpinned SSH host
@@ -130,7 +130,7 @@ private peer-port failures, protocol incompatibility, credential mismatch, and
 configuration digest drift. Fix the reported prerequisite and rerun `doctor`,
 then `cluster plan` and explicit `cluster apply`.
 
-The TUI is read-only. It never writes topology, service, credential, or plan
+The web UI is read-only. It never writes topology, service, credential, or plan
 artifacts.
 
 Useful target-side commands:

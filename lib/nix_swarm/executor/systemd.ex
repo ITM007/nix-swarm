@@ -107,6 +107,11 @@ defmodule NixSwarm.Executor.Systemd do
           memory: %{used: numeric_property(values, "MemoryCurrent"), max: memory_max(values)},
           disk: %{used: disk_usage_bytes(values, config)},
           network: %{
+            received: numeric_property(values, "IPIngressBytes"),
+            transmitted: numeric_property(values, "IPEgressBytes"),
+            total:
+              numeric_property(values, "IPIngressBytes") +
+                numeric_property(values, "IPEgressBytes"),
             counter:
               numeric_property(values, "IPIngressBytes") +
                 numeric_property(values, "IPEgressBytes")

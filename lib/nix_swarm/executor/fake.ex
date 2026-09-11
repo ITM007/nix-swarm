@@ -75,7 +75,12 @@ defmodule NixSwarm.Executor.Fake do
           cpu: %{usage_ns: counter * 1_000_000},
           memory: %{used: multiplier * 64 * 1024 * 1024, max: 512 * 1024 * 1024},
           disk: %{used: multiplier * 256 * 1024 * 1024},
-          network: %{counter: counter * 16_384},
+          network: %{
+            received: counter * 8_192,
+            transmitted: counter * 8_192,
+            total: counter * 16_384,
+            counter: counter * 16_384
+          },
           started_at_ns: started_at_ns
         }
 

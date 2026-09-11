@@ -17,13 +17,14 @@ defmodule NixSwarmWeb.Router do
 
     get("/healthz", HealthController, :index)
     live("/", DashboardLive)
-    live("/network", NetworkLive)
-    live("/nodes", NodeIndexLive)
-    live("/nodes/:node", NodeShowLive)
-    live("/services", ServiceIndexLive)
-    live("/services/:service", ServiceShowLive)
-    live("/drift", DriftLive)
-    live("/logs", LogsLive)
+    # Keep legacy bookmarks working while presenting one map surface.
+    live("/network", DashboardLive)
+    live("/nodes", DashboardLive)
+    live("/nodes/:node", DashboardLive)
+    live("/services", DashboardLive)
+    live("/services/:service", DashboardLive)
+    live("/drift", DashboardLive)
+    live("/logs", DashboardLive)
 
     get("/exports/snapshot.json", ExportController, :snapshot)
     get("/exports/nodes.csv", ExportController, :nodes)

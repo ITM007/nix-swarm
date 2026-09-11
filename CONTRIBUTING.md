@@ -15,7 +15,7 @@ nix flake check --print-build-logs
 
 ## Project layout
 
-- `lib/` contains the CLI, TUI, runtime, deploy, and remote-control logic
+- `lib/` contains the CLI, runtime, deploy, and remote-control logic
 - `nix/` contains the Nix package and NixOS module
 - `examples/starter/` is the packaged one-node starter
 - `examples/config/` is a larger two-node example

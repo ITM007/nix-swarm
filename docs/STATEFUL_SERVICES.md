@@ -23,7 +23,6 @@ Everything else this document mentions is optional.
 |---|---|---|---|
 | Overlay / mesh | carries BEAM peer traffic off the LAN | peers are on different networks or behind NAT | NetBird (`netbird0`) — see your firewall `firewallInterfaces` |
 | Backup target | stores borg repositories | a service declares `state.backup` | Garage (S3-compatible); any borg-compatible repo works |
-| Litestream target | continuous SQLite WAL replication (Tier 2) | a service declares `state.replication` (Phase 2) | Garage (S3-compatible) |
 | Reverse proxy | name/TLS/health-checked routing to app ports | you want domain + HTTPS access to apps | Caddy, see `docs/INGRESS.md`; no edge is needed for LAN/SSH-tunnel use |
 
 No component is rendered unless you opt in: a service without a `state.backup`
@@ -36,9 +35,13 @@ A stateful service is declared like any other, plus a `state` block:
 
 ```nix
 services.nix-swarm.services.paperless = {
-  command = "paperless.service";
+  unitTemplate = "paperless.service";
   replicas = 1;                              # enforced single-writer
-  allowedNodes = [ "node-a" "node-b" "node-c" ];
+  allowedNodes = [
+    "nix-swarm@node-a"
+    "nix-swarm@node-b"
+    "nix-swarm@node-c"
+  ];
   state = {
     dirs = [ "/var/lib/paperless" ];         # required: one or more dirs
     backup = {                               # optional; omitting disables backups
@@ -67,23 +70,27 @@ Semantics:
   (and autoscaling beyond 1) for any service with a `state` block. Two live
   copies of one state directory would diverge; the reconciler never starts a
   second owner.
+- Use `restore = "borg-latest"` with the built-in Borg workflow. The
+  `"litestream"` enum is reserved for a future restore implementation and is
+  not a supported backup provider in this release.
 
 ## Recovery model
 
 | Shape | Mechanism | RPO | RTO |
 |---|---|---|---|
 | Any app + `state.dirs` + `state.backup` (Tier 1) | borgmatic schedule → chosen repo | backup interval (default hourly) | minutes (restore size) |
-| SQLite-only app + `state.replication` (Tier 2, Phase 2) | Litestream WAL → S3-compatible repo | seconds | seconds–minute |
+| Any app + `state.dirs` without `state.backup` | no Nix-Swarm backup or restore | none | operator-defined |
 
 - The reconciler **never auto-starts** a stateful unit on a node whose
   declared state directories are absent. Such a unit reports
   `:awaiting_heal` in `cluster status` — it is not running and will not start
   until an operator heals it.
-- `cluster heal NAME --yes [--node NODE]` restores the latest snapshot onto a
-  live eligible node: state is written to `<dir>.restore-tmp`, verified
-  (present, non-empty, restore exit 0), then atomically moved into place.
-  On any failure the staging directory is removed and the existing target is
-  left untouched (fail closed).
+- `cluster heal NAME --yes [--node NODE]` restores the latest Borg snapshot onto a
+  live eligible node: every declared state directory is written to its own
+  `<dir>.restore-tmp` and verified (present, non-empty, restore exit 0) before
+  any directory is published. Each staging directory is then atomically moved
+  into place. On a restore failure all staging directories are removed and
+  existing targets are left untouched (fail closed).
 - After the restore is verified the unit is started and checked per the
   deploy health policy.
 - When the previous owner rejoins, deterministic placement keeps exactly one
@@ -92,15 +99,15 @@ Semantics:
 
 ### Manual heal is the default
 
-`autoHeal = false` is the default: an operator runs `cluster heal` after
+`autoHeal = false` is the default and automatic healing is not implemented in
+this release: an operator runs `cluster heal` after
 confirming the owner is down. Reboots and brief partitions must not race a
 restore, which is why `healGraceSec` (default 600 s) exists — it is the
 minimum downtime before an automatic heal would even be considered when
 `autoHeal` is later enabled per service.
 
-**Release decision (Phase 1): manual heal only.** `auto_heal` is parsed,
-validated, and reserved for a future release, but no code path triggers a
-heal automatically in this release. Every restore is operator-initiated via
+**Release decision: manual heal only.** `autoHeal` is parsed and validated, but
+no code path triggers a heal automatically in this release. Every restore is operator-initiated via
 `cluster heal NAME --yes [--node NODE]`; the reconciler's only automatic
 actions remain holding the unit in `:awaiting_heal` (never starting it with
 missing state) and stopping a stale copy when ownership moves.

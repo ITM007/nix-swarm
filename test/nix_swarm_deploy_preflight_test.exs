@@ -44,6 +44,13 @@ defmodule NixSwarmDeployPreflightTest do
     end
   end
 
+  test "unqueryable daemon is redeployable (existing classification)" do
+    result = Preflight.classify(target(), healthy(%{query: %{ok: true, state: :unqueryable}}))
+    assert result.classification == :installed_unqueryable
+    assert result.blockers == []
+    assert Preflight.ready?(result)
+  end
+
   test "hard blockers produce incompatible classification" do
     result = Preflight.classify(target(), healthy(%{ssh: %{ok: false}, privilege: %{ok: false}}))
     refute Preflight.ready?(result)

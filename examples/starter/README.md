@@ -39,11 +39,12 @@ sops-nix, agenix, or systemd credentials for established deployments.
 
 ## Example service
 
-`services/example-web.nix` is a single bounded systemd service. It is declared
-in `machines/node-a.nix` and enabled by the `example-web` service entry in
-`cluster.nix`. `services/caddy-edge.nix` configures the standard NixOS Caddy
-module and proxies to that local service with active health checks. The Caddy
-service is declared as one `caddy.service` replica on this node.
+`services/example-web.nix` keeps the systemd definition and its Nix-Swarm
+placement contract together. `services/caddy-edge.nix` does the same for the
+edge service while configuring the standard NixOS Caddy module. `cluster.nix`
+holds only cluster membership and machine deployment identity; this keeps a
+service's behavior visible in one small module instead of splitting it across a
+central registry and a service file.
 
 Optional ingress is a pattern, not a product feature: the edge never
 participates in the control path and direct node ports or an SSH tunnel work

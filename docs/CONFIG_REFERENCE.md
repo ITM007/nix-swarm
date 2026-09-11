@@ -127,15 +127,16 @@ forwarding, certificates, certificate storage, and edge-node failover remain
 operator responsibilities. Do not use automatic backend movement for
 single-writer or stateful services without application-owned coordination.
 
-## Optional built-in proxy
+## Built-in proxy
 
-The built-in BEAM edge is disabled by default. It is independent of the
-Nix-Swarm control path and may be enabled when a small trusted-LAN deployment
-needs static host/path routing without a separate Caddy or nginx service.
+The built-in BEAM edge is enabled by default. It is independent of the
+Nix-Swarm control path and provides static host/path routing for a small
+trusted-LAN deployment. Disable it explicitly when a separate Caddy or nginx
+service owns ingress.
 
 ```nix
 services.nix-swarm.proxy = {
-  enable = false; # set true to render nix-swarm-proxy.service
+  enable = true; # set false when an external edge owns ingress
   listen.port = 8080;
   openFirewall = false;
   firewallInterfaces = [ ];
@@ -162,7 +163,7 @@ through systemd `LoadCredential` as `proxy-client-secret` and
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `proxy.enable` | `false` | Render and start the optional proxy |
+| `proxy.enable` | `true` | Render and start the built-in proxy |
 | `proxy.listen.port` | `8080` | Listening TCP port |
 | `proxy.openFirewall` | `false` | Allow the port through the NixOS firewall |
 | `proxy.firewallInterfaces` | `[]` | Named interfaces for the proxy port; required when opening the firewall |

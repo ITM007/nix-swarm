@@ -9,7 +9,7 @@ defmodule NixSwarmWeb.StatusComponents do
 
   def summary_card(assigns) do
     ~H"""
-    <article class={["summary-card", "summary-card--#{@tone}"]}>
+    <article class={["card", "card-border", "summary-card", "summary-card--#{@tone}"]}>
       <p class="summary-card__label"><%= @label %></p>
       <p class="summary-card__value"><%= @value %></p>
     </article>
@@ -21,7 +21,7 @@ defmodule NixSwarmWeb.StatusComponents do
 
   def status_badge(assigns) do
     ~H"""
-    <span class={["status-badge", "status-badge--#{@tone}"]} role="status"><%= @label %></span>
+    <span class={["badge", "status-badge", "status-badge--#{@tone}", "badge-#{badge_tone(@tone)}"]} role="status"><%= @label %></span>
     """
   end
 
@@ -30,10 +30,15 @@ defmodule NixSwarmWeb.StatusComponents do
 
   def metric_value(assigns) do
     ~H"""
-    <div class="metric-value">
+    <div class="stat metric-value">
       <span class="metric-value__label"><%= @label %></span>
-      <strong><%= @value %></strong>
+      <strong class="stat-value"><%= @value %></strong>
     </div>
     """
   end
+
+  defp badge_tone(tone) when tone in ["healthy", "fresh", "good"], do: "success"
+  defp badge_tone(tone) when tone in ["degraded", "stale", "warn"], do: "warning"
+  defp badge_tone("bad"), do: "error"
+  defp badge_tone(_), do: "neutral"
 end

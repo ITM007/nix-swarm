@@ -20,7 +20,7 @@ defmodule NixSwarmWeb.NodeIndexLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main id="nodes-page">
+    <.app_shell id="nodes-page" current_path="/nodes">
       <header class="page-header">
         <p class="eyebrow">Read-only inventory</p>
         <h1>Nodes</h1>
@@ -40,7 +40,7 @@ defmodule NixSwarmWeb.NodeIndexLive do
           <p role="status">No node data is currently known.</p>
         <% else %>
           <div class="table-wrap">
-            <table>
+            <table class="table table-zebra">
               <caption>Cluster nodes</caption>
               <thead>
                 <tr><th scope="col">Node</th><th scope="col">Host</th><th scope="col">Liveness</th><th scope="col">Availability</th><th scope="col">Version</th><th scope="col">Config digest</th><th scope="col">Resources</th><th scope="col">Network</th><th scope="col">Owned units</th></tr>
@@ -66,7 +66,7 @@ defmodule NixSwarmWeb.NodeIndexLive do
       <% else %>
         <p role="status">Loading node status.</p>
       <% end %>
-    </main>
+    </.app_shell>
     """
   end
 

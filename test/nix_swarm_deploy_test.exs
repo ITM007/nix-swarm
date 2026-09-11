@@ -120,6 +120,8 @@ defmodule NixSwarmDeployTest do
     source = Path.expand("..", __DIR__)
     plan = NixSwarm.Deploy.plan(source: source)
 
+    assert plan.full_cluster_rollout?
+
     assert Enum.map(plan.results, & &1.host) == [
              "root@example-node-a.local",
              "root@example-node-b.local"
@@ -218,6 +220,18 @@ defmodule NixSwarmDeployTest do
              ["node-a"],
              ["node-b"]
            ]
+  end
+
+  test "an explicit host subset is an intermediate rollout" do
+    source = Path.expand("..", __DIR__)
+
+    plan =
+      NixSwarm.Deploy.plan(
+        source: source,
+        hosts: ["root@example-node-a.local"]
+      )
+
+    refute plan.full_cluster_rollout?
   end
 
   test "manifest policy excludes maintenance hosts and configures readiness" do
@@ -398,6 +412,35 @@ defmodule NixSwarmDeployTest do
       |> put_in([:status, :placement_diagnostics], [])
 
     assert NixSwarm.Deploy.healthy_overview?(converged, true)
+  end
+
+  test "health gate accepts string node identities returned over the SSH query protocol" do
+    node = "nix-swarm@wire-node-a"
+
+    overview = %{
+      members: %{live_nodes: [node], configured_nodes: [node]},
+      status: %{
+        queried_node: node,
+        config_consistent?: true,
+        placement_diagnostics: [],
+        placements: %{
+          "web" => [%{owner: node, unit: "web.service"}]
+        },
+        nodes: [
+          {node,
+           %{
+             services: [
+               %{
+                 name: "web",
+                 units: [%{owner: node, status: :running, unit: "web.service"}]
+               }
+             ]
+           }}
+        ]
+      }
+    }
+
+    assert NixSwarm.Deploy.healthy_overview?(overview, true)
   end
 
   test "rolling health gates reject unreachable nodes and unhealthy local units" do

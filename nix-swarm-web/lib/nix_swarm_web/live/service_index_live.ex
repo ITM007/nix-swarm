@@ -3,7 +3,7 @@ defmodule NixSwarmWeb.ServiceIndexLive do
 
   use NixSwarmWeb, :live_view
 
-  alias NixSwarmWeb.{InventoryHelpers, QueryBroker}
+  alias NixSwarmWeb.{Format, InventoryHelpers, QueryBroker}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -20,7 +20,7 @@ defmodule NixSwarmWeb.ServiceIndexLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main id="services-page">
+    <.app_shell id="services-page" current_path="/services">
       <header class="page-header">
         <p class="eyebrow">Read-only inventory</p>
         <h1>Services</h1>
@@ -40,7 +40,7 @@ defmodule NixSwarmWeb.ServiceIndexLive do
           <p role="status">No service data is currently known.</p>
         <% else %>
           <div class="table-wrap">
-            <table>
+            <table class="table table-zebra">
               <caption>Cluster services</caption>
               <thead><tr><th scope="col">Service</th><th scope="col">Desired</th><th scope="col">State</th><th scope="col">Slots and owners</th><th scope="col">Recovery</th><th scope="col">Current metrics</th></tr></thead>
               <tbody>
@@ -61,7 +61,7 @@ defmodule NixSwarmWeb.ServiceIndexLive do
       <% else %>
         <p role="status">Loading service status.</p>
       <% end %>
-    </main>
+    </.app_shell>
     """
   end
 
@@ -86,7 +86,7 @@ defmodule NixSwarmWeb.ServiceIndexLive do
       |> InventoryHelpers.map_value(name, %{})
 
     metrics
-    |> Enum.map(fn {key, value} -> "#{key}: #{value_label(value)}" end)
+    |> Enum.map(fn {key, value} -> "#{key}: #{value_label(key, value)}" end)
     |> Enum.sort()
     |> Enum.join("; ")
     |> case do
@@ -95,8 +95,9 @@ defmodule NixSwarmWeb.ServiceIndexLive do
     end
   end
 
-  defp value_label(value) when is_map(value), do: inspect(value)
-  defp value_label(value), do: to_string(value)
+  defp value_label(key, value) when key in [:cpu, "cpu"], do: Format.cpu_percent(value)
+  defp value_label(_key, value) when is_map(value), do: inspect(value)
+  defp value_label(_key, value), do: to_string(value)
 
   defp snapshot_state(nil), do: :loading
   defp snapshot_state(%{stale?: true}), do: :stale

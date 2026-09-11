@@ -188,16 +188,31 @@ let
   # embedded in the script or Nix.
   restoreWrappers = mapAttrs'
     (name: serviceCfg:
+      let
+        sourceCases = concatMapStringsSep "\n" (dir: "            ${lib.escapeShellArg dir}) strip_components=${toString (builtins.length (builtins.filter (part: part != "") (splitString "/" dir)))} ;;") serviceCfg.state.dirs;
+      in
       lib.nameValuePair "nix-swarm-restore-${name}" (
         pkgs.writeShellScriptBin "nix-swarm-restore-${name}" ''
           set -eu
-          if [ "$#" -lt 1 ]; then
-            echo "usage: nix-swarm-restore-${name} STAGING_DIR" >&2
+          if [ "$#" -ne 2 ]; then
+            echo "usage: nix-swarm-restore-${name} STAGING_DIR STATE_DIR" >&2
             exit 2
           fi
+          staging_dir="$1"
+          source_dir="$2"
+          case "$source_dir" in
+${sourceCases}
+            *) echo "state directory is not declared for ${name}" >&2; exit 2 ;;
+          esac
           credential_file=${lib.escapeShellArg "${cfg.backupCredentialDir}/${name}.borg-passphrase"}
           test -r "$credential_file"
-          exec ${pkgs.borgmatic}/bin/borgmatic restore --config ${restoreBorgmaticConfigs.${name}} --archive latest --destination "$1"
+          archive_path="''${source_dir#/}"
+          exec ${pkgs.borgmatic}/bin/borgmatic extract \
+            --config ${restoreBorgmaticConfigs.${name}} \
+            --archive latest \
+            --path "$archive_path" \
+            --destination "$staging_dir" \
+            --strip-components "$strip_components"
         ''
       ))
     statefulBackupServices;
@@ -402,6 +417,11 @@ let
     {services, [
       ${concatMapStringsSep ",\n      " (entry: entry) (mapAttrsToList mkServiceEntry cfg.services)}
     ]}.
+    {proxy, ${toErlTerm {
+      enabled = cfg.proxy.enable;
+      listen_port = cfg.proxy.listen.port;
+      routes = mapAttrsToList mkProxyRoute cfg.proxy.routes;
+    }}}.
     {runtime, [
       {connect_interval_ms, ${toString cfg.runtime.connectIntervalMs}},
       {reconcile_interval_ms, ${toString cfg.runtime.reconcileIntervalMs}},
@@ -754,8 +774,8 @@ in
         options = {
           enable = mkOption {
             type = types.bool;
-            default = false;
-            description = "Enable the optional built-in BEAM edge proxy.";
+            default = true;
+            description = "Enable the built-in BEAM edge proxy by default; set false when an external edge owns incoming traffic.";
           };
 
           listen.port = mkOption {
@@ -824,7 +844,7 @@ in
         };
       };
       default = { };
-      description = "Optional built-in BEAM edge proxy configuration, disabled by default.";
+      description = "Built-in BEAM edge proxy configuration, enabled by default.";
     };
 
 
@@ -887,6 +907,14 @@ in
           echo "nix-swarm cookie must be root-owned with mode 0400 or 0600: $cookie_path" >&2
           exit 1
         fi
+      fi
+    '';
+
+    system.activationScripts.nixSwarmLegacyRuntimeMaskCleanup.text = ''
+      legacy_unit=/run/systemd/system/swarmd.service
+
+      if [ -L "$legacy_unit" ] && [ "$(${pkgs.coreutils}/bin/readlink "$legacy_unit")" = "/dev/null" ]; then
+        ${pkgs.coreutils}/bin/rm -f -- "$legacy_unit"
       fi
     '';
 
@@ -961,7 +989,7 @@ in
       backupServices
       (mkIf cfg.proxy.enable {
         nix-swarm-proxy = {
-          description = "Nix-Swarm optional built-in edge proxy";
+          description = "Nix-Swarm built-in edge proxy";
           wantedBy = [ "multi-user.target" ];
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];

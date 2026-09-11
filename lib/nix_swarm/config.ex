@@ -106,6 +106,7 @@ defmodule NixSwarm.Config do
       peers: peers,
       nodes: nodes,
       services: normalize_services(NixSwarm.fetch_value(raw, :services, [])),
+      proxy: normalize_proxy(NixSwarm.fetch_value(raw, :proxy, %{})),
       runtime: runtime
     }
   end
@@ -194,6 +195,34 @@ defmodule NixSwarm.Config do
   end
 
   defp normalize_executor(_), do: %{adapter: :invalid, root: @default_runtime.executor.root}
+
+  defp normalize_proxy(raw_proxy) do
+    routes =
+      raw_proxy
+      |> NixSwarm.fetch_value(:routes, [])
+      |> List.wrap()
+      |> Enum.map(fn raw_route ->
+        %{
+          name: to_string(NixSwarm.fetch_value(raw_route, :name, "unknown")),
+          host: to_string(NixSwarm.fetch_value(raw_route, :host, "")),
+          path_prefix: to_string(NixSwarm.fetch_value(raw_route, :path_prefix, "/")),
+          upstreams:
+            raw_route
+            |> NixSwarm.fetch_value(:upstreams, [])
+            |> List.wrap()
+            |> Enum.map(&to_string/1),
+          auth: NixSwarm.fetch_value(raw_route, :auth, :public) |> to_string()
+        }
+      end)
+
+    %{
+      enabled?:
+        NixSwarm.fetch_value(raw_proxy, :enabled, false) == true or
+          NixSwarm.fetch_value(raw_proxy, :enabled?, false) == true,
+      listen_port: NixSwarm.fetch_value(raw_proxy, :listen_port, nil),
+      routes: routes
+    }
+  end
 
   defp normalize_node_name(name) when is_atom(name),
     do: NodeName.to_node!(name, label: "configured node name")

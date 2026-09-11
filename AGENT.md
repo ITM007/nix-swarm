@@ -10,7 +10,7 @@ backup and verified restore-on-placement. Keep the design narrow:
 - trusted BEAM peers own membership, deterministic placement, supervision, and
   reconciliation.
 - DETS stores node-local operational observations, never desired state.
-- the operator CLI and TUI are read-only except for explicit Nix deployment
+- the operator CLI and web UI are read-only except for explicit Nix deployment
   commands.
 
 Do not add a container runtime, secret store, mutable service controls, Mnesia
@@ -26,7 +26,7 @@ single-writer and recover by declared restore, never by live sync.
 
 The supported operator surface is deliberately small:
 
-- launch the read-only TUI, or use `help` and `version`;
+- use `help` and `version` from the operator CLI;
 - inspect with `cluster doctor`, `cluster status`, and `service logs`;
 - preview and mutate Nix with `cluster plan` and `cluster apply --yes`;
 - use `cluster rollback --yes`, `cluster upgrade --yes`, and
@@ -46,7 +46,7 @@ never runs with `replicas > 1`. CPU-and-memory autoscaling is limited to
 existing declared service capacity; it never rewrites Nix or manages a
 stateful workload.
 
-The TUI is a read-only projection. Nix files and Git are the authoritative
+The web UI is a read-only projection. Nix files and Git are the authoritative
 record; runtime observations are not a second desired-state store. Removed
 commands return a migration error rather than silently invoking compatibility
 paths. Users should replace old bootstrap aliases with `cluster apply`,
@@ -106,7 +106,7 @@ while peer config digests differ.
 
 ## Important paths
 
-- `lib/nix_swarm/`: OTP runtime, operator, deployment, and TUI
+- `lib/nix_swarm/`: OTP runtime, operator, deployment, and remote-control logic
 - `nix/nix-swarm/module.nix`: NixOS options and hardened systemd service
 - `nix/nix-swarm/packages.nix`: minimal release source and wrappers
 - `examples/starter/`: packaged one-node starter

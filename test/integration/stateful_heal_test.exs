@@ -84,7 +84,6 @@ defmodule NixSwarm.StatefulHealTest do
                  "--node",
                  Atom.to_string(target_node)
                ],
-               &NixSwarm.TUI.run/1,
                query_fun: remote.query_fun,
                command_fun:
                  local_heal_command_fun(

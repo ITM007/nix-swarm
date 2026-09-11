@@ -18,6 +18,15 @@ defmodule NixSwarmApiPhase4Test do
   end
 
   test "does not advertise the internal local cluster log helper as an operator call" do
+    assert function_exported?(NixSwarm.API, :protocol_version, 0)
+
+    assert NixSwarm.Remote.function_exported?(
+             nil,
+             NixSwarm.API,
+             :protocol_version,
+             0
+           )
+
     refute NixSwarm.Remote.function_exported?(
              nil,
              NixSwarm.API,

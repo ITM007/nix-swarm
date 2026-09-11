@@ -16,6 +16,11 @@ if config_env() == :prod do
   config :nix_swarm_web, :query_socket, socket_path
   config :nix_swarm_web, :poll_interval_ms, poll_interval_ms
 
+  case System.get_env("NIX_SWARM_CONFIG_SOURCE") do
+    nil -> :ok
+    source -> config :nix_swarm_web, :config_source, source
+  end
+
   config :nix_swarm_web, NixSwarmWeb.Endpoint,
     server: true,
     secret_key_base: secret_key_base,

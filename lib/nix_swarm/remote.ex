@@ -313,9 +313,12 @@ defmodule NixSwarm.Remote do
     error -> {:error, {:ssh_failed, Exception.message(error)}}
   end
 
-  defp decode_ssh_response(output) do
-    with {:ok, response} <- QueryProtocol.decode_response(output) do
-      response
+  @doc false
+  def decode_ssh_response(output) do
+    case QueryProtocol.decode_response(output) do
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:ok, response} -> {:ok, response}
+      {:error, _reason} = error -> error
     end
   end
 

@@ -9,16 +9,5 @@
       nixosConfiguration = "node-a";
     };
 
-    services.example-web = {
-      replicas = 1;
-      unitTemplate = "example-web.service";
-      allowedNodes = [ "nix-swarm@node-a" ];
-    };
-
-    services.caddy = {
-      replicas = 1;
-      unitTemplate = "caddy.service";
-      allowedNodes = [ "nix-swarm@node-a" ];
-    };
   };
 }

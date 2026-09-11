@@ -233,6 +233,9 @@ defmodule NixSwarm.QueryProtocol do
     end
   end
 
+  defp wire_encode({:nix_swarm_atom, value}) when is_binary(value),
+    do: {:nix_swarm_atom, value}
+
   defp wire_encode(value) when is_atom(value) do
     name = Atom.to_string(value)
 
@@ -240,7 +243,7 @@ defmodule NixSwarm.QueryProtocol do
          String.match?(name, ~r/\A[A-Za-z0-9][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9_.-]*\z/) do
       {:nix_swarm_node, name}
     else
-      value
+      {:nix_swarm_atom, name}
     end
   end
 
@@ -254,6 +257,14 @@ defmodule NixSwarm.QueryProtocol do
 
   defp wire_encode(value) when is_list(value), do: Enum.map(value, &wire_encode/1)
   defp wire_encode(value), do: value
+
+  defp wire_decode({:nix_swarm_atom, value}) when is_binary(value) do
+    try do
+      String.to_existing_atom(value)
+    rescue
+      ArgumentError -> value
+    end
+  end
 
   defp wire_decode({:nix_swarm_node, value}) when is_binary(value) do
     try do

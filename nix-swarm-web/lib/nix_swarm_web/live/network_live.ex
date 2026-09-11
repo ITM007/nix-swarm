@@ -25,7 +25,7 @@ defmodule NixSwarmWeb.NetworkLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main id="network-page">
+    <.app_shell id="network-page" current_path="/network">
       <header class="page-header">
         <p class="eyebrow">Read-only inventory</p>
         <h1>Network</h1>
@@ -47,7 +47,7 @@ defmodule NixSwarmWeb.NetworkLive do
       <% else %>
         <p role="status">Loading network status.</p>
       <% end %>
-    </main>
+    </.app_shell>
     """
   end
 

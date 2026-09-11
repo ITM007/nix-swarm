@@ -59,6 +59,7 @@ defmodule NixSwarm.Application do
   defp children(:agent) do
     [
       {Task.Supervisor, name: NixSwarm.TaskSupervisor},
+      {Task.Supervisor, name: NixSwarm.QueryTaskSupervisor, max_children: 32},
       {NixSwarm.Config.Server, []},
       {NixSwarm.OperationalState, []},
       {NixSwarm.Cluster, []},

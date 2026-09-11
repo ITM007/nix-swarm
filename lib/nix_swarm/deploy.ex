@@ -255,7 +255,8 @@ defmodule NixSwarm.Deploy do
       batches =
         Enum.map(base.batches, fn batch ->
           Enum.map(batch, fn target ->
-            {executable, args, env} = rollback_invocation(target.host, opts)
+            {executable, args, env} =
+              rollback_invocation(target.host, target.configuration, base.flake, opts)
 
             target
             |> Map.put(:executable, executable)
@@ -321,6 +322,15 @@ defmodule NixSwarm.Deploy do
         end
       end)
 
+    full_cluster_hosts =
+      manifest
+      |> deployment_targets_from_manifest()
+      |> Enum.reject(&(&1.availability == "maintenance"))
+      |> Enum.map(& &1.host)
+      |> Enum.sort()
+
+    full_cluster_rollout? = target_hosts == full_cluster_hosts
+
     results =
       Enum.map(target_hosts, fn host ->
         configuration = Map.fetch!(configurations, host)
@@ -367,6 +377,7 @@ defmodule NixSwarm.Deploy do
         health_check: health_check,
         health_timeout_sec: health_timeout_sec,
         health_stable_samples: health_stable_samples,
+        full_cluster_rollout?: full_cluster_rollout?,
         deployment_manifest: manifest,
         validation: %{
           targets: validation_targets,
@@ -640,12 +651,20 @@ defmodule NixSwarm.Deploy do
     {"nixos-rebuild", args, [{"NIX_SSHOPTS", Enum.join(@ssh_options, " ")}]}
   end
 
-  defp rollback_invocation(host, opts) do
+  defp rollback_invocation(host, configuration, flake, opts) do
     opts = normalize_opts(opts)
     host = validate_ssh_host!(host)
+    validate_flake_ref!(flake)
 
     args =
-      ["switch", "--rollback", "--target-host", host]
+      [
+        "switch",
+        "--rollback",
+        "--flake",
+        "#{deployment_flake_ref(flake)}##{configuration}",
+        "--target-host",
+        host
+      ]
       |> maybe_append_option("--build-host", Keyword.get(opts, :build_host))
       |> maybe_append_flag("--use-remote-sudo", Keyword.get(opts, :use_remote_sudo, true))
 
@@ -749,7 +768,7 @@ defmodule NixSwarm.Deploy do
         batch_results = run_batch!(batch, plan.command_timeout_ms, plan.runner)
 
         if plan.health_check do
-          verify_batch_health!(batch, remaining == [], plan)
+          verify_batch_health!(batch, remaining == [] and plan.full_cluster_rollout?, plan)
         end
 
         batch_results
@@ -824,7 +843,9 @@ defmodule NixSwarm.Deploy do
 
     rollback_batch =
       Enum.map(targets, fn target ->
-        {executable, args, env} = rollback_invocation(target.host, Map.to_list(plan))
+        {executable, args, env} =
+          rollback_invocation(target.host, target.configuration, plan.flake, Map.to_list(plan))
+
         %{target | executable: executable, args: args, env: env}
       end)
 
@@ -840,6 +861,7 @@ defmodule NixSwarm.Deploy do
 
   defp health_error({:ok, _overview}), do: "cluster did not converge"
   defp health_error({:error, reason}), do: inspect(reason)
+  defp health_error(reason), do: inspect(reason)
 
   @doc false
   def healthy_overview?(overview, final_batch? \\ true)
@@ -882,7 +904,7 @@ defmodule NixSwarm.Deploy do
   defp queried_node_healthy?(status) do
     queried_node = Map.get(status, :queried_node)
 
-    with node when is_atom(node) <- queried_node,
+    with node when is_atom(node) or is_binary(node) <- queried_node,
          {_node, node_status} <-
            Enum.find(Map.get(status, :nodes, []), fn {candidate, _status} ->
              candidate == node
@@ -929,7 +951,7 @@ defmodule NixSwarm.Deploy do
     |> Map.get(:placements, %{})
     |> Enum.all?(fn {service_name, slots} ->
       Enum.all?(slots, fn slot ->
-        with owner when is_atom(owner) <- Map.get(slot, :owner),
+        with owner when is_atom(owner) or is_binary(owner) <- Map.get(slot, :owner),
              %{services: services} <- Map.get(node_statuses, owner),
              %{units: units} = service <- Enum.find(services, &(&1.name == service_name)),
              true <- service_readiness_healthy?(service),

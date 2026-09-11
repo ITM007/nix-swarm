@@ -66,7 +66,7 @@ defmodule NixSwarmWeb.NodeShowLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main id="node-show-page">
+    <.app_shell id="node-show-page" current_path="/nodes">
       <p><a href="/nodes">Back to nodes</a></p>
       <%= if @node do %>
         <header class="page-header">
@@ -102,7 +102,7 @@ defmodule NixSwarmWeb.NodeShowLive do
 
         <section aria-labelledby="node-logs-heading">
           <h2 id="node-logs-heading">Node logs</h2>
-          <button type="button" phx-click="load_logs" phx-value-lines={@log_lines}>Refresh node logs (200 lines)</button>
+          <button class="btn btn-primary" type="button" phx-click="load_logs" phx-value-lines={@log_lines}>Refresh node logs (200 lines)</button>
           <%= if @log_error do %><p class="notice notice-degraded" role="alert">Partial log result: <%= @log_error %></p><% end %>
           <%= if @logs do %>
             <p>Source <%= @node.name %> · Fetched <%= format_time(@fetched_at) %></p>
@@ -114,7 +114,7 @@ defmodule NixSwarmWeb.NodeShowLive do
       <% else %>
         <header class="page-header"><h1>Unknown node</h1><p>The requested node is not present in the current snapshot.</p></header>
       <% end %>
-    </main>
+    </.app_shell>
     """
   end
 

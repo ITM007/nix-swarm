@@ -112,6 +112,115 @@ defmodule NixSwarmDeployHealTest do
     assert_received {:start_unit, "paperless.service"}
   end
 
+  test "passes the declared state directory to the restore wrapper", %{root: root} do
+    dir = Path.join(root, "state")
+
+    script =
+      write_script!(Path.join(root, "restore.sh"), """
+      #!/bin/sh
+      [ "$#" -eq 2 ] || exit 2
+      [ "$2" = "#{dir}" ] || exit 3
+      printf 'recovered\\n' > "$1/marker.txt"
+      """)
+
+    assert {:ok, %{restored: [^dir]}} =
+             NixSwarm.Deploy.Heal.run(
+               service: "paperless",
+               unit: "paperless.service",
+               dirs: [dir],
+               host: "root@node-b",
+               restore_command: script,
+               executor: RecordingExecutor,
+               command_fun: local_command_fun()
+             )
+
+    assert File.read!(Path.join(dir, "marker.txt")) == "recovered\n"
+  end
+
+  test "stages all directories before publishing any of them", %{root: root} do
+    dir_a = Path.join(root, "data")
+    dir_b = Path.join(root, "uploads")
+
+    script =
+      write_script!(Path.join(root, "restore.sh"), """
+      #!/bin/sh
+      case "$1" in
+        "#{dir_a}.restore-tmp")
+          printf 'a\\n' > "$1/marker.txt"
+          ;;
+        "#{dir_b}.restore-tmp")
+          echo "repository read failed" >&2
+          exit 1
+          ;;
+        *)
+          exit 2
+          ;;
+      esac
+      """)
+
+    assert {:error, {:restore_failed, ^dir_b, {:remote_command_failed, 1, _output}}} =
+             NixSwarm.Deploy.Heal.run(
+               service: "paperless",
+               unit: "paperless.service",
+               dirs: [dir_a, dir_b],
+               host: "root@node-b",
+               restore_command: script,
+               executor: RecordingExecutor,
+               command_fun: local_command_fun()
+             )
+
+    refute File.exists?(dir_a)
+    refute File.exists?(dir_b)
+    refute File.exists?(dir_a <> ".restore-tmp")
+    refute File.exists?(dir_b <> ".restore-tmp")
+    refute_received {:start_unit, _unit}
+  end
+
+  test "a later directory failure can be retried without a partial target", %{root: root} do
+    dir_a = Path.join(root, "data")
+    dir_b = Path.join(root, "uploads")
+    failed_once = Path.join(root, "failed-once")
+
+    script =
+      write_script!(Path.join(root, "restore.sh"), """
+      #!/bin/sh
+      if [ "$2" = "#{dir_b}" ] && [ ! -e "#{failed_once}" ]; then
+        touch "#{failed_once}"
+        exit 1
+      fi
+      printf '%s\\n' "$2" > "$1/marker.txt"
+      """)
+
+    assert {:error, {:restore_failed, ^dir_b, {:remote_command_failed, 1, _output}}} =
+             NixSwarm.Deploy.Heal.run(
+               service: "paperless",
+               unit: "paperless.service",
+               dirs: [dir_a, dir_b],
+               host: "root@node-b",
+               restore_command: script,
+               executor: RecordingExecutor,
+               command_fun: local_command_fun()
+             )
+
+    refute File.exists?(dir_a)
+    refute File.exists?(dir_b)
+
+    assert {:ok, %{restored: [^dir_a, ^dir_b]}} =
+             NixSwarm.Deploy.Heal.run(
+               service: "paperless",
+               unit: "paperless.service",
+               dirs: [dir_a, dir_b],
+               host: "root@node-b",
+               restore_command: script,
+               executor: RecordingExecutor,
+               command_fun: local_command_fun()
+             )
+
+    assert File.read!(Path.join(dir_a, "marker.txt")) == "#{dir_a}\n"
+    assert File.read!(Path.join(dir_b, "marker.txt")) == "#{dir_b}\n"
+    assert_received {:start_unit, "paperless.service"}
+  end
+
   test "a failed restore removes staging, leaves no target, and never starts the unit", %{
     root: root
   } do

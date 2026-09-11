@@ -9,11 +9,12 @@ defmodule NixSwarm.Deploy.Heal do
     2. run the service's restore wrapper (`nix-swarm-restore-<service>`,
        installed on every node by the NixOS module) into the staging dir;
     3. verify the staging dir is non-empty (restore succeeded);
-    4. atomically move the staging dir into place;
+    4. after every directory is staged, atomically move each staging dir into place;
     5. start the unit and confirm it is running.
 
-  Every failure removes the staging directory and leaves any existing target
-  untouched (fail closed). This module never derives desired state; the unit,
+  Restore failures remove all staging directories and leave any existing target
+  untouched (fail closed). Publication also refuses targets that appeared after
+  preflight. This module never derives desired state; the unit,
   directories, and restore strategy are supplied by the operator from cluster
   observations.
   """
@@ -68,18 +69,51 @@ defmodule NixSwarm.Deploy.Heal do
   defp validate_dirs(dirs), do: {:error, {:invalid_state_dirs, dirs}}
 
   defp restore_dirs(dirs, restore_bin, host, command_fun) do
-    Enum.reduce_while(dirs, {:ok, []}, fn dir, {:ok, restored} ->
-      staging = staging_path(dir)
-      parent = Path.dirname(dir)
+    entries = Enum.map(dirs, &%{dir: &1, staging: staging_path(&1)})
 
-      with {:ok, _} <- remote(command_fun, host, prepare_staging(parent, dir, staging)),
-           {:ok, _} <- remote(command_fun, host, restore_command(restore_bin, staging)),
-           {:ok, _} <- remote(command_fun, host, verify_staging(dir, staging)),
-           {:ok, _} <- remote(command_fun, host, move_into_place(dir, staging)) do
-        {:cont, {:ok, [dir | restored]}}
+    with :ok <- preflight_targets(entries, host, command_fun),
+         {:ok, staged} <- stage_dirs(entries, restore_bin, host, command_fun),
+         {:ok, restored} <- publish_dirs(staged, host, command_fun) do
+      {:ok, restored}
+    end
+  end
+
+  defp preflight_targets(entries, host, command_fun) do
+    Enum.reduce_while(entries, :ok, fn %{dir: dir}, :ok ->
+      case remote(command_fun, host, target_absent(dir)) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:restore_failed, dir, reason}}}
+      end
+    end)
+  end
+
+  defp stage_dirs(entries, restore_bin, host, command_fun) do
+    Enum.reduce_while(entries, {:ok, []}, fn %{dir: dir, staging: staging} = entry,
+                                             {:ok, staged} ->
+      with {:ok, _} <- remote(command_fun, host, prepare_staging(dir, staging)),
+           {:ok, _} <- remote(command_fun, host, restore_command(restore_bin, staging, dir)),
+           {:ok, _} <- remote(command_fun, host, verify_staging(staging)) do
+        {:cont, {:ok, [entry | staged]}}
       else
         {:error, reason} ->
-          cleanup(command_fun, host, staging)
+          cleanup_staging(command_fun, host, entries)
+          {:halt, {:error, {:restore_failed, dir, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, staged} -> {:ok, Enum.reverse(staged)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp publish_dirs(entries, host, command_fun) do
+    Enum.reduce_while(entries, {:ok, []}, fn %{dir: dir, staging: staging}, {:ok, restored} ->
+      case remote(command_fun, host, move_into_place(dir, staging)) do
+        {:ok, _} ->
+          {:cont, {:ok, [dir | restored]}}
+
+        {:error, reason} ->
+          cleanup_staging(command_fun, host, entries)
           {:halt, {:error, {:restore_failed, dir, reason}}}
       end
     end)
@@ -89,26 +123,32 @@ defmodule NixSwarm.Deploy.Heal do
     end
   end
 
-  defp prepare_staging(parent, dir, staging) do
-    shell(
-      "mkdir -p #{shq(parent)} && test ! -e #{shq(dir)} && rm -rf #{shq(staging)} && mkdir -p #{shq(staging)}"
-    )
+  defp target_absent(dir) do
+    shell("test ! -e #{shq(dir)}")
   end
 
-  defp restore_command(restore_bin, staging) do
-    shell("#{shq(restore_bin)} #{shq(staging)}")
+  defp prepare_staging(dir, staging) do
+    parent = Path.dirname(dir)
+
+    shell("mkdir -p #{shq(parent)} && rm -rf #{shq(staging)} && mkdir -p #{shq(staging)}")
   end
 
-  defp verify_staging(_dir, staging) do
+  defp restore_command(restore_bin, staging, dir) do
+    shell("#{shq(restore_bin)} #{shq(staging)} #{shq(dir)}")
+  end
+
+  defp verify_staging(staging) do
     shell("test -n \"$(ls -A #{shq(staging)})\" && test -d #{shq(staging)}")
   end
 
   defp move_into_place(dir, staging) do
-    shell("mv #{shq(staging)} #{shq(dir)}")
+    shell("test ! -e #{shq(dir)} && mv -T #{shq(staging)} #{shq(dir)}")
   end
 
-  defp cleanup(command_fun, host, staging) do
-    remote(command_fun, host, shell("rm -rf #{shq(staging)}"))
+  defp cleanup_staging(command_fun, host, entries) do
+    Enum.each(entries, fn %{staging: staging} ->
+      remote(command_fun, host, shell("rm -rf #{shq(staging)}"))
+    end)
   end
 
   defp start_unit(unit, executor, _host, _command_fun)

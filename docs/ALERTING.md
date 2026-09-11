@@ -104,7 +104,7 @@ journalctl -u nix-swarmd -n 200 | grep -i -E 'kill|oom|watchdog'
 ```
 
 The operator query surface also tails logs read-only over SSH
-(`nix-swarm service logs <name>`, `nix-swarm cluster logs`); journald on
+(`nix-swarm service logs --name NAME --target NODE`); journald on
 the node is the ground truth when those are unavailable.
 
 ## Periodic health check (recommended)

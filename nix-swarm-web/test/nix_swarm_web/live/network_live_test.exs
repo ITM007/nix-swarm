@@ -11,7 +11,7 @@ defmodule NixSwarmWeb.NetworkLiveTest do
     context
   end
 
-  test "renders deterministic accessible SVG nodes, edges, and table fallback", %{
+  test "renders machines containing their services plus a table fallback", %{
     snapshot: snapshot
   } do
     html =
@@ -20,13 +20,15 @@ defmodule NixSwarmWeb.NetworkLiveTest do
       )
 
     assert html =~ ~s(role="img")
-    assert html =~ "Network and ownership map"
+    assert html =~ "Cluster map"
     assert html =~ "node-a@cluster"
     assert html =~ "api@0.service"
     assert html =~ "Unplaced"
-    assert html =~ ~s(href="/nodes/bm9kZS1hQGNsdXN0ZXI")
-    assert html =~ ~s(href="/services/YXBp")
-    assert html =~ "aria-label=\"api slot 0 owned by node-a@cluster\""
+    assert html =~ ~s(data-map-item-kind="node")
+    assert html =~ ~s(data-map-item-kind="service")
+    assert html =~ ~s(data-map-machine="node-a@cluster")
+    refute html =~ ~s(data-map-edge-node="node-a@cluster")
+    assert html =~ "aria-label=\"api slot 0 owned by node-a@cluster"
     assert html =~ "<table"
   end
 
@@ -36,7 +38,7 @@ defmodule NixSwarmWeb.NetworkLiveTest do
     html =
       Phoenix.LiveViewTest.render_component(&NetworkMapComponent.network_map/1, snapshot: empty)
 
-    assert html =~ "No nodes are currently reported"
+    assert html =~ "No cluster items are currently reported"
 
     nodes =
       Enum.map(["z@host", "a@host", "m@host"], fn name ->

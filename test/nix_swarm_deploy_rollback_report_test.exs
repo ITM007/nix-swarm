@@ -130,4 +130,40 @@ defmodule NixSwarmDeployRollbackReportTest do
 
     refute "--use-remote-sudo" in rollback_args
   end
+
+  test "automatic rollback keeps the flake and machine context" do
+    {:ok, commands} = Agent.start_link(fn -> [] end)
+
+    runner = fn executable, args, _env, _timeout ->
+      Agent.update(commands, &[{executable, args} | &1])
+
+      if executable == "nixos-rebuild" and Enum.member?(args, "--rollback") do
+        ""
+      else
+        if executable == "nixos-rebuild" and Enum.member?(args, "switch") do
+          raise "activation exploded"
+        end
+
+        ""
+      end
+    end
+
+    assert_raise RuntimeError, fn ->
+      Deploy.run(opts(runner))
+    end
+
+    rollback_args =
+      commands
+      |> Agent.get(& &1)
+      |> Enum.find_value(fn
+        {"nixos-rebuild", args} ->
+          if Enum.member?(args, "--rollback"), do: args
+
+        _ ->
+          nil
+      end)
+
+    assert Enum.member?(rollback_args, "--flake")
+    assert Enum.any?(rollback_args, &String.ends_with?(&1, "#node-a"))
+  end
 end

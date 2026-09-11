@@ -23,6 +23,8 @@ defmodule NixSwarmWeb.ServiceLiveTest do
     assert html =~ "node-a@cluster"
     assert html =~ "auto_heal"
     assert html =~ "api@1.service"
+    assert html =~ "cpu: 3.0%"
+    refute html =~ "usage_ns"
     assert html =~ ~s(href="/services/YXBp")
   end
 

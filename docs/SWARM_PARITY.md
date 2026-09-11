@@ -13,7 +13,7 @@ verified restore-on-placement.
 - the BEAM owns supervision, trusted peer RPC, membership, deterministic
   placement, and reconciliation.
 - Nix-Swarm stores operational observations, never a second desired-state model.
-- the TUI is a read-only projection for operators.
+- the web UI is a read-only projection for operators.
 
 Optional edge routing is user-owned NixOS configuration. A standard Caddy
 service may be placed on one declared edge node and use health-checked static
@@ -30,7 +30,7 @@ The supported public workflow is intentionally narrower than Docker Swarm:
 3. Use `cluster rollback --yes`, `cluster upgrade --yes`, and
    `cluster credentials rotate --yes` for explicit maintenance.
 4. Use `cluster doctor`, `cluster status`, and `service logs` for read-only
-   operations, or launch the read-only TUI.
+   operations.
 5. Use `service restart --name NAME --yes` for one bounded maintenance action;
    start/stop remain declarative through `replicas`.
 6. Use deterministic placement across active nodes, with `allowedNodes` as the
@@ -74,7 +74,7 @@ settings, preferred nodes, node labels, service constraints,
 and canary/parallel rollout controls. Rollout policy is fixed and safe
 internally; operators do not select batch width, canaries, or readiness timing.
 
-The TUI never mutates state. Nix and Git remain authoritative, while runtime
+The web UI never mutates state. Nix and Git remain authoritative, while runtime
 observations are diagnostics only. Removed commands must return a concise
 migration error and must not execute compatibility code: use `cluster apply`
 instead of `cluster init`/`ensure`/`rebuild`, `cluster status` instead of

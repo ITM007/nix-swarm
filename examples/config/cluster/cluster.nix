@@ -5,6 +5,8 @@
   ];
 
   services.nix-swarm = {
+    # This example uses the separate Caddy edge below.
+    proxy.enable = false;
     peers = [
       "nix-swarm@example-node-a.local"
       "nix-swarm@example-node-b.local"

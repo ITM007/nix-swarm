@@ -12,7 +12,6 @@ defmodule NixSwarm.CLI do
     name: :string,
     node: :string,
     lines: :integer,
-    refresh_ms: :integer,
     source: :string,
     cluster_file: :string,
     machines_dir: :string,
@@ -37,7 +36,7 @@ defmodule NixSwarm.CLI do
     end
   end
 
-  def run(argv, tui_runner \\ &NixSwarm.TUI.run/1, dependencies \\ []) do
+  def run(argv, dependencies \\ []) do
     {opts, args, invalid} = OptionParser.parse(argv, strict: @strict_opts)
     validate_parse_result!(opts, invalid)
     # Help and version must remain side-effect free. In particular, resolving a
@@ -64,6 +63,10 @@ defmodule NixSwarm.CLI do
         :ok
 
       Keyword.get(opts, :help, false) ->
+        print_help()
+        :ok
+
+      args == ["help"] ->
         print_help()
         :ok
 
@@ -122,7 +125,7 @@ defmodule NixSwarm.CLI do
       args == ["service", "logs"] ->
         service_name = opts |> Keyword.fetch!(:name) |> String.trim()
         lines = Keyword.get(opts, :lines, 50)
-        remote_opts = Keyword.take(opts, [:target, :ssh_host])
+        remote_opts = remote_options(opts, dependencies)
 
         with {:ok, target_node} <- connect_remote(remote_opts),
              overview <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_overview, []),
@@ -142,16 +145,7 @@ defmodule NixSwarm.CLI do
       args == ["service", "restart"] ->
         require_confirmation!(opts, "service restart")
         service_name = opts |> Keyword.fetch!(:name) |> String.trim()
-        remote_opts = Keyword.take(opts, [:target, :ssh_host])
-
-        remote_opts =
-          case Keyword.get(dependencies, :query_fun) do
-            query_fun when is_function(query_fun, 2) ->
-              Keyword.put(remote_opts, :query_fun, query_fun)
-
-            _ ->
-              remote_opts
-          end
+        remote_opts = remote_options(opts, dependencies)
 
         with {:ok, target_node} <- connect_remote(remote_opts),
              overview <- NixSwarm.Remote.rpc!(target_node, NixSwarm.API, :cluster_overview, []),
@@ -208,14 +202,6 @@ defmodule NixSwarm.CLI do
       args in [["service", "create"], ["service", "add"], ["service", "list"]] ->
         {:error, "command removed; copy the service definition from `examples/starter`"}
 
-      args in [[], ["tui"], ["help"]] ->
-        if args == ["help"] do
-          print_help()
-          :ok
-        else
-          tui_runner.(opts)
-        end
-
       true ->
         {:error, legacy_command_error(args)}
     end
@@ -234,7 +220,7 @@ defmodule NixSwarm.CLI do
 
   defp validate_parse_result!(opts, []) do
     validate_integer_range!(opts, :lines, "--lines", 1, 1_000)
-    validate_integer_range!(opts, :refresh_ms, "--refresh-ms", 100, 600_000)
+
     validate_integer_range!(opts, :command_timeout_ms, "--command-timeout-ms", 1, 86_400_000)
   end
 
@@ -275,8 +261,6 @@ defmodule NixSwarm.CLI do
   defp requires_remote_options?(args) do
     match?(["cluster", "heal", _], args) or
       args in [
-        [],
-        ["tui"],
         ["cluster", "doctor"],
         ["cluster", "status"],
         ["service", "logs"],
@@ -338,6 +322,15 @@ defmodule NixSwarm.CLI do
     end
   end
 
+  defp remote_options(opts, dependencies) do
+    remote_opts = Keyword.take(opts, [:target, :ssh_host])
+
+    case Keyword.get(dependencies, :query_fun) do
+      query_fun when is_function(query_fun, 2) -> Keyword.put(remote_opts, :query_fun, query_fun)
+      _ -> remote_opts
+    end
+  end
+
   defp deploy_options(opts, dry_run?) do
     opts
     |> Keyword.take([
@@ -373,16 +366,7 @@ defmodule NixSwarm.CLI do
     require_heal_confirmation!(opts)
     service = String.trim(service)
 
-    remote_opts = Keyword.take(opts, [:target, :ssh_host])
-
-    remote_opts =
-      case Keyword.get(dependencies, :query_fun) do
-        query_fun when is_function(query_fun, 2) ->
-          Keyword.put(remote_opts, :query_fun, query_fun)
-
-        _ ->
-          remote_opts
-      end
+    remote_opts = remote_options(opts, dependencies)
 
     command_fun = Keyword.get(dependencies, :command_fun, &run_command/2)
 
@@ -626,12 +610,12 @@ defmodule NixSwarm.CLI do
     """
     Unknown command: `#{command}`.
 
-      Nix-Swarm is code-first. Use a command below or launch the read-only console:
+      Nix-Swarm is code-first. Use a supported CLI command:
       #{launch}
       #{explicit_launch}
 
-    The TUI only reads cluster state. Change the Nix configuration and use
-    `nix-swarm cluster plan` followed by `nix-swarm cluster apply --yes`.
+    Change the Nix configuration and use `nix-swarm cluster plan` followed by
+    `nix-swarm cluster apply --yes`.
     """
     |> String.trim()
   end
@@ -640,9 +624,8 @@ defmodule NixSwarm.CLI do
     IO.puts("""
     Nix-Swarm
 
-    Read-only operator TUI / console:
+    Operator CLI:
       #{NixSwarm.operator_command()}
-      #{NixSwarm.operator_launch()}
 
     Deployment workflow:
       nix-swarm cluster plan --source /path/to/checkout
@@ -656,6 +639,8 @@ defmodule NixSwarm.CLI do
       nix-swarm cluster status --target NODE
       nix-swarm cluster doctor --target NODE
       nix-swarm service logs --name SERVICE --target NODE
+
+    Mutating operations:
       nix-swarm service restart --name SERVICE --target NODE --yes
 
     Targeted maintenance:

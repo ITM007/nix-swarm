@@ -57,7 +57,8 @@ defmodule NixSwarm.Deploy.Preflight do
              :new_nixos_host,
              :installed_inactive,
              :existing_in_sync,
-             :existing_outdated
+             :existing_outdated,
+             :installed_unqueryable
            ],
       do: true
 

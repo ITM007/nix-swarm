@@ -1,7 +1,7 @@
 defmodule NixSwarm.Proxy do
   @moduledoc false
 
-  # Facade for the optional built-in edge proxy (`NIX_SWARM_ROLE=proxy`).
+  # Facade for the built-in edge proxy (`NIX_SWARM_ROLE=proxy`).
   # Loads and validates the rendered (secret-free) config exactly once at
   # supervision boot and publishes it on :persistent_term for request-time
   # readers. Secrets never live in the config: they are read from

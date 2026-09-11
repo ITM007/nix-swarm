@@ -3,7 +3,7 @@ defmodule NixSwarmWeb.ServiceShowLive do
 
   use NixSwarmWeb, :live_view
 
-  alias NixSwarmWeb.{InventoryHelpers, LogSearch, QueryBroker}
+  alias NixSwarmWeb.{Format, InventoryHelpers, LogSearch, QueryBroker}
 
   @impl true
   def mount(params, session, socket) do
@@ -72,7 +72,7 @@ defmodule NixSwarmWeb.ServiceShowLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <main id="service-show-page">
+    <.app_shell id="service-show-page" current_path="/services">
       <p><a href="/services">Back to services</a></p>
       <%= if @service do %>
         <header class="page-header">
@@ -84,7 +84,7 @@ defmodule NixSwarmWeb.ServiceShowLive do
 
         <section aria-labelledby="service-slots-heading">
           <h2 id="service-slots-heading">Slots and ownership</h2>
-          <table>
+          <table class="table table-zebra">
             <caption>Every desired and observed service slot</caption>
             <thead><tr><th scope="col">Slot</th><th scope="col">Owner</th><th scope="col">Unit</th><th scope="col">Observed state</th><th scope="col">Metrics</th></tr></thead>
             <tbody>
@@ -115,7 +115,7 @@ defmodule NixSwarmWeb.ServiceShowLive do
 
         <section aria-labelledby="service-logs-heading">
           <h2 id="service-logs-heading">Service logs</h2>
-          <button type="button" phx-click="load_logs" phx-value-lines={@log_lines}>Refresh service logs (200 lines)</button>
+          <button class="btn btn-primary" type="button" phx-click="load_logs" phx-value-lines={@log_lines}>Refresh service logs (200 lines)</button>
           <%= if @log_error do %><p class="notice notice-degraded" role="alert">Partial log result: <%= @log_error %></p><% end %>
           <%= if @logs do %>
             <p>Source service <%= @service.name %> · Fetched <%= format_time(@fetched_at) %></p>
@@ -125,7 +125,7 @@ defmodule NixSwarmWeb.ServiceShowLive do
       <% else %>
         <header class="page-header"><h1>Unknown service</h1><p>The requested service is not present in the current snapshot.</p></header>
       <% end %>
-    </main>
+    </.app_shell>
     """
   end
 
@@ -138,7 +138,7 @@ defmodule NixSwarmWeb.ServiceShowLive do
 
   defp metrics_label(metrics) do
     metrics
-    |> Enum.map(fn {key, value} -> "#{key}: #{value}" end)
+    |> Enum.map(fn {key, value} -> "#{key}: #{metric_value_label(key, value)}" end)
     |> Enum.sort()
     |> Enum.join("; ")
     |> case do
@@ -146,6 +146,9 @@ defmodule NixSwarmWeb.ServiceShowLive do
       value -> value
     end
   end
+
+  defp metric_value_label(key, value) when key in [:cpu, "cpu"], do: Format.cpu_percent(value)
+  defp metric_value_label(_key, value), do: to_string(value)
 
   defp format_time(nil), do: "unknown time"
   defp format_time(value), do: Calendar.strftime(value, "%Y-%m-%d %H:%M:%S UTC")

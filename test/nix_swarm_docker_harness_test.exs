@@ -5,6 +5,7 @@ defmodule NixSwarm.DockerHarnessTest do
   @stack Path.join(@root, "scripts/docker-stack")
   @scenarios Path.join(@root, "scripts/docker-scenarios")
   @compose Path.join(@root, "docker-compose.yml")
+  @image_flake Path.join(@root, "docker/nixos/flake.nix")
 
   test "stack exposes deterministic lifecycle and scenario commands" do
     stack = File.read!(@stack)
@@ -16,6 +17,35 @@ defmodule NixSwarm.DockerHarnessTest do
     assert stack =~ "docker"
     assert stack =~ "--project-name"
     assert stack =~ "NIX_SWARM_DOCKER_PROJECT"
+  end
+
+  test "image builds are isolated and bounded away from the desktop session" do
+    stack = File.read!(@stack)
+
+    assert stack =~ "nix-swarm-dev.slice"
+    assert stack =~ "MemoryHigh"
+    assert stack =~ "MemoryMax"
+    assert stack =~ "--max-jobs"
+    assert stack =~ "--cores"
+    assert stack =~ "NIX_SWARM_DOCKER_BUILD_ISOLATION"
+  end
+
+  test "systemd nodes cannot access the host desktop seat" do
+    compose = File.read!(@compose)
+    image_flake = File.read!(@image_flake)
+
+    refute compose =~ "privileged: true"
+    assert length(Regex.scan(~r/^    cgroup: private$/m, compose)) == 3
+    assert length(Regex.scan(~r/^    cap_add:\n      - SYS_ADMIN$/m, compose)) == 3
+    assert length(Regex.scan(~r/^    security_opt:\n      - seccomp=unconfined$/m, compose)) == 3
+    assert image_flake =~ "mount -o remount,rw /sys/fs/cgroup"
+  end
+
+  test "membership query alias uses the current read-only status command" do
+    stack = File.read!(@stack)
+
+    assert stack =~ "cluster-members) query_command=(cluster status --json)"
+    refute stack =~ "query_command=(cluster members)"
   end
 
   test "status assertion is fail-closed and checks all four expected services" do

@@ -25,6 +25,13 @@ let
     && !(hasInfix "\n" cfg.querySocket)
     && !(hasInfix "\r" cfg.querySocket);
 
+  validConfigSource =
+    cfg.configSource == null
+    || (hasPrefix "/" cfg.configSource
+      && !(hasPrefix "/nix/store/" cfg.configSource)
+      && !(hasInfix "\n" cfg.configSource)
+      && !(hasInfix "\r" cfg.configSource));
+
   webServiceRegistration = {
     replicas = mkForce 1;
     unitTemplate = mkForce "nix-swarm-web.service";
@@ -61,6 +68,12 @@ in
       description = "Local Nix-Swarm query socket consumed by the read-only web UI.";
     };
 
+    configSource = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "Optional absolute directory whose safe, read-only .nix files are shown in the web UI.";
+    };
+
     pollIntervalMs = mkOption {
       type = types.ints.between 500 3600000;
       default = 5000;
@@ -95,6 +108,10 @@ in
         message = "services.nix-swarm-web.querySocket must be an absolute, out-of-store path without newlines";
       }
       {
+        assertion = validConfigSource;
+        message = "services.nix-swarm-web.configSource must be an absolute, out-of-store path without newlines";
+      }
+      {
         assertion = all (node: lib.elem node swarm.peers) cfg.allowedNodes;
         message = "services.nix-swarm-web.allowedNodes must reference configured Nix-Swarm peers";
       }
@@ -122,7 +139,7 @@ in
           "PORT=${toString cfg.port}"
           "NIX_SWARM_QUERY_SOCKET=${cfg.querySocket}"
           "NIX_SWARM_POLL_INTERVAL_MS=${toString cfg.pollIntervalMs}"
-        ];
+        ] ++ lib.optional (cfg.configSource != null) "NIX_SWARM_CONFIG_SOURCE=${cfg.configSource}";
         # The read-only release has no BEAM cookie, SSH key, or write secret.
         LoadCredential = [ ];
         ExecStart = webStart;

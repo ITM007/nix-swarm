@@ -46,6 +46,23 @@ defmodule NixSwarmRuntimeTest do
     assert default.runtime.command_timeout_ms == 5_000
   end
 
+  test "normalizes the declarative proxy projection" do
+    config =
+      NixSwarm.Config.normalize(%{
+        proxy: %{
+          enabled?: true,
+          listen_port: 8088,
+          routes: [
+            %{name: "api", host: "api.example", path_prefix: "/", upstreams: ["10.0.0.2:8080"]}
+          ]
+        }
+      })
+
+    assert config.proxy.enabled?
+    assert config.proxy.listen_port == 8088
+    assert hd(config.proxy.routes).upstreams == ["10.0.0.2:8080"]
+  end
+
   test "zero or runaway runtime values are rejected by validation" do
     for {key, value} <- [
           reconcile_interval_ms: 0,
@@ -134,5 +151,20 @@ defmodule NixSwarmRuntimeTest do
            end)
 
     assert NixSwarm.Config.Server.metadata().digest == NixSwarm.Config.digest()
+  end
+
+  test "agent supervision gives query requests a dedicated bounded task supervisor" do
+    System.put_env("NIX_SWARM_ROLE", "agent")
+    {:ok, _apps} = Application.ensure_all_started(:nix_swarm)
+    children = Supervisor.which_children(NixSwarm.Supervisor)
+
+    assert Enum.any?(children, fn {id, _pid, _type, _modules} ->
+             id == NixSwarm.QueryTaskSupervisor
+           end)
+
+    assert NixSwarm.QueryTaskSupervisor
+           |> Process.whereis()
+           |> :sys.get_state()
+           |> Map.fetch!(:max_children) == 32
   end
 end

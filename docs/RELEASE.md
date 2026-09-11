@@ -37,9 +37,10 @@ repository `VERSION` file before building artifacts. Keep `VERSION` unchanged
 on development and release-candidate branches; update it only in the release
 commit that creates the matching tag.
 
-The supported v0.5.0 workload is stateless or externally backed systemd services
-on NixOS. Nix-Swarm does not provide consensus, fencing, volumes, a routing
-mesh, or database replication.
+The supported v0.5.0 workload is stateless systemd services plus single-writer
+state declared with `state.dirs` and optional Borg backup/restore. Nix-Swarm
+does not provide consensus, fencing, network-mounted volumes, a routing mesh,
+or database replication.
 
 ## Versioning
 

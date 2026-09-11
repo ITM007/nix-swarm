@@ -50,6 +50,7 @@ defmodule NixSwarmWebModuleTest do
             port = 4317;
             querySocket = "/run/test/query.sock";
             pollIntervalMs = 700;
+            configSource = "/etc/nix-swarm/source";
             allowedNodes = [ "nix-swarm@node-a.test" ];
           };
         """
@@ -84,6 +85,7 @@ defmodule NixSwarmWebModuleTest do
     assert Enum.sort(service_config["Environment"]) ==
              Enum.sort([
                "NIX_SWARM_POLL_INTERVAL_MS=700",
+               "NIX_SWARM_CONFIG_SOURCE=/etc/nix-swarm/source",
                "NIX_SWARM_QUERY_SOCKET=/run/test/query.sock",
                "PHX_HOST=127.0.0.1",
                "PHX_SERVER=true",

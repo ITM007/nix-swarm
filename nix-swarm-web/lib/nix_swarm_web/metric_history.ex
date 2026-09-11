@@ -76,16 +76,252 @@ defmodule NixSwarmWeb.MetricHistory do
           received: received,
           transmitted: transmitted,
           rate: (received + transmitted) / seconds
-        }
+        },
+        service_cpu: service_cpu_rates(previous, current, elapsed_ms),
+        node_network: node_network_rates(previous, current, elapsed_ms),
+        service_network: service_network_rates(previous, current, elapsed_ms),
+        proxy_network: proxy_network_rates(previous, current, elapsed_ms)
       }
     else
-      %{valid?: false, elapsed_ms: max(elapsed_ms, 0), cpu: nil, network: nil}
+      %{
+        valid?: false,
+        elapsed_ms: max(elapsed_ms, 0),
+        cpu: nil,
+        network: nil,
+        service_cpu: service_cpu_rates(previous, current, elapsed_ms),
+        node_network: node_network_rates(previous, current, elapsed_ms),
+        service_network: service_network_rates(previous, current, elapsed_ms),
+        proxy_network: proxy_network_rates(previous, current, elapsed_ms)
+      }
     end
   end
 
-  def delta(_previous, _current), do: %{valid?: false, elapsed_ms: 0, cpu: nil, network: nil}
+  def delta(_previous, _current),
+    do: %{
+      valid?: false,
+      elapsed_ms: 0,
+      cpu: nil,
+      network: nil,
+      service_cpu: %{},
+      node_network: %{},
+      service_network: %{},
+      proxy_network: %{}
+    }
 
   def rate(previous, current), do: delta(previous, current)
+
+  defp service_cpu_rates(previous, current, elapsed_ms) when elapsed_ms > 0 do
+    previous_counters = slot_cpu_counters(value(previous, :services, []) |> List.wrap())
+    total_cores = node_total_cores(value(current, :nodes, []) |> List.wrap())
+
+    current
+    |> value(:services, [])
+    |> List.wrap()
+    |> Enum.flat_map(fn service ->
+      service = if is_map(service), do: service, else: %{}
+      name = value(service, :name, "unknown")
+
+      service
+      |> value(:slots, [])
+      |> List.wrap()
+      |> Enum.map(fn slot -> {NixSwarmWeb.ClusterSnapshot.slot_key(name, slot), slot} end)
+    end)
+    |> Map.new(fn {key, slot} ->
+      {key, service_cpu_pct(key, slot, previous_counters, total_cores, elapsed_ms)}
+    end)
+  end
+
+  defp service_cpu_rates(_previous, _current, _elapsed_ms), do: %{}
+
+  defp node_network_rates(previous, current, elapsed_ms) do
+    previous_nodes = network_nodes(value(previous, :nodes, []) |> List.wrap())
+
+    current
+    |> value(:nodes, [])
+    |> List.wrap()
+    |> Map.new(fn node ->
+      name = value(node, :name, "unknown")
+      previous_metrics = Map.get(previous_nodes, name, %{})
+      current_metrics = value(node, :metrics, %{})
+      {name, network_rate(previous_metrics, current_metrics, elapsed_ms)}
+    end)
+  end
+
+  defp service_network_rates(previous, current, elapsed_ms) do
+    previous_slots = network_slots(value(previous, :services, []) |> List.wrap())
+
+    current
+    |> value(:services, [])
+    |> List.wrap()
+    |> Enum.flat_map(fn service ->
+      name = value(service, :name, "unknown")
+
+      service
+      |> value(:slots, [])
+      |> List.wrap()
+      |> Enum.map(fn slot ->
+        key = NixSwarmWeb.ClusterSnapshot.slot_key(name, slot)
+        previous_metrics = Map.get(previous_slots, key, %{})
+        current_metrics = value(slot, :metrics, %{})
+        {key, network_rate(previous_metrics, current_metrics, elapsed_ms)}
+      end)
+    end)
+    |> Map.new()
+  end
+
+  defp proxy_network_rates(previous, current, elapsed_ms) do
+    previous_nodes =
+      previous
+      |> value(:nodes, [])
+      |> List.wrap()
+      |> Map.new(fn node -> {value(node, :name, "unknown"), value(node, :proxy, %{})} end)
+
+    current
+    |> value(:nodes, [])
+    |> List.wrap()
+    |> Enum.flat_map(fn node ->
+      proxy = value(node, :proxy, %{})
+
+      if value(proxy, :enabled?, false) do
+        name = value(node, :name, "unknown")
+        previous_proxy = Map.get(previous_nodes, name, %{})
+
+        [
+          {name,
+           network_rate(
+             value(previous_proxy, :metrics, %{}),
+             value(proxy, :metrics, %{}),
+             elapsed_ms
+           )}
+        ]
+      else
+        []
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp network_nodes(nodes),
+    do: Map.new(nodes, &{value(&1, :name, "unknown"), value(&1, :metrics, %{})})
+
+  defp network_slots(services) do
+    services
+    |> Enum.flat_map(fn service ->
+      name = value(service, :name, "unknown")
+
+      service
+      |> value(:slots, [])
+      |> List.wrap()
+      |> Enum.map(fn slot ->
+        {NixSwarmWeb.ClusterSnapshot.slot_key(name, slot), value(slot, :metrics, %{})}
+      end)
+    end)
+    |> Map.new()
+  end
+
+  defp network_rate(previous_metrics, current_metrics, elapsed_ms) do
+    previous_network = value(previous_metrics, :network, %{})
+    current_network = value(current_metrics, :network, %{})
+    previous_total = network_total(previous_network)
+    current_total = network_total(current_network)
+
+    if elapsed_ms > 0 and is_number(previous_total) and is_number(current_total) and
+         current_total >= previous_total do
+      received = counter_delta(previous_network, current_network, :received)
+      transmitted = counter_delta(previous_network, current_network, :transmitted)
+      total = current_total - previous_total
+
+      %{
+        received: received,
+        transmitted: transmitted,
+        total: total,
+        rate: total / (elapsed_ms / 1_000)
+      }
+    end
+  end
+
+  defp network_total(network) do
+    case value(network, :total, nil) do
+      total when is_number(total) ->
+        total
+
+      _ ->
+        case value(network, :counter, nil) do
+          counter when is_number(counter) ->
+            counter
+
+          _ ->
+            received = value(network, :received, nil)
+            transmitted = value(network, :transmitted, nil)
+            if is_number(received) and is_number(transmitted), do: received + transmitted
+        end
+    end
+  end
+
+  defp counter_delta(previous, current, key) do
+    previous_value = value(previous, key, nil)
+    current_value = value(current, key, nil)
+
+    if is_number(previous_value) and is_number(current_value) and current_value >= previous_value do
+      current_value - previous_value
+    else
+      nil
+    end
+  end
+
+  defp slot_cpu_counters(services) do
+    services
+    |> Enum.flat_map(fn service ->
+      service = if is_map(service), do: service, else: %{}
+      name = value(service, :name, "unknown")
+
+      service
+      |> value(:slots, [])
+      |> List.wrap()
+      |> Enum.map(fn slot ->
+        {NixSwarmWeb.ClusterSnapshot.slot_key(name, slot), slot_usage_ns(slot)}
+      end)
+    end)
+    |> Map.new()
+  end
+
+  defp service_cpu_pct(key, slot, previous_counters, total_cores, elapsed_ms) do
+    current_usage = slot_usage_ns(slot)
+
+    case Map.fetch(previous_counters, key) do
+      {:ok, previous_usage}
+      when is_number(previous_usage) and is_number(current_usage) and
+             current_usage >= previous_usage ->
+        cores = (current_usage - previous_usage) / (elapsed_ms * 1_000_000)
+        host_cores = total_cores |> Map.get(value(slot, :owner, nil), 0) |> number_or_zero()
+
+        if host_cores > 0, do: cores / host_cores * 100, else: nil
+
+      _ ->
+        nil
+    end
+  end
+
+  defp slot_usage_ns(slot) do
+    slot
+    |> value(:metrics, %{})
+    |> value(:cpu, %{})
+    |> value(:usage_ns, nil)
+  end
+
+  defp node_total_cores(nodes) do
+    nodes
+    |> Enum.map(fn node ->
+      node = if is_map(node), do: node, else: %{}
+      name = value(node, :name, "unknown")
+      cores = node |> value(:metrics, %{}) |> value(:cpu, %{}) |> value(:total, 0)
+      {name, number_or_zero(cores)}
+    end)
+    |> Map.new()
+  end
+
+  defp number_or_zero(value) when is_number(value), do: value
+  defp number_or_zero(_), do: 0
 
   defp cluster_metrics(snapshot) do
     snapshot

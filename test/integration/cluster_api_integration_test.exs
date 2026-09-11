@@ -1,6 +1,6 @@
 defmodule NixSwarm.ClusterApiIntegrationTest do
   @moduledoc """
-  Integration coverage for the RPCs the TUI uses (cluster_overview, cluster_members,
+  Integration coverage for the RPCs the CLI and web UI use (cluster_overview, cluster_members,
   node_service_logs, cluster_logs, logs) plus the executor's unit-name validation
   flowing through the actual cluster.
   """

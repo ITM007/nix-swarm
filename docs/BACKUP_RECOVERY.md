@@ -18,10 +18,11 @@ state is **recoverable by redeployment**, not precious:
   caches of what the agent has observed; they are never authoritative
   desired state, are safe to delete, and must **never be copied between
   nodes**.
-- Application data inside managed service units is owned by the
-  application and its operator. Stateful application backup is not part of
-  the v1.0 product; treat each workload's data directory as your
-  responsibility today (see [App data](#app-data-ownership)).
+- Application data inside managed service units is owned by the application and
+  its operator. If a service declares `state.dirs` and `state.backup`,
+  Nix-Swarm schedules the Borg backup and provides the restore-before-start
+  path described in [Stateful services](STATEFUL_SERVICES.md). Services without
+  that declaration still require an application-owned backup procedure.
 
 ## Backup inventory
 
@@ -34,9 +35,9 @@ state is **recoverable by redeployment**, not precious:
 
 ### Cluster credential
 
-The cookie is the cluster's only shared secret and the sole thing that
-cannot be regenerated from the source tree. Protect it like a root
-password:
+The cookie is the core agent's only shared cluster credential and the sole
+core credential that cannot be regenerated from the source tree. Protect it
+like a root password:
 
 - Store one copy outside the cluster (encrypted secret store). Note the
   cluster it belongs to and the node names, because the cookie constrains
@@ -54,13 +55,12 @@ password:
 
 ### App data ownership
 
-Nix-Swarm v1.0 manages **stateless** units: it supervises lifecycle,
-placement, and reconciliation, but does not snapshot workload data.
-Back up each stateful application yourself (borg/restic + off-site target,
-or the application's own export tooling) on whatever cadence its RPO
-demands. The post-v1.0 stateful-units design (declared restore from backup)
-does not change this today: anything you do not back up is lost when the
-node is lost.
+Nix-Swarm manages the declared Tier 1 state contract only: absolute
+`state.dirs`, a Borg repository and schedule, and operator-invoked restore.
+The application owner remains responsible for choosing the repository,
+credentials, retention, off-site copies, application-consistent backups, and
+any data outside the declared directories. Anything not backed up is lost with
+the node.
 
 ## Recovery procedures
 
@@ -94,18 +94,16 @@ partition; fix the network, let membership settle, and verify with
 Restore order:
 
 1. Install NixOS on the replacement hardware.
-2. Apply the cluster configuration from the source tree
-   (`nixos-rebuild switch --flake .#<host>`), which recreates the
-   `nix-swarm` module, the `nix-swarm` user, the unit, and state
-   directories.
-3. Install the cluster credential at
-   `/etc/nixos/nix-swarm/secrets/nix-swarm.cookie` (root-owned, 0600) —
-   from your secret-store backup, or via `nix-swarm cluster credentials rotate`
-   once the node is reachable, or by copying it from a live peer.
-4. Start (or let the deployment start) `nix-swarmd`. The agent registers,
-   rejoins, and the reconciler places units per the declared topology.
-5. Verify: `nix-swarm cluster status` shows the node active and each
-   service at its replica count; spot-check `nix-swarm service logs <name>`.
+2. Ensure the source tree contains the replacement node and its complete
+   `nixosConfigurations.<name>` output.
+3. Restore the cluster credential through the configured secret mechanism, or
+   use the explicit credential-rotation workflow once the node is reachable.
+4. Run `nix-swarm cluster plan --source .`, then
+   `nix-swarm cluster apply --source . --yes`. The deployment recreates the
+   module, agent, unit, and declared state directories.
+5. Verify with `nix-swarm cluster doctor --target NODE` and
+   `nix-swarm cluster status --target NODE`; inspect logs with
+   `nix-swarm service logs --name SERVICE --target NODE`.
 
 Nothing else on the node needs restoring: `/var/lib/nix-swarm` rebuilds
 itself from observation, and the old DETS file (if you carried it over)

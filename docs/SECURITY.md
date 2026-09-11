@@ -11,7 +11,7 @@ The operator does not join distributed Erlang, receive the cookie, or expose arb
 
 ## Agent network
 
-Distributed Erlang is authenticated by the cookie but is not encrypted in the default configuration. Bind and firewall ports `4369/tcp` and `4370/tcp` to a trusted private interface — a LAN interface by default, or an encrypted overlay (WireGuard/Tailscale/NetBird, `netbird0`) for multi-network use. Never expose them to the Internet or an untrusted LAN.
+Distributed Erlang is authenticated by the cookie but is not encrypted in the default configuration. Bind and firewall ports `4369/tcp` and `4370/tcp` to a trusted private interface, or to an encrypted overlay (WireGuard/Tailscale/NetBird, such as `netbird0`) when peers cross networks. Never expose them to the Internet or an untrusted LAN.
 
 ```nix
 services.nix-swarm = {
@@ -50,7 +50,7 @@ Deploy and query commands require normal host-key verification and batch authent
 services.nix-swarm.operatorUsers = [ "alice" ];
 ```
 
-Then use `--ssh-host alice@node-a`. Query operations are logged in the agent's journal. TUI actions cannot change desired state, services, or hosts.
+Then use `--ssh-host alice@node-a`. Query operations are logged in the agent's journal. Read-only operator actions cannot change desired state, services, or hosts.
 
 ## Read-only web UI
 
@@ -65,6 +65,10 @@ heal, deploy, or source-edit route. See [`WEB_UI.md`](WEB_UI.md).
 ## Failure safety
 
 - configuration, intervals, replicas, unit names, query sizes, and log counts are bounded
+- query-socket requests use a dedicated bounded task supervisor and one monotonic
+  deadline covering receive, execution, serialization, and response send
+- the web broker admits only a bounded number of distinct log queries, cancels
+  work whose callers disappear, and expires/limits its in-memory log cache
 - agents refuse destructive reconciliation while live config digests differ
 - rollout batches stop on build, activation, membership, peer reachability, placement, or updated-node health failure; the final batch also requires config consistency and every owned unit to be healthy
 - systemd applies memory, task, file-descriptor, namespace, capability, filesystem, and device restrictions

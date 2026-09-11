@@ -5,13 +5,23 @@ defmodule NixSwarmWeb.Endpoint do
 
   @session_options [
     store: :cookie,
-    key: "_nix_swarm_web_key",
+    key: "_nix_swarm_dev_web_key",
     signing_salt: "nix-swarm-web-cookie",
     same_site: "Lax",
     http_only: true
   ]
 
-  socket("/live", Phoenix.LiveView.Socket, websocket: [connect_info: [session: @session_options]])
+  # Keep the browser authority and websocket origin tied to the actual
+  # loopback request. HostGuard rejects unknown HTTP authorities, while :conn
+  # prevents a different scheme, host, or port from joining the LiveView.
+  socket("/live", Phoenix.LiveView.Socket,
+    websocket: [
+      check_origin: :conn,
+      connect_info: [session: @session_options]
+    ]
+  )
+
+  plug(NixSwarmWeb.HostGuard)
 
   plug(Plug.Static,
     at: "/",

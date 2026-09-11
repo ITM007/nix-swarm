@@ -3,17 +3,36 @@ defmodule NixSwarmModuleProxyTest do
 
   @module_path "nix/nix-swarm/module.nix"
 
-  test "proxy is disabled by default and renders no proxy artifacts" do
+  test "proxy is enabled by default and renders a proxy artifact" do
     result =
       eval_module!("""
       {
         has_proxy_service = node.config.systemd.services ? "nix-swarm-proxy";
         has_proxy_firewall = node.config.networking.firewall.interfaces ? netbird0;
+        proxy_config = builtins.readFile (builtins.replaceStrings
+          ["NIX_SWARM_PROXY_CONFIG_PATH="]
+          [""]
+          (builtins.elemAt (builtins.filter (value: builtins.match "NIX_SWARM_PROXY_CONFIG_PATH=.*" value != null) node.config.systemd.services."nix-swarm-proxy".serviceConfig.Environment) 0));
       }
       """)
 
-    refute result["has_proxy_service"]
+    assert result["has_proxy_service"]
     refute result["has_proxy_firewall"]
+    assert result["proxy_config"] =~ "listen_port"
+  end
+
+  test "proxy can be explicitly disabled" do
+    result =
+      eval_module!(
+        """
+        {
+          has_proxy_service = node.config.systemd.services ? "nix-swarm-proxy";
+        }
+        """,
+        "proxy.enable = false;"
+      )
+
+    refute result["has_proxy_service"]
   end
 
   test "enabled proxy renders config, service, credentials, and scoped firewall" do

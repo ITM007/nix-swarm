@@ -50,9 +50,11 @@ defmodule NixSwarmWeb.DashboardLiveTest do
     {:ok, _view, html} = live(conn, "/")
     assert html =~ "Loading cluster status"
     assert html =~ "read-only"
+    assert html =~ "Add New Machine"
+    refute html =~ "Prepare the target machine"
   end
 
-  test "renders healthy summary and navigation", %{conn: conn} do
+  test "renders healthy summary and the single cluster map", %{conn: conn} do
     QueryBroker.put_snapshot(QueryBroker.broker_name(), snapshot())
     {:ok, _view, html} = live(conn, "/")
 
@@ -61,10 +63,8 @@ defmodule NixSwarmWeb.DashboardLiveTest do
     assert html =~ "3"
     assert html =~ "Live nodes"
     assert html =~ "Config consistent"
-
-    for path <- ["/", "/network", "/nodes", "/services", "/drift", "/logs"] do
-      assert html =~ ~s(href="#{path}")
-    end
+    assert html =~ ~s(id="cluster-map")
+    refute html =~ ~s(class="app-nav")
   end
 
   test "renders degraded and stale metadata without replacing the last good summary", %{
@@ -94,7 +94,7 @@ defmodule NixSwarmWeb.DashboardLiveTest do
       {:cluster_snapshot, fresh}
     )
 
-    assert render(view) =~ "Fresh"
+    assert render(view) =~ "Fresh · Degraded"
     assert render(view) =~ "Degraded services"
   end
 end

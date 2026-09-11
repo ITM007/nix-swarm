@@ -23,6 +23,19 @@ project_name="${project_name//[^A-Za-z0-9_.-]/-}"
 secrets_dir="$root_dir/_build/docker-secrets/$project_name"
 export NIX_SWARM_DOCKER_PROJECT="$project_name"
 export NIX_SWARM_DOCKER_SECRETS_DIR="$secrets_dir"
+nix_build_max_jobs="${NIX_SWARM_DOCKER_NIX_MAX_JOBS:-1}"
+nix_build_cores="${NIX_SWARM_DOCKER_NIX_CORES:-2}"
+build_memory_high="${NIX_SWARM_DOCKER_BUILD_MEMORY_HIGH:-60%}"
+build_memory_max="${NIX_SWARM_DOCKER_BUILD_MEMORY_MAX:-75%}"
+
+if [[ ! "$nix_build_max_jobs" =~ ^[1-9][0-9]*$ ]]; then
+  echo "NIX_SWARM_DOCKER_NIX_MAX_JOBS must be a positive integer" >&2
+  exit 2
+fi
+if [[ ! "$nix_build_cores" =~ ^[1-9][0-9]*$ ]]; then
+  echo "NIX_SWARM_DOCKER_NIX_CORES must be a positive integer" >&2
+  exit 2
+fi
 
 usage() {
   cat <<EOF
@@ -40,6 +53,12 @@ Commands:
   logs    Follow node logs
   shell   Open a root shell in node-a
   query   Run a read-only operator query through the operator container
+
+Build safety defaults:
+  NIX_SWARM_DOCKER_NIX_MAX_JOBS       1
+  NIX_SWARM_DOCKER_NIX_CORES          2
+  NIX_SWARM_DOCKER_BUILD_MEMORY_HIGH  60%
+  NIX_SWARM_DOCKER_BUILD_MEMORY_MAX   75%
 EOF
 }
 
@@ -87,9 +106,35 @@ build_images() {
   ensure_secrets
   for node in node-a node-b node-c; do
     echo "Building $profile NixOS image for $node..."
-    nix build "$root_dir/docker/nixos#${node}${package_suffix}" --out-link "$root_dir/result-docker-$node-$profile"
+    nix build --max-jobs "$nix_build_max_jobs" --cores "$nix_build_cores" \
+      "$root_dir/docker/nixos#${node}${package_suffix}" --out-link "$root_dir/result-docker-$node-$profile"
     "${container_cmd[@]}" load < "$root_dir/result-docker-$node-$profile"
   done
+}
+
+run_isolated_build() {
+  if [[ "${NIX_SWARM_DOCKER_BUILD_ISOLATION:-auto}" == "off" ]]; then
+    build_images
+    return
+  fi
+
+  if command -v systemd-run >/dev/null 2>&1 && \
+     command -v systemctl >/dev/null 2>&1 && \
+     systemctl --user show-environment >/dev/null 2>&1; then
+    build_unit="nix-swarm-dev-${project_name}-image-build.service"
+    systemd-run --user --wait --pipe --collect \
+      --unit="$build_unit" \
+      --slice=nix-swarm-dev.slice \
+      --property="MemoryHigh=$build_memory_high" \
+      --property="MemoryMax=$build_memory_max" \
+      --property=KillMode=control-group \
+      --working-directory="$root_dir" \
+      --setenv=NIX_SWARM_DOCKER_BUILD_ISOLATION=off \
+      "$root_dir/scripts/docker-stack" --profile "$profile" build
+  else
+    echo "systemd user isolation unavailable; using serialized, core-limited Nix builds" >&2
+    build_images
+  fi
 }
 
 wait_for_nodes() {
@@ -109,7 +154,7 @@ seed_operator_known_hosts() {
 }
 
 up() {
-  build_images
+  run_isolated_build
   "${compose[@]}" up -d node-a node-b node-c
   wait_for_nodes
   "${compose[@]}" up -d operator
@@ -152,7 +197,7 @@ reset_resources() {
 }
 
 case "${1:-}" in
-  build) build_images ;;
+  build) run_isolated_build ;;
   up) up ;;
   down) "${compose[@]}" down --remove-orphans ;;
   reset) reset_resources ;;
@@ -172,7 +217,7 @@ case "${1:-}" in
   query)
     case "${2:-cluster-status}" in
       cluster-status) query_command=(cluster status) ;;
-      cluster-members) query_command=(cluster members) ;;
+      cluster-members) query_command=(cluster status --json) ;;
       *) echo "unknown query: ${2:-} (use cluster-status or cluster-members)" >&2; exit 2 ;;
     esac
     "${compose[@]}" exec -T operator /run/current-system/sw/bin/nix-swarm "${query_command[@]}" --target "nix-swarm@node-a" --ssh-host "root@node-a"

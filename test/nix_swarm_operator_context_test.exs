@@ -1,7 +1,7 @@
 defmodule NixSwarmOperatorContextTest do
   use ExUnit.Case, async: true
 
-  test "normalizes one shared operator context for CLI and TUI" do
+  test "normalizes one shared operator context for CLI commands" do
     context =
       NixSwarm.OperatorContext.from_opts(
         source: "/tmp/project",

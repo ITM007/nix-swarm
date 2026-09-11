@@ -197,7 +197,6 @@ defmodule NixSwarm.StatefulHealScenarioTest do
     assert :ok =
              NixSwarm.CLI.run(
                ["cluster", "heal", "db", "--target", Atom.to_string(anchor), "--yes"],
-               fn _opts -> :ok end,
                deps
              )
 

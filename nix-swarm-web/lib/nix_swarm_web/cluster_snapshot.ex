@@ -42,7 +42,8 @@ defmodule NixSwarmWeb.ClusterSnapshot do
       |> node_name()
 
     raw_nodes = map_value(status, :nodes, [])
-    nodes = normalize_nodes(raw_nodes)
+    configured_nodes = list_value(map_value(members, :configured_nodes, []))
+    nodes = normalize_nodes(raw_nodes, configured_nodes)
     placements = normalize_placements(map_value(status, :placements, %{}))
     services = normalize_services(nodes, placements, status)
     drift = normalize_drift(status)
@@ -92,11 +93,42 @@ defmodule NixSwarmWeb.ClusterSnapshot do
     }
   end
 
-  defp normalize_nodes(raw_nodes) do
-    raw_nodes
-    |> node_entries()
+  @doc "Stable identity for a service slot, shared by rendering and rate computation."
+  def slot_key(service_name, slot) when is_binary(service_name) and is_map(slot) do
+    slot_number =
+      case Map.get(slot, :slot) do
+        nil -> "unknown"
+        value -> to_string(value)
+      end
+
+    unit = Map.get(slot, :unit, "unknown") |> to_string()
+    "#{service_name}|#{slot_number}|#{unit}"
+  end
+
+  defp normalize_nodes(raw_nodes, configured_nodes) do
+    observed_entries = node_entries(raw_nodes)
+
+    observed_names =
+      MapSet.new(observed_entries, fn {name, attrs} ->
+        attrs = map_or_empty(attrs)
+        node_name(map_value(attrs, :node, name))
+      end)
+
+    missing_entries =
+      configured_nodes
+      |> Enum.map(&node_name/1)
+      |> Enum.reject(&(&1 == "unknown"))
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(observed_names, &1))
+      |> Enum.map(&{&1, unavailable_node_attrs()})
+
+    (missing_entries ++ observed_entries)
     |> Enum.map(fn {name, attrs} -> normalize_node(name, attrs) end)
     |> Enum.sort_by(& &1.name)
+  end
+
+  defp unavailable_node_attrs do
+    %{availability: "unavailable", error: "node_unreachable", reason: "not_live"}
   end
 
   defp node_entries(nodes) when is_map(nodes), do: Map.to_list(nodes)
@@ -140,6 +172,7 @@ defmodule NixSwarmWeb.ClusterSnapshot do
       services: normalize_node_services(map_value(attrs, :services, [])),
       metrics: normalize_node_metrics(map_value(attrs, :metrics, %{})),
       network_info: normalize_network_info(map_value(attrs, :network_info, %{})),
+      proxy: normalize_proxy(map_value(attrs, :proxy, %{})),
       error: normalize_error(error, attrs)
     }
   end
@@ -206,6 +239,7 @@ defmodule NixSwarmWeb.ClusterSnapshot do
         slot: slot_number(unit_name, map_value(unit, :slot, nil)),
         status: string_value(map_value(unit, :status, "unknown")),
         owner: optional_node(map_value(unit, :owner, nil)),
+        ports: normalize_ports(map_value(unit, :ports, map_value(unit, :port, []))),
         metrics: normalize_unit_metrics(map_value(unit, :metrics, %{}))
       }
     end)
@@ -251,7 +285,8 @@ defmodule NixSwarmWeb.ClusterSnapshot do
         slot: slot_number,
         owner: optional_node(map_value(slot, :owner, nil)),
         unit: string_value(map_value(slot, :unit, "unknown")),
-        status: string_value(map_value(slot, :status, "unknown"))
+        status: string_value(map_value(slot, :status, "unknown")),
+        ports: normalize_ports(map_value(slot, :ports, map_value(slot, :port, [])))
       }
     end)
     |> Enum.sort_by(& &1.slot)
@@ -321,6 +356,7 @@ defmodule NixSwarmWeb.ClusterSnapshot do
 
       placement
       |> Map.put(:status, slot_status(placement, unit))
+      |> Map.put(:ports, slot_ports(placement, unit))
       |> Map.put(:metrics, if(unit, do: unit.metrics, else: %{}))
     end)
     |> add_unplaced_units(unit_records)
@@ -341,6 +377,7 @@ defmodule NixSwarmWeb.ClusterSnapshot do
             owner: unit.owner,
             unit: unit.unit,
             status: unit.status,
+            ports: unit.ports,
             metrics: unit.metrics
           }
           | acc
@@ -365,6 +402,12 @@ defmodule NixSwarmWeb.ClusterSnapshot do
   end
 
   defp slot_status(_placement, unit), do: unit.status
+
+  defp slot_ports(placement, nil), do: placement.ports
+
+  defp slot_ports(placement, unit) do
+    if unit.ports == [], do: placement.ports, else: unit.ports
+  end
 
   defp desired_replicas(status, name, slots) do
     desired =
@@ -542,6 +585,55 @@ defmodule NixSwarmWeb.ClusterSnapshot do
       ports: list_value(map_value(info, :ports, []))
     }
   end
+
+  defp normalize_proxy(proxy) do
+    proxy = map_or_empty(proxy)
+
+    %{
+      enabled?: map_value(proxy, :enabled?, map_value(proxy, :enabled, false)) in [true, "true"],
+      listen_port: normalize_port(map_value(proxy, :listen_port, nil)),
+      routes:
+        proxy
+        |> map_value(:routes, [])
+        |> proxy_route_list()
+        |> Enum.map(&normalize_proxy_route/1),
+      metrics: normalize_unit_metrics(map_value(proxy, :metrics, %{}))
+    }
+  end
+
+  defp proxy_route_list(routes) when is_map(routes), do: Map.values(routes)
+  defp proxy_route_list(routes) when is_list(routes), do: routes
+  defp proxy_route_list(_routes), do: []
+
+  defp normalize_proxy_route(route) do
+    route = map_or_empty(route)
+
+    %{
+      name: string_value(map_value(route, :name, "unknown")),
+      host: string_value(map_value(route, :host, "unknown")),
+      path_prefix: string_value(map_value(route, :path_prefix, "/")),
+      upstreams: list_value(map_value(route, :upstreams, [])) |> Enum.map(&string_value/1),
+      auth: string_value(map_value(route, :auth, "public"))
+    }
+  end
+
+  defp normalize_port(value) when is_integer(value) and value in 1..65_535, do: value
+  defp normalize_port(value) when is_binary(value), do: parse_integer(value, nil)
+  defp normalize_port(_value), do: nil
+
+  defp normalize_ports(value) when is_list(value) do
+    value
+    |> Enum.map(fn
+      port when is_integer(port) -> port
+      port when is_binary(port) -> parse_integer(port, nil)
+      _ -> nil
+    end)
+    |> Enum.filter(&is_integer/1)
+    |> Enum.filter(&(&1 in 1..65_535))
+    |> Enum.uniq()
+  end
+
+  defp normalize_ports(value), do: normalize_ports([value])
 
   defp graph(nodes, services) do
     graph_nodes = Enum.map(nodes, &Map.take(&1, [:name, :host, :status, :version]))

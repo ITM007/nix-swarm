@@ -22,6 +22,8 @@
   services.nix-swarm = {
     nodeName = "nix-swarm@node-a";
     cookieFile = "/etc/nixos/nix-swarm/secrets/nix-swarm.cookie";
+    # The starter's example-web service already uses port 8080.
+    proxy.enable = false;
 
     # Root can use the query socket. Add existing non-root SSH users here.
     operatorUsers = [ ];

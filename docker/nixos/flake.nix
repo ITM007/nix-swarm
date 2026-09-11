@@ -128,6 +128,8 @@
 
                 services.nix-swarm = {
                   enable = true;
+                  # The Docker harness owns port 8080 for its demo workload.
+                  proxy.enable = false;
                   hardened = hardened;
                   package = clusterPackage;
                   nodeName = nodeName;
@@ -157,6 +159,13 @@
 
             if [ "$#" -eq 0 ]; then
               set -- ${machine.config.system.build.toplevel}/init
+            fi
+
+            if [ "$1" = "${machine.config.system.build.toplevel}/init" ] && [ ! -w /sys/fs/cgroup ]; then
+              if ! ${pkgs.util-linux}/bin/mount -o remount,rw /sys/fs/cgroup; then
+                echo "refusing to start systemd without a writable private cgroup namespace" >&2
+                exit 1
+              fi
             fi
 
             exec "$@"

@@ -8,6 +8,23 @@ defmodule NixSwarmWeb.HealthControllerTest do
     assert get_resp_header(conn, "content-type") == ["application/json; charset=utf-8"]
   end
 
+  test "rejects an unrecognized HTTP authority before serving data", %{conn: conn} do
+    conn = %{conn | host: "attacker.example"}
+
+    conn = get(conn, "/healthz")
+
+    assert conn.status == 400
+    assert response(conn, 400) == "invalid host\n"
+  end
+
+  test "accepts the development browser authority", %{conn: conn} do
+    conn = %{conn | host: "nix-swarm-dev.localhost"}
+
+    conn = get(conn, "/healthz")
+
+    assert response(conn, 200) == ~s({"status":"ok"})
+  end
+
   test "unknown routes return a rendered 404 response", %{conn: conn} do
     conn = get(conn, "/missing")
 

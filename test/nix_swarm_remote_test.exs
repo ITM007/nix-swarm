@@ -50,6 +50,16 @@ defmodule NixSwarmRemoteTest do
     assert NixSwarm.Remote.function_exported?(remote, NixSwarm.API, :cluster_logs, 2)
   end
 
+  test "SSH response decoding preserves the tagged query contract" do
+    {:ok, encoded_success} = NixSwarm.QueryProtocol.encode_response(%{live_nodes: []})
+    {:ok, encoded_error} = NixSwarm.QueryProtocol.encode_response({:error, :busy})
+
+    assert NixSwarm.Remote.decode_ssh_response(encoded_success) ==
+             {:ok, %{live_nodes: []}}
+
+    assert NixSwarm.Remote.decode_ssh_response(encoded_error) == {:error, :busy}
+  end
+
   test "doctor reports restricted-query success and failure" do
     remote =
       NixSwarm.Remote.options!(
